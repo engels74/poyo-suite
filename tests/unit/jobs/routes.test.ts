@@ -44,6 +44,7 @@ describe('job HTTP boundaries', () => {
       'src/routes/api/jobs/[jobId]/refresh/+server.ts',
       'src/routes/api/jobs/[jobId]/outputs/[outputId]/retry/+server.ts',
       'src/routes/api/jobs/[jobId]/rerun/+server.ts',
+      'src/routes/api/jobs/[jobId]/retry-ambiguous/+server.ts',
       'src/routes/api/library/[jobId]/favorite/+server.ts',
       'src/routes/api/library/[jobId]/pin/+server.ts',
       'src/routes/api/library/[jobId]/tags/+server.ts',
@@ -53,6 +54,13 @@ describe('job HTTP boundaries', () => {
     for (const route of routes) {
       expect(await Bun.file(route).text()).toContain('readSameOriginJson');
     }
+  });
+
+  test('JOB-10 create route delegates browser data to authoritative request preparation', async () => {
+    const route = await Bun.file('src/routes/api/jobs/+server.ts').text();
+    expect(route).toContain('prepareJobCreateRequest');
+    expect(route).not.toContain('CreateJobRequest');
+    expect(route).not.toContain('normalizedPayload: input');
   });
 
   test('SEC-04 private media streaming supports HEAD and never serializes filesystem paths', async () => {

@@ -6,7 +6,6 @@ import type {
   GuidedVideoRequest,
   ImageRegistryEntry,
   InputRole,
-  NormalizedPreview,
   VideoRegistryEntry
 } from '../registry/types';
 import type { StudioEntry, StudioRoleInput } from './contracts';
@@ -14,13 +13,10 @@ import type { StudioEntry, StudioRoleInput } from './contracts';
 export type SizeMode = 'resolution' | 'aspect-ratio' | 'custom';
 
 export interface StudioCreateJobRequest {
+  actionId: string;
   entryKey: string;
-  workflow: string;
-  publicModelId: string;
-  guidedRequest: Record<string, unknown>;
-  normalizedPayload: NormalizedPreview['request'];
-  prompt?: string;
-  expertDiff: NormalizedPreview['expertDiff'];
+  values: Record<string, unknown>;
+  expertOverrides: ExpertOverride[];
   inputs: Array<{
     role: string;
     mediaKind: 'image' | 'video';
@@ -188,19 +184,17 @@ export function presetValues(
 }
 
 export function createJobRequest(
+  actionId: string,
   entry: StudioEntry,
-  guided: GuidedImageRequest | GuidedVideoRequest,
-  preview: NormalizedPreview,
+  guided: Record<string, unknown>,
+  expertOverrides: ExpertOverride[],
   roleInputs: Record<string, StudioRoleInput[]> = {}
 ): StudioCreateJobRequest {
-  const prompt = typeof guided.prompt === 'string' ? guided.prompt : undefined;
   return {
+    actionId,
     entryKey: entry.key,
-    workflow: entry.workflow,
-    publicModelId: entry.publicModelId,
-    guidedRequest: guided as Record<string, unknown>,
-    normalizedPayload: preview.request,
-    expertDiff: preview.expertDiff,
+    values: cloneJson(guided),
+    expertOverrides: cloneJson(expertOverrides),
     inputs: Object.values(roleInputs)
       .flat()
       .filter((input): input is StudioRoleInput & { mediaKind: 'image' | 'video' } =>
@@ -223,9 +217,14 @@ export function createJobRequest(
             : { durationSeconds: input.durationSeconds }),
           ...(input.metadataProbe === undefined ? {} : { metadataProbe: input.metadataProbe })
         }
-      })),
-    ...(prompt ? { prompt } : {})
+      }))
   };
+}
+
+export function nextMonotonicEventId(current: number, raw: string): number | null {
+  if (!/^\d+$/.test(raw)) return null;
+  const next = Number(raw);
+  return Number.isSafeInteger(next) && next > current ? next : null;
 }
 
 export function mediaAccept(role: InputRole): string {

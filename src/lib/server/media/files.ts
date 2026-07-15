@@ -1,5 +1,5 @@
 import { realpath } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { dirname, isAbsolute } from 'node:path';
 import { resolvePathWithin } from '../platform/app-paths';
 
 export class MediaRangeError extends Error {
@@ -43,7 +43,7 @@ export function parseByteRange(value: string | null, size: number): ByteRange | 
 }
 
 export async function safeLocalMediaPath(mediaRoot: string, candidate: string): Promise<string> {
-  const lexical = resolvePathWithin(mediaRoot, candidate);
+  const lexical = isAbsolute(candidate) ? candidate : resolvePathWithin(mediaRoot, candidate);
   const [root, file] = await Promise.all([realpath(mediaRoot), realpath(lexical)]);
   resolvePathWithin(root, file);
   return file;

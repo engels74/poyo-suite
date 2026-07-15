@@ -73,8 +73,36 @@ function rerun(): void {
   )
     return;
   void action('rerun', async () => {
-    const response = await post(`/api/jobs/${job.id}/rerun`, { acknowledgeNewPaidJob: true });
+    const storageKey = `poyo-paid-action:rerun:${job.id}`;
+    const actionId = sessionStorage.getItem(storageKey) ?? crypto.randomUUID();
+    sessionStorage.setItem(storageKey, actionId);
+    const response = await post(`/api/jobs/${job.id}/rerun`, {
+      acknowledgeNewPaidJob: true,
+      actionId
+    });
     const result = (await response.json()) as { job: { id: string } };
+    sessionStorage.removeItem(storageKey);
+    await goto(`/jobs/${result.job.id}`);
+  });
+}
+
+function retryAmbiguous(): void {
+  if (
+    !confirm(
+      'Poyo may already have accepted the original paid request. Submit a linked new job anyway? This can spend credits twice.'
+    )
+  )
+    return;
+  void action('retry-ambiguous', async () => {
+    const storageKey = `poyo-paid-action:ambiguous:${job.id}`;
+    const actionId = sessionStorage.getItem(storageKey) ?? crypto.randomUUID();
+    sessionStorage.setItem(storageKey, actionId);
+    const response = await post(`/api/jobs/${job.id}/retry-ambiguous`, {
+      acknowledgeDuplicateSpendRisk: true,
+      actionId
+    });
+    const result = (await response.json()) as { job: { id: string } };
+    sessionStorage.removeItem(storageKey);
     await goto(`/jobs/${result.job.id}`);
   });
 }
@@ -143,11 +171,15 @@ function removeOutput(outputId: string): void {
       <LinkButton href={`/studio/${job.modality}?fromJob=${job.id}`} variant="outline">Edit in studio</LinkButton>
       {#if job.outputs.some((output) => output.localAvailable)}<button onclick={openFolder} disabled={pending !== null} class="focus-ring inline-flex min-h-9 items-center gap-2 rounded border border-border px-3 text-sm font-semibold"><AppIcon name="folder" size={15} /> Open folder</button>{/if}
       {#if job.poyoTaskId}<button onclick={refresh} disabled={pending !== null} class="focus-ring inline-flex min-h-9 items-center gap-2 rounded border border-border px-3 text-sm font-semibold"><AppIcon name="refresh" size={15} /> Refresh status</button>{/if}
-      <button onclick={rerun} disabled={pending !== null || job.attentionCode === 'submission_unknown'} class="focus-ring min-h-9 rounded bg-primary px-3 text-sm font-semibold text-primary-foreground">Run again</button>
+      {#if job.attentionCode === 'submission_unknown'}
+        <button onclick={retryAmbiguous} disabled={pending !== null} class="focus-ring min-h-9 rounded bg-warning px-3 text-sm font-semibold text-warning-foreground">Acknowledge risk and retry</button>
+      {:else}
+        <button onclick={rerun} disabled={pending !== null} class="focus-ring min-h-9 rounded bg-primary px-3 text-sm font-semibold text-primary-foreground">Run again</button>
+      {/if}
     </div>
   </header>
 
-  {#if job.attentionCode === 'submission_unknown'}<div class="mt-4 rounded border border-warning/40 bg-warning/10 p-4 text-sm"><strong>Submission outcome is unknown.</strong> Status checks are safe, but automatic or paid retry is blocked to prevent duplicate spend.</div>{/if}
+  {#if job.attentionCode === 'submission_unknown'}<div class="mt-4 rounded border border-warning/40 bg-warning/10 p-4 text-sm"><strong>Submission outcome is unknown.</strong> Status checks are safe. A new paid retry is available only after you explicitly accept the risk that Poyo may charge for both requests.</div>{/if}
   {#if feedback}<p class="mt-4 rounded border border-border bg-muted px-4 py-3 text-sm" role="status">{feedback}</p>{/if}
 
   <div class="mt-6 grid gap-8 xl:grid-cols-[minmax(0,1.45fr)_minmax(18rem,0.55fr)]">

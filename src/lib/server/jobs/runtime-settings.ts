@@ -1,8 +1,36 @@
+import { runtimePoyoBaseUrl } from '../poyo/factory';
 import {
   DEFAULT_OPERATIONS_SETTINGS,
   normalizeOperationsSettings,
   type OperationsSettings
 } from '../settings/operations-settings';
+import type { OutputDownloaderOptions } from './downloader';
+
+export const TEST_MEDIA_ORIGIN = 'https://media.poyo-fixture.example';
+
+export function runtimeTestDownloadTransport(
+  environment: Record<string, string | undefined>
+): Pick<OutputDownloaderOptions, 'fetch' | 'resolveHost'> | Record<never, never> {
+  const proxyOrigin = runtimePoyoBaseUrl(environment);
+  if (!proxyOrigin) return {};
+  const expected = new URL(TEST_MEDIA_ORIGIN);
+  return {
+    resolveHost: async (hostname) => {
+      if (hostname !== expected.hostname) {
+        throw new Error('The test download resolver only accepts the fixture media host.');
+      }
+      return [{ address: '93.184.216.34', family: 4 }];
+    },
+    fetch: async (input) => {
+      const url = new URL(String(input));
+      if (url.origin !== expected.origin || url.username || url.password) {
+        throw new Error('The test download transport only accepts the fixture media origin.');
+      }
+      const proxy = new URL(`${url.pathname}${url.search}`, proxyOrigin);
+      return fetch(proxy, { method: 'GET', redirect: 'manual' });
+    }
+  };
+}
 
 export function runtimeJobTimings(environment: Record<string, string | undefined>): {
   pollDelayMs?: number;

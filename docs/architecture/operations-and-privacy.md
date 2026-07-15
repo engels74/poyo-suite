@@ -110,8 +110,9 @@ reconnection synchronize from SQLite.
 - Remote URL input must use HTTP(S), cannot contain embedded credentials, and cannot target
   local/private address ranges when passed through the Poyo URL-upload endpoint.
 - Local source intake requires a same-origin multipart request, validates size, MIME type, and
-  file signature, streams to a temporary file, then renames into retained private upload
-  storage.
+  file signature, bounds aggregate request bytes while the body stream is consumed, accepts
+  exactly one file and one media-kind field, then streams the validated file to retained
+  private upload storage.
 - The server streams that retained source to Poyo. Image formats are JPEG, PNG, GIF, and WebP;
   video formats are MP4, WebM, MOV, AVI, and MKV. Poyo's streaming video limit is 100 MiB.
 - Base64 is accepted only for image sources up to 5 MiB by the server client. Large files and
@@ -126,13 +127,27 @@ returned. Poyo documents no upload-deletion endpoint.
 Downloads use a private per-job directory and an unpredictable `.partial` filename. The
 downloader:
 
-1. refuses redirects and enforces a 2 GiB local maximum;
+1. accepts only credential-free HTTP(S), resolves every DNS answer, rejects any non-public or
+   unknown IPv4/IPv6 address, connects directly to one validated address with the original
+   Host/TLS name, refuses redirects, and enforces a 2 GiB local maximum;
 2. streams bytes directly to disk while computing SHA-256;
 3. rejects empty files and mismatched declared/Poyo lengths;
-4. validates content type and practical PNG/JPEG/GIF/WebP/MP4/MOV/WebM signatures;
+4. derives PNG/JPEG/GIF/WebP/MP4/MOV/WebM type from a strict signature allowlist and rejects
+   unsupported, generic-with-unknown-signature, mismatched, or wrong-kind bytes;
 5. flushes and syncs the temporary file;
-6. atomically renames it to a sanitized, collision-resistant destination;
+6. rejects symlinked roots/parents, opens the partial leaf with exclusive/no-follow flags, and
+   publishes it with a no-overwrite hard link to a sanitized destination;
 7. records verification metadata in SQLite.
+
+Poyo documents no stable output-host allowlist. The downloader therefore trusts the operating
+system's DNS result only after validating every returned address, and production connections
+use the pinned address rather than resolving the hostname again; the connected peer address is
+also revalidated. This closes the normal DNS-rebinding interval, while still relying on Bun's
+documented `node:http`/`node:https` compatibility and the operator's OS resolver. Portable
+JavaScript exposes no cross-platform `openat`-style directory descriptor API, so a malicious
+same-account filesystem actor could still race the final parent check; private `0700`
+application directories, repeated realpath checks, no-follow partial creation, and
+collision-safe publication make that residual local race substantially narrower.
 
 A generation may therefore be remotely successful while one or more local downloads require
 attention. The states are intentionally separate.
@@ -210,7 +225,7 @@ downloads. There is no analytics, advertising, third-party telemetry, or remote 
 | --- | --- | --- |
 | `https://api.poyo.ai` | Bearer API key in the authorization header; model ID; prompt and normalized parameters; referenced remote URLs; selected local media bytes for stream upload; balance/status task identifiers. | Connectivity test, balance refresh, source upload, generation submit, or status polling. |
 | Public URL supplied by the operator | The application sends the URL to Poyo's URL-upload service; Poyo may fetch that resource. | Only when URL upload is selected. |
-| Output host returned by Poyo | A plain GET for the generated file URL. The downloader does not add the Poyo authorization header. | After a successful task or a manual download retry. |
+| Public output host returned by Poyo | A credential-free GET pinned to a validated public address. Redirects and local/private/reserved destinations are refused. | After a successful task or a manual download retry. |
 | `docs.poyo.ai` | Standard documentation HTTP requests; no API key, prompt, media, or generation request. | Only when a developer deliberately runs `bun run registry:audit:network`. |
 
 The local browser communicates with the loopback SvelteKit server. Those same-origin requests

@@ -28,11 +28,11 @@ export async function createJobFixture(now = new Date('2026-07-15T12:00:00Z')) {
 
 export function createTestJob(repository: JobRepository, suffix: string = crypto.randomUUID()) {
   return repository.create({
+    actionId: crypto.randomUUID(),
     workflow: 'text-to-image',
     publicModelId: 'provider/model',
     guidedRequest: { prompt: `calm coast ${suffix}` },
     normalizedPayload: { model: 'provider/model', input: { prompt: `calm coast ${suffix}` } },
-    requestFingerprint: `fingerprint-${suffix}`,
     correlationId: `correlation-${suffix}`
   });
 }

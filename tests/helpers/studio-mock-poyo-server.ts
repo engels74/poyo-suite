@@ -1,3 +1,5 @@
+import { TEST_MEDIA_ORIGIN } from '../../src/lib/server/jobs/runtime-settings';
+
 export type MockTaskOutcome = 'success' | 'failed' | 'held';
 
 export interface RecordedPoyoRequest {
@@ -138,7 +140,7 @@ export async function startStudioMockPoyoServer(): Promise<{
             status: 'finished',
             credits_amount: task.mediaKind === 'video' ? 12 : 3,
             files: Array.from({ length: task.outputCount }, (_, index) => ({
-              file_url: `${url.origin}/media/${task.id}-${index + 1}.${extension}`,
+              file_url: `${TEST_MEDIA_ORIGIN}/media/${task.id}-${index + 1}.${extension}`,
               file_type: task.mediaKind,
               format: extension,
               content_type: task.mediaKind === 'video' ? 'video/mp4' : 'image/png',

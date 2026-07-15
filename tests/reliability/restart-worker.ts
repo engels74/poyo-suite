@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import { JobCoordinator } from '../../src/lib/server/jobs/coordinator';
 import { OutputDownloader } from '../../src/lib/server/jobs/downloader';
 import { JobRepository } from '../../src/lib/server/jobs/repository';
+import { runtimeTestDownloadTransport } from '../../src/lib/server/jobs/runtime-settings';
 import { openDatabase } from '../../src/lib/server/platform/database';
 import { PoyoClient } from '../../src/lib/server/poyo/client';
 import { systemClock } from '../../src/lib/server/poyo/backoff';
@@ -28,21 +29,25 @@ try {
     poyo: client,
     downloader: new OutputDownloader({
       repository,
-      paths: { media: join(root, 'media'), temporary: join(root, 'tmp') }
+      paths: { media: join(root, 'media'), temporary: join(root, 'tmp') },
+      ...runtimeTestDownloadTransport({
+        PLS_TEST_MODE: '1',
+        PLS_TEST_POYO_BASE_URL: baseUrl
+      })
     }),
     workerId: `process-${mode}`
   });
 
   if (mode === 'submit') {
     const job = repository.create({
+      actionId: crypto.randomUUID(),
       workflow: 'text-to-image',
       publicModelId: 'flux-schnell',
       guidedRequest: { prompt: 'restart recovery fixture' },
       normalizedPayload: {
         model: 'flux-schnell',
         input: { prompt: 'restart recovery fixture' }
-      },
-      requestFingerprint: 'restart-recovery-paid-intent'
+      }
     });
     await coordinator.submit(job.id);
     console.log(JSON.stringify({ jobId: job.id, phase: repository.get(job.id)?.localPhase }));

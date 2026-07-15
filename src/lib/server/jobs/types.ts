@@ -26,17 +26,29 @@ export type FailureDomain =
   | 'registry';
 export type WorkType = 'poll' | 'download' | 'cleanup';
 
-export interface CreateJobInput {
+export interface PublicCreateJobInput {
   role: string;
   mediaKind: 'image' | 'video';
   source: 'remote' | 'uploaded';
   url: string;
   localSourceId?: string;
-  managedSourceId?: string;
   metadata?: Record<string, unknown>;
 }
 
+export interface CreateJobInput extends PublicCreateJobInput {
+  managedSourceId?: string;
+}
+
+export interface CreateJobActionRequest {
+  actionId: string;
+  entryKey: string;
+  values: Record<string, unknown>;
+  expertOverrides?: Array<{ key: string; value: unknown }>;
+  inputs?: PublicCreateJobInput[];
+}
+
 export interface CreateJobRequest {
+  actionId: string;
   entryKey?: string;
   workflow: string;
   publicModelId: string;
@@ -45,10 +57,11 @@ export interface CreateJobRequest {
   prompt?: string;
   estimatedCredits?: number;
   correlationId?: string;
-  requestFingerprint?: string;
   retryOfJobId?: string;
   expertDiff?: Array<{ key: string; value: unknown; status?: string }>;
   inputs?: CreateJobInput[];
+  expectedMediaKind?: 'image' | 'video';
+  expectedOutputCount?: number;
 }
 
 export interface JobRecord {

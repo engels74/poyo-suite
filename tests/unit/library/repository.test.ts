@@ -39,13 +39,13 @@ async function completedGeneration(suffix: string) {
   cleanups.push(fixture.cleanup);
   seedImageRegistry(fixture.database);
   const job = fixture.repository.create({
+    actionId: crypto.randomUUID(),
     entryKey: 'flux-schnell:text-to-image',
     workflow: 'text-to-image',
     publicModelId: 'flux-schnell',
     guidedRequest: { prompt: `calm coast ${suffix}`, aspectRatio: '1:1' },
     normalizedPayload: { model: 'flux-schnell', input: { prompt: `calm coast ${suffix}` } },
     prompt: `calm coast ${suffix}`,
-    requestFingerprint: `fingerprint-${suffix}`,
     correlationId: `correlation-${suffix}`
   });
   fixture.repository.applyStatus(

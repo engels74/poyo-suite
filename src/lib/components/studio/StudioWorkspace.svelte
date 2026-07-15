@@ -16,6 +16,7 @@ import {
   initialGuidedValues,
   initialRoleInputs,
   mediaAccept,
+  nextMonotonicEventId,
   parseExpertOverrides,
   presetValues,
   roleLabel,
@@ -119,6 +120,41 @@ let showPresetForm = $state(false);
 let presetName = $state(initialData.preset?.name ?? '');
 let presetDescription = $state(initialData.preset?.description ?? '');
 let presetMessage = $state(initialData.preset ? `Loaded preset “${initialData.preset.name}”.` : '');
+let lastEventId = -1;
+
+const pendingActionStorageKey = `poyo-studio-pending-action:${initialData.modality}`;
+interface PendingAction {
+  actionId: string;
+  entryKey: string;
+  createdAt: number;
+}
+
+function readPendingAction(): PendingAction | null {
+  const raw = sessionStorage.getItem(pendingActionStorageKey);
+  if (!raw || raw.length > 256) return null;
+  try {
+    const value = JSON.parse(raw) as Partial<PendingAction>;
+    return typeof value.actionId === 'string' &&
+      /^[0-9a-f-]{36}$/i.test(value.actionId) &&
+      typeof value.entryKey === 'string' &&
+      value.entryKey.length <= 160 &&
+      typeof value.createdAt === 'number'
+      ? (value as PendingAction)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function storePendingAction(action: PendingAction): void {
+  sessionStorage.setItem(pendingActionStorageKey, JSON.stringify(action));
+}
+
+function clearPendingAction(actionId?: string): void {
+  const pending = readPendingAction();
+  if (!actionId || pending?.actionId === actionId)
+    sessionStorage.removeItem(pendingActionStorageKey);
+}
 
 let selectedEntry = $derived(data.entries.find((entry) => entry.key === entryKey) ?? initialEntry);
 let workflows = $derived([...new Set(data.entries.map((entry) => entry.workflow))]);
@@ -176,6 +212,12 @@ function chooseSizeMode(next: SizeMode): void {
 
 function switchEntry(next: StudioEntry): void {
   if (next.key === entryKey) return;
+  if (submissionUnknown || readPendingAction()) {
+    previewIssues = [
+      'Reconcile the unknown paid action before changing models or clearing this draft.'
+    ];
+    return;
+  }
   if (dirty && !window.confirm('Change model and remove incompatible draft values and inputs?'))
     return;
   entryKey = next.key;
@@ -458,22 +500,39 @@ async function refreshBalanceSnapshot(): Promise<void> {
 async function submit(): Promise<void> {
   if (submitting || submissionLocked || !hasApiKey) return;
   submitting = true;
-  const normalized = await requestPreview();
-  if (!normalized) {
+  if (!(await requestPreview())) {
     submitting = false;
     return;
   }
+  let overrides: ExpertOverride[];
+  try {
+    overrides = parseExpertOverrides(expertText);
+  } catch (error) {
+    previewIssues = [error instanceof Error ? error.message : 'Expert overrides are invalid.'];
+    submitting = false;
+    return;
+  }
+  const action: PendingAction = {
+    actionId: crypto.randomUUID(),
+    entryKey,
+    createdAt: Date.now()
+  };
+  storePendingAction(action);
   try {
     const response = await fetch('/api/jobs', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(createJobRequest(selectedEntry, currentGuided, normalized, roleInputs))
+      body: JSON.stringify(
+        createJobRequest(action.actionId, selectedEntry, guided, overrides, roleInputs)
+      )
     });
     const result = (await response.json()) as { job?: StudioJobDto; error?: { message?: string } };
     if (!response.ok || !result.job) {
+      clearPendingAction(action.actionId);
       previewIssues = [result.error?.message ?? 'Poyo rejected the job before submission.'];
       return;
     }
+    clearPendingAction(action.actionId);
     activeJob = result.job;
     submissionLocked = true;
     dirty = false;
@@ -494,6 +553,12 @@ async function submit(): Promise<void> {
 }
 
 function resetDraft(): void {
+  if (submissionUnknown || readPendingAction()) {
+    previewIssues = [
+      'Reset is blocked until the unknown paid action is reconciled with the local job database.'
+    ];
+    return;
+  }
   guided = initialGuidedValues(selectedEntry);
   roleInputs = {};
   expertText = '';
@@ -579,13 +644,50 @@ function updateFromJobEvent(event: MessageEvent<string>): void {
   };
 }
 
+function acceptDurableEvent(event: MessageEvent<string>): boolean {
+  const next = nextMonotonicEventId(lastEventId, event.lastEventId);
+  if (next === null) return false;
+  lastEventId = next;
+  return true;
+}
+
+async function reconcilePendingAction(): Promise<void> {
+  const pending = readPendingAction();
+  if (!pending) return;
+  submissionLocked = true;
+  submissionUnknown = true;
+  try {
+    const response = await fetch(`/api/jobs?actionId=${encodeURIComponent(pending.actionId)}`);
+    if (response.status === 404) {
+      clearPendingAction(pending.actionId);
+      submissionLocked = false;
+      submissionUnknown = false;
+      return;
+    }
+    const result = (await response.json()) as { job?: StudioJobDto };
+    if (!response.ok || !result.job) throw new Error('Local reconciliation failed.');
+    activeJob = result.job;
+    entryKey = pending.entryKey;
+    submissionUnknown = false;
+    submissionLocked = true;
+    clearPendingAction(pending.actionId);
+  } catch {
+    previewIssues = [
+      'The local job database could not yet confirm this paid action. Reset and resubmission remain blocked.'
+    ];
+  }
+}
+
 onMount(() => {
+  void reconcilePendingAction();
   const events = new EventSource('/api/events/jobs');
   events.onopen = () => (connection = 'connected');
   events.onerror = () => (connection = 'reconnecting');
   events.addEventListener('snapshot', (event) => {
+    const message = event as MessageEvent<string>;
+    if (!acceptDurableEvent(message)) return;
     connection = 'connected';
-    const snapshot = JSON.parse((event as MessageEvent<string>).data) as { jobs: StudioJobDto[] };
+    const snapshot = JSON.parse(message.data) as { jobs: StudioJobDto[] };
     const matching = activeJob
       ? snapshot.jobs.find((job) => job.id === activeJob?.id)
       : snapshot.jobs.find(
@@ -595,7 +697,10 @@ onMount(() => {
         );
     if (matching) activeJob = matching;
   });
-  events.addEventListener('job', (event) => updateFromJobEvent(event as MessageEvent<string>));
+  events.addEventListener('job', (event) => {
+    const message = event as MessageEvent<string>;
+    if (acceptDurableEvent(message)) updateFromJobEvent(message);
+  });
   return () => events.close();
 });
 

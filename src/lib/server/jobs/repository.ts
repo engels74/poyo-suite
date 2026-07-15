@@ -1,6 +1,7 @@
 import type { Database } from 'bun:sqlite';
 import { DatabaseRepository } from '../platform/repository';
 import type { PoyoStatusResult, PoyoSubmitResult } from '../poyo/types';
+import { isPaidActionId, JobRequestError } from './create-request';
 import type {
   CreateJobRequest,
   FailureDomain,
@@ -49,6 +50,18 @@ type IntentRow = {
   transmit_claim_owner: string | null;
   lease_expires_at: string | null;
   actual_payload_json: string;
+};
+type ActionRow = {
+  job_id: string;
+  payload_hash: string;
+};
+type InputRow = {
+  role: string;
+  media_kind: 'image' | 'video';
+  source_url: string | null;
+  upload_url: string | null;
+  metadata_json: string;
+  managed_source_id: string | null;
 };
 type ClaimRow = {
   work_type: WorkType;
@@ -233,6 +246,8 @@ export class JobRepository extends DatabaseRepository {
     );
   }
   create(request: CreateJobRequest): JobRecord {
+    if (!isPaidActionId(request.actionId))
+      throw new JobRequestError('invalid_action_id', 'A stable opaque action ID is required.');
     if (!request.workflow?.trim() || !request.publicModelId?.trim())
       throw new Error('Workflow and public model ID are required.');
     if (!request.normalizedPayload?.model?.trim() || !request.normalizedPayload.input)
@@ -244,20 +259,66 @@ export class JobRepository extends DatabaseRepository {
     assertSafeRequest(request.expertDiff ?? []);
     assertSafeRequest(request.inputs ?? []);
     return this.transaction(() => {
+      const payload = canonical(request.normalizedPayload);
+      const immutableHash = hash(
+        canonical({
+          entryKey: request.entryKey ?? null,
+          workflow: request.workflow,
+          publicModelId: request.publicModelId,
+          guidedRequest: request.guidedRequest,
+          normalizedPayload: request.normalizedPayload,
+          estimatedCredits: request.estimatedCredits ?? null,
+          correlationId: request.correlationId ?? null,
+          retryOfJobId: request.retryOfJobId ?? null,
+          expertDiff: request.expertDiff ?? [],
+          inputs: request.inputs ?? [],
+          expectedMediaKind: request.expectedMediaKind ?? null,
+          expectedOutputCount: request.expectedOutputCount ?? null
+        })
+      );
+      const existing = this.database
+        .query<ActionRow, [string]>(
+          'SELECT job_id,payload_hash FROM submission_intents WHERE request_fingerprint=?'
+        )
+        .get(request.actionId);
+      if (existing) {
+        if (existing.payload_hash !== immutableHash)
+          throw new JobRequestError(
+            'paid_action_conflict',
+            'This paid action ID is already bound to a different immutable request.',
+            409
+          );
+        return this.requireJob(existing.job_id);
+      }
       const id = crypto.randomUUID();
       const now = this.timestamp();
-      const payload = canonical(request.normalizedPayload);
-      const fingerprint =
-        request.requestFingerprint ??
-        hash(`${id}:${request.publicModelId}:${payload}:${request.retryOfJobId ?? ''}`);
       const registry = request.entryKey
         ? this.database
-            .query<{ registry_version: string }, [string]>(
-              "SELECT registry_version FROM registry_entries WHERE entry_key=? AND status='current' ORDER BY registry_version DESC LIMIT 1"
+            .query<
+              {
+                registry_version: string;
+                workflow: string;
+                public_model_id: string;
+                modality: 'image' | 'video';
+              },
+              [string]
+            >(
+              "SELECT registry_version,workflow,public_model_id,modality FROM registry_entries WHERE entry_key=? AND status='current' ORDER BY registry_version DESC LIMIT 1"
             )
             .get(request.entryKey)
         : null;
       if (request.entryKey && !registry) throw new Error('Registry entry is unavailable.');
+      if (
+        registry &&
+        (registry.workflow !== request.workflow ||
+          registry.public_model_id !== request.publicModelId ||
+          (request.expectedMediaKind && registry.modality !== request.expectedMediaKind))
+      )
+        throw new JobRequestError(
+          'registry_request_mismatch',
+          'The prepared request does not match its registry entry.',
+          409
+        );
       this.database
         .query(
           `INSERT INTO jobs(id,registry_version,entry_key,workflow,public_model_id,local_phase,guided_request_json,actual_payload_json,expert_diff_json,estimated_credits,prompt_text,search_text,correlation_id,retry_of_job_id,created_at,updated_at) VALUES (?,?,?,?,?,'submission_prepared',?,?,?,?,?,?,?,?,?,?)`
@@ -318,34 +379,34 @@ export class JobRepository extends DatabaseRepository {
         .query(
           `INSERT INTO submission_intents(job_id,request_fingerprint,payload_hash,state,prepared_at,updated_at) VALUES (?,?,?,'prepared',?,?)`
         )
-        .run(id, fingerprint, hash(payload), now, now);
+        .run(id, request.actionId, immutableHash, now, now);
       const job = this.get(id);
       if (!job) throw new Error('Created job was not found.');
       this.append(job, 'job.created');
       return job;
     });
   }
-  retryAmbiguous(jobId: string): JobRecord {
+  private inputsFor(jobId: string): NonNullable<CreateJobRequest['inputs']> {
+    return this.database
+      .query<InputRow, [string]>(
+        'SELECT role,media_kind,source_url,upload_url,metadata_json,managed_source_id FROM job_inputs WHERE job_id=? ORDER BY input_order'
+      )
+      .all(jobId)
+      .map((input) => ({
+        role: input.role,
+        mediaKind: input.media_kind,
+        source: input.upload_url ? ('uploaded' as const) : ('remote' as const),
+        url: input.upload_url ?? input.source_url ?? '',
+        metadata: JSON.parse(input.metadata_json),
+        ...(input.managed_source_id ? { managedSourceId: input.managed_source_id } : {})
+      }));
+  }
+  retryAmbiguous(jobId: string, actionId: string): JobRecord {
     const job = this.get(jobId);
     if (job?.attentionCode !== 'submission_unknown')
       throw new Error('Only ambiguous submissions may be explicitly retried.');
     return this.create({
-      workflow: job.workflow,
-      publicModelId: job.publicModelId,
-      guidedRequest: job.guidedRequest,
-      normalizedPayload: job.normalizedPayload,
-      ...(typeof job.guidedRequest.prompt === 'string' ? { prompt: job.guidedRequest.prompt } : {}),
-      ...(job.estimatedCredits === null ? {} : { estimatedCredits: job.estimatedCredits }),
-      retryOfJobId: job.id,
-      requestFingerprint: hash(`${job.id}:${crypto.randomUUID()}`)
-    });
-  }
-  rerunAsNew(jobId: string): JobRecord {
-    const job = this.get(jobId);
-    if (!job) throw new Error('Job not found.');
-    if (job.attentionCode === 'submission_unknown')
-      throw new Error('An ambiguous paid submission cannot be run again from its history record.');
-    return this.create({
+      actionId,
       ...(job.entryKey ? { entryKey: job.entryKey } : {}),
       workflow: job.workflow,
       publicModelId: job.publicModelId,
@@ -354,9 +415,36 @@ export class JobRepository extends DatabaseRepository {
       ...(typeof job.guidedRequest.prompt === 'string' ? { prompt: job.guidedRequest.prompt } : {}),
       ...(job.estimatedCredits === null ? {} : { estimatedCredits: job.estimatedCredits }),
       retryOfJobId: job.id,
-      requestFingerprint: hash(`${job.id}:rerun:${crypto.randomUUID()}`),
-      expertDiff: job.expertDiff
+      expertDiff: job.expertDiff,
+      inputs: this.inputsFor(job.id)
     });
+  }
+  rerunAsNew(jobId: string, actionId: string): JobRecord {
+    const job = this.get(jobId);
+    if (!job) throw new Error('Job not found.');
+    if (job.attentionCode === 'submission_unknown')
+      throw new Error('An ambiguous paid submission cannot be run again from its history record.');
+    return this.create({
+      actionId,
+      ...(job.entryKey ? { entryKey: job.entryKey } : {}),
+      workflow: job.workflow,
+      publicModelId: job.publicModelId,
+      guidedRequest: job.guidedRequest,
+      normalizedPayload: job.normalizedPayload,
+      ...(typeof job.guidedRequest.prompt === 'string' ? { prompt: job.guidedRequest.prompt } : {}),
+      ...(job.estimatedCredits === null ? {} : { estimatedCredits: job.estimatedCredits }),
+      retryOfJobId: job.id,
+      expertDiff: job.expertDiff,
+      inputs: this.inputsFor(job.id)
+    });
+  }
+  getByActionId(actionId: string): JobRecord | null {
+    const row = this.database
+      .query<{ job_id: string }, [string]>(
+        'SELECT job_id FROM submission_intents WHERE request_fingerprint=?'
+      )
+      .get(actionId);
+    return row ? this.get(row.job_id) : null;
   }
   get(id: string): JobRecord | null {
     const row = this.database.query<JobRow, [string]>('SELECT * FROM jobs WHERE id=?').get(id);
@@ -564,23 +652,26 @@ export class JobRepository extends DatabaseRepository {
         status.progress === null
           ? current.progress
           : Math.max(current.progress ?? 0, status.progress);
-      const phase =
-        nextStatus === 'finished'
+      const malformed = nextStatus === 'finished' ? this.outputSetProblem(current, status) : null;
+      const phase = malformed
+        ? 'requires_attention'
+        : nextStatus === 'finished'
           ? 'downloading'
           : nextStatus === 'failed'
             ? 'complete'
             : 'monitoring';
-      const domain = nextStatus === 'failed' ? 'remote_generation' : 'none';
+      const domain = nextStatus === 'failed' || malformed ? 'remote_generation' : 'none';
       const now = this.timestamp();
       this.database
         .query(
-          `UPDATE jobs SET local_phase=?,remote_status_raw=?,remote_status=?,failure_domain=?,attention_code=NULL,progress=?,actual_credits=?,last_polled_at=?,next_poll_at=?,updated_at=?,completed_at=CASE WHEN ?='complete' THEN ? ELSE completed_at END WHERE id=?`
+          `UPDATE jobs SET local_phase=?,remote_status_raw=?,remote_status=?,failure_domain=?,attention_code=?,progress=?,actual_credits=?,last_polled_at=?,next_poll_at=?,updated_at=?,completed_at=CASE WHEN ?='complete' THEN ? ELSE completed_at END WHERE id=?`
         )
         .run(
           phase,
           status.statusRaw,
           nextStatus,
           domain,
+          malformed ? 'malformed_output_set' : null,
           progress,
           status.creditsAmount,
           now,
@@ -592,7 +683,12 @@ export class JobRepository extends DatabaseRepository {
         );
       const job = this.requireJob(jobId);
       this.append(job, 'status.observed', { observedProgress: status.progress });
-      if (nextStatus === 'finished') this.upsertOutputs(jobId, status);
+      if (malformed)
+        this.append(job, 'output_set.malformed', {
+          reason: malformed,
+          observedCount: status.files.length
+        });
+      else if (nextStatus === 'finished') this.upsertOutputs(jobId, status);
       return job;
     });
   }
@@ -621,10 +717,56 @@ export class JobRepository extends DatabaseRepository {
       return job;
     });
   }
+  private outputExpectations(job: JobRecord): {
+    mediaKind: 'image' | 'video';
+    count: number;
+  } {
+    const registry = job.entryKey
+      ? this.database
+          .query<{ modality: 'image' | 'video' }, [string, string]>(
+            'SELECT modality FROM registry_entries WHERE registry_version=? AND entry_key=?'
+          )
+          .get(job.registryVersion ?? '', job.entryKey)
+      : null;
+    const mediaKind = registry?.modality ?? (job.workflow.includes('video') ? 'video' : 'image');
+    const requestedCount = job.guidedRequest.n;
+    const count =
+      mediaKind === 'image' &&
+      typeof requestedCount === 'number' &&
+      Number.isSafeInteger(requestedCount) &&
+      requestedCount > 0
+        ? requestedCount
+        : 1;
+    return { mediaKind, count };
+  }
+  private outputSetProblem(job: JobRecord, status: PoyoStatusResult): string | null {
+    const expected = this.outputExpectations(job);
+    if (status.files.length !== expected.count)
+      return status.files.length < expected.count ? 'missing_outputs' : 'excess_outputs';
+    const urls = new Set<string>();
+    for (const file of status.files) {
+      if (file.fileType !== expected.mediaKind) return 'unsupported_output_media';
+      if (!file.url.trim()) return 'missing_output_url';
+      if (urls.has(file.url)) return 'duplicate_output_url';
+      urls.add(file.url);
+    }
+    return null;
+  }
+  private markMalformedOutputSet(jobId: string, reason: string, observedCount: number): JobRecord {
+    const now = this.timestamp();
+    this.database
+      .query(
+        `UPDATE jobs SET local_phase='requires_attention',failure_domain='remote_generation',attention_code='malformed_output_set',updated_at=? WHERE id=?`
+      )
+      .run(now, jobId);
+    const job = this.requireJob(jobId);
+    this.append(job, 'output_set.malformed', { reason, observedCount });
+    return job;
+  }
   private upsertOutputs(jobId: string, status: PoyoStatusResult): void {
     const now = this.timestamp();
     status.files.forEach((file, index) => {
-      const kind = file.fileType === 'video' ? 'video' : 'image';
+      const kind = file.fileType as 'image' | 'video';
       this.database
         .query(
           `INSERT INTO job_outputs(id,job_id,output_order,media_kind,remote_url,remote_metadata_json,content_type,byte_size,download_state,created_at) VALUES (?,?,?,?,?,?,?,?, 'pending',?) ON CONFLICT(job_id,output_order) DO UPDATE SET remote_url=excluded.remote_url,remote_metadata_json=excluded.remote_metadata_json,content_type=excluded.content_type,byte_size=COALESCE(excluded.byte_size,job_outputs.byte_size)`
@@ -729,15 +871,20 @@ export class JobRepository extends DatabaseRepository {
     });
   }
   finishIfDownloaded(jobId: string): JobRecord {
-    const pending =
-      this.database
-        .query<{ n: number }, [string]>(
-          `SELECT COUNT(*) n FROM job_outputs WHERE job_id=? AND download_state!='verified'`
+    return this.transaction(() => {
+      const job = this.requireJob(jobId);
+      const expected = this.outputExpectations(job);
+      const counts = this.database
+        .query<{ total: number; verified: number }, [string]>(
+          `SELECT COUNT(*) total,SUM(CASE WHEN download_state='verified' THEN 1 ELSE 0 END) verified FROM job_outputs WHERE job_id=?`
         )
-        .get(jobId)?.n ?? 0;
-    return pending === 0
-      ? this.transition(jobId, 'complete', 'none', null, 'job.complete')
-      : this.requireJob(jobId);
+        .get(jobId) ?? { total: 0, verified: 0 };
+      if (counts.total !== expected.count)
+        return this.markMalformedOutputSet(jobId, 'stored_output_count_mismatch', counts.total);
+      return counts.verified === expected.count
+        ? this.transition(jobId, 'complete', 'none', null, 'job.complete')
+        : job;
+    });
   }
   recordBalance(email: string, credits: number, source: string): void {
     this.database

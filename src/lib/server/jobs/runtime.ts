@@ -1,9 +1,13 @@
 import { getPlatformServices } from '../platform/runtime';
 import { createPoyoClient } from '../poyo/factory';
-import { JobCoordinator, JobWorker, type JobPoyoGateway } from './coordinator';
+import { JobCoordinator, type JobPoyoGateway, JobWorker } from './coordinator';
 import { OutputDownloader } from './downloader';
 import { JobRepository } from './repository';
-import { runtimeJobTimings, runtimeOperationsSettings } from './runtime-settings';
+import {
+  runtimeJobTimings,
+  runtimeOperationsSettings,
+  runtimeTestDownloadTransport
+} from './runtime-settings';
 
 export interface JobRuntime {
   repository: JobRepository;
@@ -28,7 +32,11 @@ async function createRuntime(): Promise<JobRuntime> {
     getStatus: async (id) => (await createGatewayClient()).getStatus(id),
     getBalance: async () => (await createGatewayClient()).getBalance()
   };
-  const downloader = new OutputDownloader({ repository, paths: platform.paths });
+  const downloader = new OutputDownloader({
+    repository,
+    paths: platform.paths,
+    ...runtimeTestDownloadTransport(platform.environment)
+  });
   const coordinator = new JobCoordinator({
     repository,
     poyo: gateway,

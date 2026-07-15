@@ -70,7 +70,7 @@ $effect(() => {
       playsinline
     ></video>
   {:else}
-    <div class="grid size-full min-h-28 place-items-center px-4 text-center text-muted-foreground">
+    <div class="grid size-full min-h-28 place-items-center px-4 text-center text-stage-muted">
       <div>
         <AppIcon name={mediaKind} size={24} class="mx-auto" />
         <p class="mt-2 text-xs font-semibold">Local preview unavailable</p>

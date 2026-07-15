@@ -7,6 +7,7 @@ export type RequestSecurityCode =
   | 'invalid_content_type'
   | 'invalid_content_length'
   | 'body_too_large'
+  | 'invalid_multipart'
   | 'invalid_json';
 
 export class RequestSecurityError extends Error {

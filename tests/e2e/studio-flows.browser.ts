@@ -88,7 +88,12 @@ test('E2E-01..15 production studios, recovery, library, settings and accessibili
   const page = await context.newPage();
   const issues = trackBrowserIssues(page);
   const browserRequests: string[] = [];
+  const failedBrowserResponses: Array<{ status: number; url: string }> = [];
   page.on('request', (request) => browserRequests.push(request.url()));
+  page.on('response', (response) => {
+    if (response.status() >= 400)
+      failedBrowserResponses.push({ status: response.status(), url: response.url() });
+  });
 
   try {
     await page.goto(harness.url);
@@ -250,7 +255,7 @@ test('E2E-01..15 production studios, recovery, library, settings and accessibili
     expect(await remixedVideoInspector.getByRole('textbox', { name: /^Prompt/ }).inputValue()).toBe(
       'Two cobalt paper sculptures for a related-output comparison'
     );
-    await remixedVideoInspector.getByText('127.0.0.1').waitFor();
+    await remixedVideoInspector.getByText('media.poyo-fixture.example').waitFor();
 
     await page.goto(`${harness.url}/studio/video`);
     const videoEditInspector = page.locator('#parameter-inspector');
@@ -265,6 +270,142 @@ test('E2E-01..15 production studios, recovery, library, settings and accessibili
     await videoEditInspector.getByText('16 × 16 px · 0.20 s').waitFor();
     await videoEditInspector.getByText('Local transfer and Poyo upload completed.').waitFor();
     await videoEditInspector.getByText('sourceVideoDuration is below minimum.').waitFor();
+
+    await page.goto(`${harness.url}/studio/image`);
+    await chooseImageTextWorkflow(page);
+    const lostResponsePrompt = 'A paid action whose local HTTP response is deliberately lost';
+    await page
+      .locator('#parameter-inspector')
+      .getByRole('textbox', { name: /^Prompt/ })
+      .fill(lostResponsePrompt);
+    await page.locator('#parameter-inspector').getByText('Request validated locally.').waitFor();
+    await page.route(
+      '**/api/jobs',
+      async (route) => {
+        await route.fetch();
+        await route.abort('failed');
+      },
+      { times: 1 }
+    );
+    await page
+      .locator('#parameter-inspector')
+      .getByRole('button', { name: 'Generate image' })
+      .click();
+    await page.getByText(/Automatic resubmission is blocked to avoid duplicate spend/).waitFor();
+    await page
+      .locator('#parameter-inspector')
+      .getByRole('button', { name: 'Reset', exact: true })
+      .click();
+    await page.getByText(/Reset is blocked until the unknown paid action is reconciled/).waitFor();
+    const pendingStorage = await page.evaluate(() =>
+      sessionStorage.getItem('poyo-studio-pending-action:image')
+    );
+    expect(pendingStorage).toContain('actionId');
+    expect(pendingStorage).not.toContain(lostResponsePrompt);
+    await page.reload();
+    await page.getByRole('link', { name: 'View job details' }).waitFor({ timeout: 15_000 });
+    expect(
+      await page.evaluate(() => sessionStorage.getItem('poyo-studio-pending-action:image'))
+    ).toBeNull();
+
+    const submitsBeforeReplay = harness.mock.requests.filter(
+      (request) => request.pathname === '/api/generate/submit'
+    ).length;
+    const paidActionReplay = await page.evaluate(async () => {
+      const actionId = crypto.randomUUID();
+      const body = {
+        actionId,
+        entryKey: 'flux-schnell:text-to-image',
+        values: { prompt: 'Concurrent stable paid action' },
+        expertOverrides: [],
+        inputs: []
+      };
+      const post = (value: unknown) =>
+        fetch('/api/jobs', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(value)
+        });
+      const [first, second] = await Promise.all([post(body), post(body)]);
+      const firstBody = (await first.json()) as { job?: { id: string } };
+      const secondBody = (await second.json()) as { job?: { id: string } };
+      const altered = await post({
+        ...body,
+        values: { prompt: 'Altered after the immutable paid action' }
+      });
+      const hostile = await post({
+        ...body,
+        actionId: crypto.randomUUID(),
+        normalizedPayload: { model: 'attacker-model', input: {} }
+      });
+      return {
+        firstStatus: first.status,
+        secondStatus: second.status,
+        firstId: firstBody.job?.id,
+        secondId: secondBody.job?.id,
+        alteredStatus: altered.status,
+        hostileStatus: hostile.status
+      };
+    });
+    expect(paidActionReplay).toMatchObject({
+      firstStatus: 202,
+      secondStatus: 202,
+      alteredStatus: 409,
+      hostileStatus: 400
+    });
+    expect(paidActionReplay.firstId).toBe(paidActionReplay.secondId);
+    await waitUntil(
+      () =>
+        harness.mock.requests.filter((request) => request.pathname === '/api/generate/submit')
+          .length ===
+        submitsBeforeReplay + 1,
+      'Stable concurrent action was not submitted exactly once.'
+    );
+
+    const ambiguousDatabase = new Database(harness.databasePath);
+    let ambiguousJobId = '';
+    try {
+      ambiguousJobId =
+        ambiguousDatabase
+          .query<{ id: string }, []>(
+            "SELECT id FROM jobs WHERE local_phase='complete' ORDER BY created_at DESC LIMIT 1"
+          )
+          .get()?.id ?? '';
+      if (!ambiguousJobId) throw new Error('No completed job was available for ambiguity UI.');
+      ambiguousDatabase
+        .query(
+          "UPDATE jobs SET local_phase='requires_attention',remote_status='unknown',attention_code='submission_unknown',failure_domain='submission',updated_at=datetime('now') WHERE id=?"
+        )
+        .run(ambiguousJobId);
+      ambiguousDatabase
+        .query("UPDATE submission_intents SET state='unknown' WHERE job_id=?")
+        .run(ambiguousJobId);
+    } finally {
+      ambiguousDatabase.close();
+    }
+    await page.goto(`${harness.url}/jobs/${ambiguousJobId}`);
+    await page.getByText('Submission outcome is unknown.').waitFor();
+    page.once('dialog', async (dialog) => {
+      expect(dialog.message()).toContain('spend credits twice');
+      await dialog.accept();
+    });
+    await page.getByRole('button', { name: 'Acknowledge risk and retry' }).click();
+    await page.waitForURL(
+      (url) => url.pathname.startsWith('/jobs/') && !url.pathname.endsWith(ambiguousJobId)
+    );
+    const retriedJobId = new URL(page.url()).pathname.split('/').at(-1) ?? '';
+    const retryDatabase = new Database(harness.databasePath, { readonly: true });
+    try {
+      expect(
+        retryDatabase
+          .query<{ retry_of_job_id: string | null }, [string]>(
+            'SELECT retry_of_job_id FROM jobs WHERE id=?'
+          )
+          .get(retriedJobId)?.retry_of_job_id
+      ).toBe(ambiguousJobId);
+    } finally {
+      retryDatabase.close();
+    }
 
     await page.goto(`${harness.url}/presets`);
     await page.getByRole('heading', { name: 'Saved presets' }).waitFor();
@@ -338,12 +479,28 @@ test('E2E-01..15 production studios, recovery, library, settings and accessibili
       return url.hostname !== '127.0.0.1' || url.port !== applicationPort;
     });
     expect(unexpectedBrowserRequests).toEqual([]);
+    const allowedFailedResponses = failedBrowserResponses.filter(({ status, url }) => {
+      const path = new URL(url).pathname;
+      return (
+        (path === '/api/requests/preview' && status === 422) ||
+        (path === '/api/jobs' && (status === 400 || status === 409))
+      );
+    });
+    expect(failedBrowserResponses).toEqual(allowedFailedResponses);
+    expect(failedBrowserResponses.filter(({ status }) => status === 400)).toHaveLength(1);
+    expect(failedBrowserResponses.filter(({ status }) => status === 409)).toHaveLength(1);
+    expect(
+      issues.consoleErrors.filter((message) => message.includes('net::ERR_FAILED'))
+    ).toHaveLength(1);
     const unexpectedConsoleErrors = issues.consoleErrors.filter(
       (message) =>
         !message.includes('ERR_INCOMPLETE_CHUNKED_ENCODING') &&
         !message.includes('TypeError: Failed to fetch') &&
         message !== 'TypeError: network error' &&
-        !message.includes('status of 422 (Unprocessable Entity)')
+        !message.includes('status of 422 (Unprocessable Entity)') &&
+        !message.includes('status of 409 (Conflict)') &&
+        !message.includes('status of 400 (Bad Request)') &&
+        !message.includes('net::ERR_FAILED')
     );
     expect(unexpectedConsoleErrors).toEqual([]);
     expect(issues.pageErrors).toEqual([]);

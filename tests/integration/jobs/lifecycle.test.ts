@@ -7,6 +7,7 @@ import type { PoyoStatusResult } from '../../../src/lib/server/poyo/types';
 import { createJobFixture, createTestJob } from '../../helpers/job-fixture';
 
 const cleanups: Array<() => Promise<void>> = [];
+const publicDns = async () => [{ address: '93.184.216.34', family: 4 as const }];
 afterEach(async () => {
   await Promise.all(cleanups.splice(0).map((cleanup) => cleanup()));
 });
@@ -73,6 +74,7 @@ describe('durable coordinator and media lifecycle', () => {
     const downloader = new OutputDownloader({
       repository: fixture.repository,
       paths: fixture.paths,
+      resolveHost: publicDns,
       fetch: async () => new Response()
     });
     const a = new JobCoordinator({
@@ -223,6 +225,7 @@ describe('durable coordinator and media lifecycle', () => {
     const downloader = new OutputDownloader({
       repository: fixture.repository,
       paths: fixture.paths,
+      resolveHost: publicDns,
       fetch: async () => {
         attempt += 1;
         return new Response(
@@ -287,6 +290,7 @@ describe('durable coordinator and media lifecycle', () => {
     const downloader = new OutputDownloader({
       repository: fixture.repository,
       paths: fixture.paths,
+      resolveHost: publicDns,
       fetch: async () =>
         new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), {
           headers: { 'content-type': 'image/png' }
@@ -340,6 +344,7 @@ describe('durable coordinator and media lifecycle', () => {
       downloader: new OutputDownloader({
         repository: fixture.repository,
         paths: fixture.paths,
+        resolveHost: publicDns,
         fetch: async () => {
           downloads += 1;
           return new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), {

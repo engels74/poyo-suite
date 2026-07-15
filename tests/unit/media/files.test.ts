@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdir, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, realpath, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   assertPrivateMediaRequest,
@@ -43,6 +43,23 @@ describe('private local media boundary', () => {
     await writeFile(outside, 'secret');
     await symlink(outside, join(root, 'escape.png'));
     await expect(safeLocalMediaPath(root, join(root, 'escape.png'))).rejects.toThrow('escapes');
+  });
+
+  test('accepts a verified absolute path through a canonical ancestor alias', async () => {
+    const temporary = await createTemporaryDirectory('poyo-media-alias-');
+    cleanups.push(temporary.cleanup);
+    const canonicalParent = join(temporary.path, 'canonical');
+    const aliasedParent = join(temporary.path, 'alias');
+    const canonicalRoot = join(canonicalParent, 'media');
+    const aliasedRoot = join(aliasedParent, 'media');
+    const canonicalFile = join(canonicalRoot, 'job', 'output.png');
+    await mkdir(join(canonicalRoot, 'job'), { recursive: true });
+    await writeFile(canonicalFile, 'image');
+    await symlink(canonicalParent, aliasedParent, 'dir');
+
+    expect(await safeLocalMediaPath(aliasedRoot, await realpath(canonicalFile))).toBe(
+      await realpath(canonicalFile)
+    );
   });
 
   test('opens only the verified containing folder with the platform command', async () => {

@@ -8,6 +8,10 @@ import { validateLocalFile } from '../poyo/uploads';
 const IMAGE_MAX_BYTES = 25 * 1024 * 1024;
 const REQUEST_MAX_BYTES = 101 * 1024 * 1024;
 
+export interface SourceIntakeOptions {
+  maxRequestBytes?: number;
+}
+
 const extensions: Record<string, string> = {
   'image/jpeg': '.jpg',
   'image/png': '.png',
@@ -32,7 +36,7 @@ export interface LocalSourceIntake {
   localPath: string;
 }
 
-function assertSameOriginMultipart(request: Request): void {
+function assertSameOriginMultipart(request: Request, maxBytes: number): string {
   const expectedOrigin = new URL(request.url).origin;
   const origin = request.headers.get('origin');
   if (!origin)
@@ -41,25 +45,164 @@ function assertSameOriginMultipart(request: Request): void {
     throw new RequestSecurityError('origin_mismatch', 403, 'Request origin does not match.');
   if (request.headers.get('sec-fetch-site') === 'cross-site')
     throw new RequestSecurityError('cross_site', 403, 'Cross-site requests are not allowed.');
-  if (!/^multipart\/form-data(?:\s*;|$)/i.test(request.headers.get('content-type') ?? ''))
+  const contentType = request.headers.get('content-type') ?? '';
+  if (!/^multipart\/form-data(?:\s*;|$)/i.test(contentType))
     throw new RequestSecurityError(
       'invalid_content_type',
       415,
       'Source intake requires multipart/form-data.'
     );
+  const boundaryMatch = /(?:^|;)\s*boundary=(?:"([^"\r\n]{1,70})"|([^;\s\r\n]{1,70}))/i.exec(
+    contentType
+  );
+  const boundary = boundaryMatch?.[1] ?? boundaryMatch?.[2];
+  if (
+    !boundary ||
+    Array.from(boundary).some((character) => {
+      const code = character.charCodeAt(0);
+      return code <= 32 || code === 127;
+    })
+  ) {
+    throw new RequestSecurityError('invalid_multipart', 400, 'Multipart boundary is invalid.');
+  }
   const declared = request.headers.get('content-length');
-  if (declared && (!Number.isSafeInteger(Number(declared)) || Number(declared) > REQUEST_MAX_BYTES))
-    throw new RequestSecurityError('body_too_large', 413, 'Source upload is too large.');
+  if (declared !== null) {
+    const length = Number(declared);
+    if (!Number.isSafeInteger(length) || length < 0) {
+      throw new RequestSecurityError('invalid_content_length', 400, 'Invalid Content-Length.');
+    }
+    if (length > maxBytes)
+      throw new RequestSecurityError('body_too_large', 413, 'Source upload is too large.');
+  }
+  return boundary;
+}
+
+async function boundedFormData(
+  request: Request,
+  maxBytes: number,
+  boundary: string
+): Promise<FormData> {
+  if (!request.body) throw new Error('Source upload body is missing.');
+  let received = 0;
+  let lastBoundaryOffset = -1;
+  let partCount = 0;
+  let tail = '';
+  const marker = `--${boundary}`;
+  const decoder = new TextDecoder('latin1');
+  const reader = request.body.getReader();
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) {
+          controller.close();
+          return;
+        }
+        received += value.byteLength;
+        if (received > maxBytes) {
+          await reader.cancel('request body too large');
+          controller.error(
+            new RequestSecurityError('body_too_large', 413, 'Source upload is too large.')
+          );
+          return;
+        }
+        const startOffset = received - value.byteLength - tail.length;
+        const sample = tail + decoder.decode(value);
+        let markerOffset = sample.indexOf(marker);
+        while (markerOffset !== -1) {
+          const absoluteOffset = startOffset + markerOffset;
+          const precededByLine =
+            absoluteOffset === 0 || sample.slice(markerOffset - 2, markerOffset) === '\r\n';
+          const suffix = sample.slice(
+            markerOffset + marker.length,
+            markerOffset + marker.length + 2
+          );
+          if (absoluteOffset > lastBoundaryOffset && precededByLine && suffix === '\r\n') {
+            lastBoundaryOffset = absoluteOffset;
+            partCount += 1;
+            if (partCount > 2) {
+              await reader.cancel('too many multipart parts');
+              controller.error(
+                new RequestSecurityError(
+                  'invalid_multipart',
+                  400,
+                  'Source upload requires exactly one file and one media kind.'
+                )
+              );
+              return;
+            }
+          }
+          markerOffset = sample.indexOf(marker, markerOffset + marker.length);
+        }
+        tail = sample.slice(-(marker.length + 4));
+        controller.enqueue(value);
+      } catch (error) {
+        controller.error(error);
+      }
+    },
+    cancel(reason) {
+      return reader.cancel(reason);
+    }
+  });
+  return new Response(body, {
+    headers: { 'content-type': request.headers.get('content-type') ?? '' }
+  }).formData();
+}
+
+function requiredParts(form: FormData): { file: File; mediaKind: 'image' | 'video' } {
+  const entries = [...form.entries()];
+  const files = form.getAll('file');
+  const mediaKinds = form.getAll('mediaKind');
+  if (
+    entries.length !== 2 ||
+    files.length !== 1 ||
+    mediaKinds.length !== 1 ||
+    entries.some(([name]) => name !== 'file' && name !== 'mediaKind') ||
+    !(files[0] instanceof File) ||
+    (mediaKinds[0] !== 'image' && mediaKinds[0] !== 'video')
+  ) {
+    throw new RequestSecurityError(
+      'invalid_multipart',
+      400,
+      'Source upload requires exactly one file and one media kind.'
+    );
+  }
+  return { file: files[0], mediaKind: mediaKinds[0] };
 }
 
 function hasSignature(type: string, bytes: Uint8Array): boolean {
   const ascii = (start: number, end: number) => new TextDecoder().decode(bytes.slice(start, end));
-  if (type === 'image/jpeg') return bytes[0] === 0xff && bytes[1] === 0xd8;
-  if (type === 'image/png') return ascii(1, 4) === 'PNG';
-  if (type === 'image/gif') return ascii(0, 3) === 'GIF';
+  if (type === 'image/jpeg') return bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  if (type === 'image/png')
+    return (
+      bytes[0] === 0x89 &&
+      ascii(1, 4) === 'PNG' &&
+      bytes[4] === 0x0d &&
+      bytes[5] === 0x0a &&
+      bytes[6] === 0x1a &&
+      bytes[7] === 0x0a
+    );
+  if (type === 'image/gif') return ascii(0, 6) === 'GIF87a' || ascii(0, 6) === 'GIF89a';
   if (type === 'image/webp') return ascii(0, 4) === 'RIFF' && ascii(8, 12) === 'WEBP';
-  if (type === 'video/mp4' || type === 'video/quicktime') return ascii(4, 8) === 'ftyp';
-  if (type === 'video/x-msvideo') return ascii(0, 4) === 'RIFF' && ascii(8, 11) === 'AVI';
+  if (type === 'video/mp4')
+    return (
+      ascii(4, 8) === 'ftyp' &&
+      [
+        'isom',
+        'iso2',
+        'iso3',
+        'iso4',
+        'iso5',
+        'iso6',
+        'mp41',
+        'mp42',
+        'avc1',
+        'dash',
+        'M4V '
+      ].includes(ascii(8, 12))
+    );
+  if (type === 'video/quicktime') return ascii(4, 8) === 'ftyp' && ascii(8, 12) === 'qt  ';
+  if (type === 'video/x-msvideo') return ascii(0, 4) === 'RIFF' && ascii(8, 12) === 'AVI ';
   if (type === 'video/webm' || type === 'video/x-matroska')
     return bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3;
   return false;
@@ -98,15 +241,14 @@ async function writeStreamed(file: File, destination: string): Promise<string> {
 
 export async function intakeLocalSource(
   request: Request,
-  paths: AppPaths
+  paths: AppPaths,
+  options: SourceIntakeOptions = {}
 ): Promise<LocalSourceIntake> {
-  assertSameOriginMultipart(request);
-  const form = await request.formData();
-  const file = form.get('file');
-  const requestedKind = form.get('mediaKind');
-  if (!(file instanceof File)) throw new Error('Choose one local source file.');
-  if (requestedKind !== 'image' && requestedKind !== 'video')
-    throw new Error('Source media kind must be image or video.');
+  const maxRequestBytes = options.maxRequestBytes ?? REQUEST_MAX_BYTES;
+  const boundary = assertSameOriginMultipart(request, maxRequestBytes);
+  const { file, mediaKind: requestedKind } = requiredParts(
+    await boundedFormData(request, maxRequestBytes, boundary)
+  );
   if (requestedKind === 'image' && file.size > IMAGE_MAX_BYTES)
     throw new Error('Local image sources are limited to 25 MB.');
   const type = file.type.toLowerCase();

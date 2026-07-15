@@ -45,6 +45,26 @@ function uploadRequest(bytes: Uint8Array, type = 'image/png', origin?: string): 
   });
 }
 
+function chunkedMultipartRequest(body: Uint8Array, boundary: string): Request {
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (let offset = 0; offset < body.length; offset += 32) {
+        controller.enqueue(body.slice(offset, offset + 32));
+      }
+      controller.close();
+    }
+  });
+  return new Request('http://127.0.0.1:5173/api/sources', {
+    method: 'POST',
+    headers: {
+      origin: 'http://127.0.0.1:5173',
+      'content-type': `multipart/form-data; boundary=${boundary}`
+    },
+    body: stream,
+    duplex: 'half'
+  } as RequestInit & { duplex: 'half' });
+}
+
 describe('local source intake', () => {
   test('UPLOAD-01 requires same origin, validates signatures and atomically retains a local source', async () => {
     const { paths, repository } = await fixture();
@@ -81,6 +101,47 @@ describe('local source intake', () => {
       'http://127.0.0.1:5173'
     );
     await expect(intakeLocalSource(request, paths)).rejects.toThrow('signature');
+    await expect(
+      intakeLocalSource(
+        uploadRequest(
+          new Uint8Array([0, 0x50, 0x4e, 0x47, 0, 0, 0, 0]),
+          'image/png',
+          'http://127.0.0.1:5173'
+        ),
+        paths
+      )
+    ).rejects.toThrow('signature');
+  });
+
+  test('UPLOAD-02B bounds chunked aggregate multipart bytes before formData parsing', async () => {
+    const { paths } = await fixture();
+    const boundary = 'poyo-boundary';
+    const body = new TextEncoder().encode(
+      `--${boundary}\r\nContent-Disposition: form-data; name="mediaKind"\r\n\r\nimage\r\n` +
+        `--${boundary}\r\nContent-Disposition: form-data; name="padding"\r\n\r\n${'x'.repeat(512)}\r\n` +
+        `--${boundary}--\r\n`
+    );
+    const request = chunkedMultipartRequest(body, boundary);
+    expect(request.headers.get('content-length')).toBeNull();
+    await expect(intakeLocalSource(request, paths, { maxRequestBytes: 128 })).rejects.toMatchObject(
+      { code: 'body_too_large', status: 413 }
+    );
+  });
+
+  test('UPLOAD-02C rejects duplicate or unexpected multipart fields', async () => {
+    const { paths } = await fixture();
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const form = new FormData();
+    form.append('mediaKind', 'image');
+    form.append('mediaKind', 'image');
+    form.append('file', new File([png], 'source.png', { type: 'image/png' }));
+    form.append('note', 'unexpected');
+    const request = new Request('http://127.0.0.1:5173/api/sources', {
+      method: 'POST',
+      headers: { origin: 'http://127.0.0.1:5173' },
+      body: form
+    });
+    await expect(intakeLocalSource(request, paths)).rejects.toThrow('exactly one');
   });
 
   test('UPLOAD-03 reconciles missing copies and rejects a corrupted traversal path', async () => {

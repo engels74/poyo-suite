@@ -15,7 +15,7 @@ function percentile95(samples: number[]): number {
   return sorted[Math.max(0, Math.ceil(sorted.length * 0.95) - 1)] ?? 0;
 }
 
-function measure(operation: () => void, iterations = 12): number {
+function measure(operation: () => void, iterations = 20): number {
   operation();
   const samples = Array.from({ length: iterations }, () => {
     const started = performance.now();

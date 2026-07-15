@@ -4,13 +4,13 @@ import {
   initialGuidedValues,
   mediaAccept,
   parseExpertOverrides,
+  nextMonotonicEventId,
   presetValues,
   sizeModes,
   valuesWithRoleInputs,
   visibleFields
 } from '../../../src/lib/features/generation/studio-controller';
 import { IMAGE_REGISTRY_ENTRIES } from '../../../src/lib/features/registry/image-registry';
-import { normalizeRegistryRequest } from '../../../src/lib/features/registry/normalize-registry';
 import { VIDEO_REGISTRY_ENTRIES } from '../../../src/lib/features/registry/video-registry';
 
 function imageEntry(key: string) {
@@ -109,16 +109,21 @@ describe('registry-driven studio controller', () => {
     expect(JSON.stringify(values)).not.toContain('Blob');
   });
 
-  test('STUDIO-05 creates the exact validated job request and correct upload accept list', () => {
+  test('STUDIO-05 sends only guided values, media roles, expert overrides and an opaque action', () => {
     const entry = imageEntry('seedream-5.0-pro:text-to-image');
     const guided = { prompt: 'quiet editorial portrait', resolution: '2K' };
-    const preview = normalizeRegistryRequest(entry.key, guided);
-    expect(createJobRequest(entry, guided, preview)).toMatchObject({
-      workflow: 'text-to-image',
-      publicModelId: 'seedream-5.0-pro',
-      normalizedPayload: preview.request,
-      prompt: guided.prompt
+    const actionId = '019b0000-0000-7000-8000-000000000001';
+    const request = createJobRequest(actionId, entry, guided, []);
+    expect(request).toEqual({
+      actionId,
+      entryKey: entry.key,
+      values: guided,
+      expertOverrides: [],
+      inputs: []
     });
+    expect(request).not.toHaveProperty('workflow');
+    expect(request).not.toHaveProperty('publicModelId');
+    expect(request).not.toHaveProperty('normalizedPayload');
     const role = imageEntry('flux-2-pro-edit:image-edit').inputRoles[0];
     if (!role) throw new Error('Missing reference role.');
     expect(mediaAccept(role)).toBe('image/jpeg,image/png,image/gif,image/webp');
@@ -143,14 +148,15 @@ describe('registry-driven studio controller', () => {
         }
       ]
     };
-    const guided = valuesWithRoleInputs(
-      entry,
-      { ...initialGuidedValues(entry), prompt: 'Reframe the source' },
-      roleInputs
-    );
-    const preview = normalizeRegistryRequest(entry.key, guided);
-
-    expect(createJobRequest(entry, guided, preview, roleInputs).inputs[0]).toMatchObject({
+    expect(
+      createJobRequest(
+        '019b0000-0000-7000-8000-000000000002',
+        entry,
+        { prompt: 'Reframe the source' },
+        [],
+        roleInputs
+      ).inputs[0]
+    ).toMatchObject({
       localSourceId: 'source-1',
       metadata: {
         name: 'reference.png',
@@ -160,5 +166,14 @@ describe('registry-driven studio controller', () => {
         metadataProbe: 'measured'
       }
     });
+  });
+
+  test('SSE-03 accepts only strictly monotonic durable event IDs', () => {
+    expect(nextMonotonicEventId(-1, '0')).toBe(0);
+    expect(nextMonotonicEventId(9, '10')).toBe(10);
+    expect(nextMonotonicEventId(10, '10')).toBeNull();
+    expect(nextMonotonicEventId(10, '9')).toBeNull();
+    expect(nextMonotonicEventId(10, '')).toBeNull();
+    expect(nextMonotonicEventId(10, 'not-an-id')).toBeNull();
   });
 });

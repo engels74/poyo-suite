@@ -39,6 +39,7 @@ describe('durable job repository invariants', () => {
     const fixture = await createJobFixture();
     cleanups.push(fixture.cleanup);
     const request = {
+      actionId: '019b0000-0000-7000-8000-000000000101',
       workflow: 'text-to-image',
       publicModelId: 'provider/model',
       guidedRequest: { prompt: 'same reviewed settings' },
@@ -48,13 +49,50 @@ describe('durable job repository invariants', () => {
       }
     };
     const first = fixture.repository.create(request);
-    const second = fixture.repository.create(request);
+    const second = fixture.repository.create({
+      ...request,
+      actionId: '019b0000-0000-7000-8000-000000000102'
+    });
     expect(second.id).not.toBe(first.id);
     expect(
       fixture.database
         .query<{ count: number }, []>('SELECT COUNT(*) count FROM submission_intents')
         .get()?.count
     ).toBe(2);
+  });
+
+  test('JOB-02 replays one stable paid action and rejects an altered immutable request', async () => {
+    const fixture = await createJobFixture();
+    cleanups.push(fixture.cleanup);
+    const request = {
+      actionId: '019b0000-0000-7000-8000-000000000103',
+      workflow: 'text-to-image',
+      publicModelId: 'provider/model',
+      guidedRequest: { prompt: 'one reviewed action' },
+      normalizedPayload: {
+        model: 'provider/model',
+        input: { prompt: 'one reviewed action' }
+      },
+      expectedMediaKind: 'image' as const,
+      expectedOutputCount: 1
+    };
+    const first = fixture.repository.create(request);
+    const replay = fixture.repository.create(request);
+    expect(replay.id).toBe(first.id);
+    expect(
+      fixture.database
+        .query<{ count: number }, []>('SELECT COUNT(*) count FROM submission_intents')
+        .get()?.count
+    ).toBe(1);
+    expect(() =>
+      fixture.repository.create({
+        ...request,
+        normalizedPayload: {
+          model: 'provider/model',
+          input: { prompt: 'altered after the first request' }
+        }
+      })
+    ).toThrow('different immutable request');
   });
 
   test('JOB-03 freezes expired possible transmission and creates a linked explicit retry', async () => {
@@ -71,10 +109,82 @@ describe('durable job repository invariants', () => {
       attentionCode: 'submission_unknown',
       remoteStatus: 'unknown'
     });
-    const retry = fixture.repository.retryAmbiguous(job.id);
+    const retryActionId = '019b0000-0000-7000-8000-000000000104';
+    const retry = fixture.repository.retryAmbiguous(job.id, retryActionId);
+    const replay = fixture.repository.retryAmbiguous(job.id, retryActionId);
     expect(retry.retryOfJobId).toBe(job.id);
     expect(retry.id).not.toBe(job.id);
+    expect(replay.id).toBe(retry.id);
   });
+
+  test.each([
+    ['zero outputs', 1, []],
+    ['partial outputs', 2, [{ url: 'https://poyo.test/a.png', fileType: 'image' }]],
+    [
+      'duplicate outputs',
+      2,
+      [
+        { url: 'https://poyo.test/output.png', fileType: 'image' },
+        { url: 'https://poyo.test/output.png', fileType: 'image' }
+      ]
+    ],
+    [
+      'excess outputs',
+      1,
+      [
+        { url: 'https://poyo.test/a.png', fileType: 'image' },
+        { url: 'https://poyo.test/b.png', fileType: 'image' }
+      ]
+    ],
+    ['unsupported audio', 1, [{ url: 'https://poyo.test/output.mp3', fileType: 'audio' }]],
+    ['unknown media', 1, [{ url: 'https://poyo.test/output.bin', fileType: 'binary' }]]
+  ])(
+    'JOB-11 marks a finished task with %s as malformed instead of complete',
+    async (_name, expectedOutputCount, files) => {
+      const fixture = await createJobFixture();
+      cleanups.push(fixture.cleanup);
+      const job = fixture.repository.create({
+        actionId: crypto.randomUUID(),
+        workflow: 'text-to-image',
+        publicModelId: 'provider/model',
+        guidedRequest: { prompt: 'strict output set', n: expectedOutputCount },
+        normalizedPayload: {
+          model: 'provider/model',
+          input: { prompt: 'strict output set', n: expectedOutputCount }
+        },
+        expectedMediaKind: 'image',
+        expectedOutputCount
+      });
+      fixture.repository.applyStatus(
+        job.id,
+        {
+          taskId: 'task-malformed',
+          statusRaw: 'finished',
+          status: 'finished',
+          creditsAmount: 1,
+          files: files.map((file, index) => ({
+            ...file,
+            label: null,
+            format: null,
+            contentType: null,
+            fileName: `output-${index}`,
+            fileSize: null
+          })),
+          createdTime: 'now',
+          progress: null,
+          errorMessage: null
+        },
+        1000
+      );
+      expect(fixture.repository.get(job.id)).toMatchObject({
+        remoteStatus: 'finished',
+        localPhase: 'requires_attention',
+        failureDomain: 'remote_generation',
+        attentionCode: 'malformed_output_set'
+      });
+      expect(fixture.repository.outputs(job.id)).toHaveLength(0);
+    }
+  );
 
   test('JOB-09 safely reclaims expired owner-token leases and rejects stale completion', async () => {
     const fixture = await createJobFixture();
@@ -100,6 +210,7 @@ describe('durable job repository invariants', () => {
     cleanups.push(fixture.cleanup);
     expect(() =>
       fixture.repository.create({
+        actionId: crypto.randomUUID(),
         workflow: 'text-to-image',
         publicModelId: 'model',
         guidedRequest: {},
@@ -167,6 +278,7 @@ describe('durable job repository invariants', () => {
         '2026-07-15T12:00:00.000Z'
       );
     const job = fixture.repository.create({
+      actionId: crypto.randomUUID(),
       workflow: 'image-to-image',
       publicModelId: 'provider/model',
       guidedRequest: { prompt: 'reuse the retained source' },

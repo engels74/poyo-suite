@@ -429,6 +429,7 @@ describe('local cleanup policy, preview and durable execution', () => {
     const source = await setup.source();
     const createReference = (suffix: string) =>
       setup.repository.create({
+        actionId: crypto.randomUUID(),
         workflow: 'image-to-image',
         publicModelId: 'provider/model',
         guidedRequest: { prompt: suffix },
@@ -545,6 +546,7 @@ describe('local cleanup policy, preview and durable execution', () => {
     const preview = await service.preview('file');
     service.apply(preview.token, true);
     const active = setup.repository.create({
+      actionId: crypto.randomUUID(),
       workflow: 'image-to-image',
       publicModelId: 'provider/model',
       guidedRequest: { prompt: 'active reference' },

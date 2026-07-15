@@ -8,18 +8,16 @@ import type { RequestHandler } from './$types';
 export const POST: RequestHandler = async ({ request, params }) => {
   try {
     const body = await readSameOriginJson<{
-      acknowledgeNewPaidJob: boolean;
+      acknowledgeDuplicateSpendRisk: boolean;
       actionId: string;
-    }>(request, {
-      maxBytes: 1024
-    });
-    if (body.acknowledgeNewPaidJob !== true)
+    }>(request, { maxBytes: 1024 });
+    if (body.acknowledgeDuplicateSpendRisk !== true)
       throw new JobRequestError(
-        'paid_action_acknowledgement_required',
-        'Explicit acknowledgement is required for a new paid job.'
+        'duplicate_spend_acknowledgement_required',
+        'Explicit acknowledgement of duplicate-spend risk is required.'
       );
     const runtime = await getJobRuntime();
-    const job = runtime.repository.rerunAsNew(params.jobId, body.actionId);
+    const job = runtime.repository.retryAmbiguous(params.jobId, body.actionId);
     void runtime.coordinator.reconcile(job.id).catch(() => undefined);
     return Response.json({ job: safeJobDto(job) }, { status: 202 });
   } catch (error) {
