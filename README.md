@@ -39,9 +39,6 @@ The project is independent and is not an official Poyo.ai client.
 - Indefinite local retention by default; age, storage-size, and free-space cleanup remain
   opt-in, with exclusions and preview/confirmation for manual bulk cleanup.
 
-See the [Poyo API and model audit](docs/poyo-api-model-audit.md) for the complete coverage
-matrix and known upstream limitations.
-
 ## Quick start
 
 ### Requirements
@@ -94,9 +91,7 @@ variables in `.env.example` are set:
 | Linux | `${XDG_DATA_HOME:-~/.local/share}/poyo-local-studio` |
 
 The root contains SQLite data, retained uploads, verified media, logs, temporary files, a
-reserved thumbnail directory, and—only when required—the local secret-store directory. Review
-[Architecture, operations, and privacy](docs/architecture/operations-and-privacy.md) for the
-data flow and the exact information that can leave the machine.
+reserved thumbnail directory, and—only when required—the local secret-store directory.
 
 ## Important upstream limitations
 
@@ -143,17 +138,6 @@ unless explicitly enabled:
 env -u POYO_API_KEY PLS_RUN_PUBLIC_DOWNLOAD_TEST=1 \
   bun test ./tests/live/public-download.live.ts
 ```
-
-- [Repeatable registry audit](docs/registry-audit.md)
-- [Optional live integration procedure](docs/live-integration.md)
-
-## Documentation
-
-- [Poyo API and model audit](docs/poyo-api-model-audit.md)
-- [Architecture, operations, and privacy](docs/architecture/operations-and-privacy.md)
-- [Registry audit process](docs/registry-audit.md)
-- [Optional live integration procedure](docs/live-integration.md)
-- [Technical rule provenance](docs/architecture/tech-stack-rule-provenance.md)
 
 ## License
 
