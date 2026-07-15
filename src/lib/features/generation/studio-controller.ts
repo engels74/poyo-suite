@@ -227,6 +227,12 @@ export function nextMonotonicEventId(current: number, raw: string): number | nul
   return Number.isSafeInteger(next) && next > current ? next : null;
 }
 
+const pendingActionRecoveryDelays = [0, 150, 300, 600, 1200, 2400] as const;
+
+export function pendingActionRecoveryDelay(attempt: number): number | null {
+  return pendingActionRecoveryDelays[attempt] ?? null;
+}
+
 export function mediaAccept(role: InputRole): string {
   return role.formats
     .map((format) =>

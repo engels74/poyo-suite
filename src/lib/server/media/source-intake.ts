@@ -1,9 +1,16 @@
-import { mkdir, rename, unlink } from 'node:fs/promises';
-import { basename, join } from 'node:path';
+import { constants } from 'node:fs';
+import { link, open, rm } from 'node:fs/promises';
+import { basename } from 'node:path';
 import type { AppPaths } from '../platform/app-paths';
 import { resolvePathWithin } from '../platform/app-paths';
 import { RequestSecurityError } from '../platform/request-security';
 import { validateLocalFile } from '../poyo/uploads';
+import {
+  assertCanonicalDirectory,
+  ensureCanonicalChildDirectory,
+  ensureCanonicalRoot,
+  syncDirectory
+} from './filesystem-boundary';
 
 const IMAGE_MAX_BYTES = 25 * 1024 * 1024;
 const REQUEST_MAX_BYTES = 101 * 1024 * 1024;
@@ -217,7 +224,11 @@ function safeOriginalName(value: string): string {
 }
 
 async function writeStreamed(file: File, destination: string): Promise<string> {
-  const writer = Bun.file(destination).writer();
+  const handle = await open(
+    destination,
+    constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW,
+    0o600
+  );
   const reader = file.stream().getReader();
   const hasher = new Bun.CryptoHasher('sha256');
   let written = 0;
@@ -227,15 +238,19 @@ async function writeStreamed(file: File, destination: string): Promise<string> {
       if (done) break;
       hasher.update(value);
       written += value.byteLength;
-      writer.write(value);
+      let offset = 0;
+      while (offset < value.byteLength) {
+        const result = await handle.write(value, offset, value.byteLength - offset);
+        if (result.bytesWritten <= 0) throw new Error('The local source copy is incomplete.');
+        offset += result.bytesWritten;
+      }
     }
-    writer.flush();
-    writer.end();
     if (written !== file.size) throw new Error('The local source copy is incomplete.');
+    await handle.sync();
     return hasher.digest('hex');
-  } catch (error) {
-    writer.end();
-    throw error;
+  } finally {
+    await reader.cancel().catch(() => undefined);
+    await handle.close();
   }
 }
 
@@ -269,16 +284,28 @@ export async function intakeLocalSource(
   const id = crypto.randomUUID();
   const createdAt = new Date().toISOString();
   const bucket = createdAt.slice(0, 7);
-  const directory = resolvePathWithin(paths.uploads, bucket);
-  await mkdir(directory, { recursive: true, mode: 0o700 });
-  const destination = resolvePathWithin(paths.uploads, join(bucket, `${id}${extension}`));
-  const temporary = resolvePathWithin(paths.temporary, `${id}.part`);
+  const uploadRoot = await ensureCanonicalRoot(paths.uploads, 'Managed source upload');
+  const temporaryRoot = await ensureCanonicalRoot(paths.temporary, 'Managed source temporary');
+  const directory = await ensureCanonicalChildDirectory(
+    uploadRoot,
+    bucket,
+    'Managed source upload'
+  );
+  const destination = resolvePathWithin(directory.path, `${id}${extension}`);
+  const temporary = resolvePathWithin(temporaryRoot, `${id}.part`);
   let checksum: string;
+  let published = false;
   try {
     checksum = await writeStreamed(file, temporary);
-    await rename(temporary, destination);
+    await assertCanonicalDirectory(uploadRoot, directory.path, 'Managed source upload');
+    await assertCanonicalDirectory(temporaryRoot, temporaryRoot, 'Managed source temporary');
+    await link(temporary, destination);
+    published = true;
+    await syncDirectory(directory.path);
+    await rm(temporary);
   } catch (error) {
-    await unlink(temporary).catch(() => undefined);
+    await rm(temporary, { force: true }).catch(() => undefined);
+    if (published) await rm(destination, { force: true }).catch(() => undefined);
     throw error;
   }
   return {

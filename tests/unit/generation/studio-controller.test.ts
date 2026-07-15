@@ -3,8 +3,9 @@ import {
   createJobRequest,
   initialGuidedValues,
   mediaAccept,
-  parseExpertOverrides,
   nextMonotonicEventId,
+  parseExpertOverrides,
+  pendingActionRecoveryDelay,
   presetValues,
   sizeModes,
   valuesWithRoleInputs,
@@ -175,5 +176,27 @@ describe('registry-driven studio controller', () => {
     expect(nextMonotonicEventId(10, '9')).toBeNull();
     expect(nextMonotonicEventId(10, '')).toBeNull();
     expect(nextMonotonicEventId(10, 'not-an-id')).toBeNull();
+  });
+
+  test('JOB-12 keeps recovery bounded without treating one early 404 as authoritative', () => {
+    expect(Array.from({ length: 6 }, (_, attempt) => pendingActionRecoveryDelay(attempt))).toEqual([
+      0, 150, 300, 600, 1200, 2400
+    ]);
+    expect(pendingActionRecoveryDelay(6)).toBeNull();
+  });
+
+  test('JOB-12 unresolved actions stay locked until explicit duplicate-spend acknowledgement', async () => {
+    const workspace = await Bun.file('src/lib/components/studio/StudioWorkspace.svelte').text();
+    expect(workspace).toContain('Acknowledge risk and start a new action');
+    expect(workspace).toContain('spend credits twice');
+    expect(workspace).toContain('recoveryConcluded = onlyNotFound');
+    expect(workspace).not.toContain('if (response.status === 404) {\n      clearPendingAction');
+  });
+
+  test('SSE-04 Jobs page uses the same durable lastEventId gate as Studio', async () => {
+    const page = await Bun.file('src/routes/jobs/+page.svelte').text();
+    expect(page).toContain('nextMonotonicEventId');
+    expect(page).toContain('event.lastEventId');
+    expect(page).toContain('if (next === null) return');
   });
 });

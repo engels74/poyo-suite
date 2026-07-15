@@ -112,41 +112,59 @@ reconnection synchronize from SQLite.
 - Local source intake requires a same-origin multipart request, validates size, MIME type, and
   file signature, bounds aggregate request bytes while the body stream is consumed, accepts
   exactly one file and one media-kind field, then streams the validated file to retained
-  private upload storage.
+  private upload storage. The configured upload and temporary roots, the monthly upload
+  bucket, and the published file are canonicalized independently. Root leaves and managed
+  children must be real directories rather than symbolic links; an existing symbolic-link
+  ancestor such as a macOS path alias is accepted only when its canonical target remains
+  inside the configured root. Temporary files use exclusive/no-follow creation, are synced,
+  and are published by a no-overwrite hard link after the directories are rechecked.
 - The server streams that retained source to Poyo. Image formats are JPEG, PNG, GIF, and WebP;
   video formats are MP4, WebM, MOV, AVI, and MKV. Poyo's streaming video limit is 100 MiB.
 - Base64 is accepted only for image sources up to 5 MiB by the server client. Large files and
   video are never converted to base64.
 
-Moving files outside the managed directories cannot affect retained uploads, but deleting the
-managed upload directory removes the local source copy. Poyo upload expiration is stored when
-returned. Poyo documents no upload-deletion endpoint.
+Managed-source registration, restart reconciliation, legacy-reference adoption, and deletion
+all use the same canonical containment boundary. A swapped parent link cannot make an outside
+same-size file look present or eligible for deletion. Unsafe or missing legacy absolute
+references are deliberately left unadopted for operator review rather than being rewritten as
+trusted managed sources. Moving files outside the managed directories cannot affect retained
+uploads, but deleting the managed upload directory removes the local source copy. Poyo upload
+expiration is stored when returned. Poyo documents no upload-deletion endpoint.
 
 ### Outputs
 
 Downloads use a private per-job directory and an unpredictable `.partial` filename. The
 downloader:
 
-1. accepts only credential-free HTTP(S), resolves every DNS answer, rejects any non-public or
-   unknown IPv4/IPv6 address, connects directly to one validated address with the original
-   Host/TLS name, refuses redirects, and enforces a 2 GiB local maximum;
-2. streams bytes directly to disk while computing SHA-256;
-3. rejects empty files and mismatched declared/Poyo lengths;
-4. derives PNG/JPEG/GIF/WebP/MP4/MOV/WebM type from a strict signature allowlist and rejects
+1. accepts only credential-free HTTP(S), resolves every DNS answer, normalizes IPv4-mapped
+   IPv6, rejects any non-public or unknown IPv4/IPv6 address, and installs a lookup callback
+   that can return only the selected validated address while preserving the original Host and
+   TLS server name;
+2. refuses redirects and compressed transfer encodings; limits response headers to 16 KiB;
+   bounds connect/TLS/header waiting at 30 seconds, each idle body read at 30 seconds, the
+   entire operation—including DNS resolution—at 30 minutes, and local output at 2 GiB;
+3. streams bytes directly to disk while computing SHA-256;
+4. rejects empty files and mismatched declared/Poyo lengths;
+5. derives PNG/JPEG/GIF/WebP/MP4/MOV/WebM type from a strict signature allowlist and rejects
    unsupported, generic-with-unknown-signature, mismatched, or wrong-kind bytes;
-5. flushes and syncs the temporary file;
-6. rejects symlinked roots/parents, opens the partial leaf with exclusive/no-follow flags, and
+6. flushes and syncs the temporary file;
+7. rejects symlinked roots/parents, opens the partial leaf with exclusive/no-follow flags, and
    publishes it with a no-overwrite hard link to a sanitized destination;
-7. records verification metadata in SQLite.
+8. durably records an output-specific publication receipt before the link, syncs the containing
+   directory, and then records verification metadata in SQLite. After a crash in that window,
+   restart recovery re-hashes and signature-checks the exact receipt target before adoption. A
+   changed collision is preserved and a collision-safe alternate name is used instead.
 
 Poyo documents no stable output-host allowlist. The downloader therefore trusts the operating
-system's DNS result only after validating every returned address, and production connections
-use the pinned address rather than resolving the hostname again; the connected peer address is
-also revalidated. This closes the normal DNS-rebinding interval, while still relying on Bun's
-documented `node:http`/`node:https` compatibility and the operator's OS resolver. Portable
-JavaScript exposes no cross-platform `openat`-style directory descriptor API, so a malicious
-same-account filesystem actor could still race the final parent check; private `0700`
-application directories, repeated realpath checks, no-follow partial creation, and
+system's DNS result only after validating every returned address. Production requests retain
+the original hostname but replace the request resolver with an exact, one-address lookup, so
+Bun cannot perform a second system DNS query or select a different family address. The request
+does not depend on Bun exposing `socket.remoteAddress`, which is absent in the supported Bun
+runtime. This closes the normal DNS-rebinding interval while still relying on Bun's documented
+`node:http`/`node:https` compatibility and the operator's OS resolver. Portable JavaScript
+exposes no cross-platform `openat`-style directory descriptor API, so a malicious same-account
+filesystem actor could still race the final parent check; private `0700` application
+directories, repeated canonical checks, no-follow temporary creation, durable receipts, and
 collision-safe publication make that residual local race substantially narrower.
 
 A generation may therefore be remotely successful while one or more local downloads require

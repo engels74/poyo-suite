@@ -104,6 +104,40 @@ describe('server-authoritative paid request preparation', () => {
           resolve
         )
       ).rejects.toThrow('Unsupported guided field');
+
+      for (const [entryKey, values, message] of [
+        ['flux-schnell:text-to-image', { prompt: { injected: true } }, 'prompt must be a string'],
+        ['flux-schnell:text-to-image', { prompt: 'render', n: '4' }, 'n must be an integer'],
+        [
+          'seedream-4.5:text-to-image',
+          { prompt: 'render', enableSafetyChecker: 'false' },
+          'enableSafetyChecker must be boolean'
+        ],
+        [
+          'happy-horse:text-to-video',
+          { prompt: 'animate', duration: '5' },
+          'duration must be an integer'
+        ],
+        [
+          'happy-horse:text-to-video',
+          { prompt: 'animate', duration: 5, enableSafetyChecker: 'false' },
+          'enableSafetyChecker must be boolean'
+        ],
+        ['happy-horse:text-to-video', { prompt: null, duration: 5 }, 'prompt must be a string'],
+        [
+          'happy-horse:text-to-video',
+          { prompt: 'animate', duration: 5, unknownField: [] },
+          'Unsupported guided field'
+        ]
+      ] as const) {
+        await expect(
+          prepareJobCreateRequest(
+            fixture.database,
+            { actionId, entryKey, values, expertOverrides: [], inputs: [] },
+            resolve
+          )
+        ).rejects.toThrow(message);
+      }
     } finally {
       await fixture.cleanup();
     }

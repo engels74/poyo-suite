@@ -1,6 +1,6 @@
 import type { Database } from 'bun:sqlite';
-import { valuesWithRoleInputs } from '../../features/generation/studio-controller';
 import type { StudioEntry, StudioRoleInput } from '../../features/generation/contracts';
+import { valuesWithRoleInputs } from '../../features/generation/studio-controller';
 import { IMAGE_REGISTRY_ENTRIES } from '../../features/registry/image-registry';
 import { normalizeRegistryRequest } from '../../features/registry/normalize-registry';
 import type { ExpertOverride } from '../../features/registry/types';
@@ -124,7 +124,9 @@ function parseInputs(value: unknown): PublicCreateJobInput[] {
 
 function validateGuidedValues(entry: StudioEntry, value: unknown): Record<string, unknown> {
   const values = record(value, 'Guided values');
-  const allowed = new Set(entry.fields.map((field) => field.key));
+  const allowed = new Set(
+    entry.fields.filter((field) => field.kind !== 'dimensions').map((field) => field.key)
+  );
   if (entry.fields.some((field) => field.key === 'dimensions')) {
     allowed.add('width');
     allowed.add('height');

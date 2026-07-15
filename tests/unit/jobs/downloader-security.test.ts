@@ -308,4 +308,122 @@ describe('output downloader security boundaries', () => {
     await expect(downloader.download(output.id)).rejects.toThrow('already exists');
     expect(await readFile(outsideFile, 'utf8')).toBe('sentinel');
   });
+
+  test('MEDIA-DL-05 bounds idle response bodies and the total download lifetime', async () => {
+    const fixture = await createJobFixture();
+    cleanups.push(fixture.cleanup);
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const idle = readyOutput(fixture, 'idle-timeout');
+    await expect(
+      new OutputDownloader({
+        repository: fixture.repository,
+        paths: fixture.paths,
+        resolveHost: publicDns,
+        idleTimeoutMs: 20,
+        totalTimeoutMs: 200,
+        fetch: async () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(png);
+              }
+            }),
+            { headers: { 'content-type': 'image/png' } }
+          )
+      }).download(idle.output.id)
+    ).rejects.toThrow('idle deadline');
+
+    const total = readyOutput(fixture, 'total-timeout');
+    await expect(
+      new OutputDownloader({
+        repository: fixture.repository,
+        paths: fixture.paths,
+        resolveHost: publicDns,
+        idleTimeoutMs: 100,
+        totalTimeoutMs: 25,
+        fetch: async () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              async pull(controller) {
+                await Bun.sleep(10);
+                controller.enqueue(png);
+              }
+            }),
+            { headers: { 'content-type': 'image/png' } }
+          )
+      }).download(total.output.id)
+    ).rejects.toThrow('total deadline');
+    expect(fixture.repository.output(idle.output.id)?.downloadState).toBe('failed');
+    expect(fixture.repository.output(total.output.id)?.downloadState).toBe('failed');
+  });
+
+  test('MEDIA-DL-06 adopts an exact durable publication after a crash before SQLite verification', async () => {
+    const fixture = await createJobFixture();
+    cleanups.push(fixture.cleanup);
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const { output } = readyOutput(fixture, 'crash-publish');
+    let fetches = 0;
+    await expect(
+      new OutputDownloader({
+        repository: fixture.repository,
+        paths: fixture.paths,
+        resolveHost: publicDns,
+        fetch: async () => {
+          fetches += 1;
+          return new Response(png, { headers: { 'content-type': 'image/png' } });
+        },
+        afterPublish: () => {
+          throw new Error('simulated process crash after durable publication');
+        }
+      }).download(output.id)
+    ).rejects.toThrow('simulated process crash');
+
+    const recovered = await new OutputDownloader({
+      repository: fixture.repository,
+      paths: fixture.paths,
+      resolveHost: publicDns,
+      fetch: async () => {
+        fetches += 1;
+        throw new Error('Recovery must not redownload an exact durable publication.');
+      }
+    }).download(output.id);
+    expect(fetches).toBe(1);
+    expect(recovered).toMatchObject({ downloadState: 'verified', contentType: 'image/png' });
+    expect(recovered.localPath && new Uint8Array(await readFile(recovered.localPath))).toEqual(png);
+  });
+
+  test('MEDIA-DL-07 never adopts tampered crash output and safely publishes a collision alternative', async () => {
+    const fixture = await createJobFixture();
+    cleanups.push(fixture.cleanup);
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const { output } = readyOutput(fixture, 'crash-tamper');
+    await expect(
+      new OutputDownloader({
+        repository: fixture.repository,
+        paths: fixture.paths,
+        resolveHost: publicDns,
+        fetch: async () => new Response(png, { headers: { 'content-type': 'image/png' } }),
+        afterPublish: () => {
+          throw new Error('simulated process crash after durable publication');
+        }
+      }).download(output.id)
+    ).rejects.toThrow('simulated process crash');
+    const jobDirectory = join(fixture.paths.media, output.jobId);
+    const published = Array.fromAsync(new Bun.Glob('*.png').scan(jobDirectory));
+    const [crashPath] = await published;
+    if (!crashPath) throw new Error('Expected a crash-published file.');
+    const tampered = new Uint8Array(png);
+    tampered[tampered.length - 1] = 0x0b;
+    await writeFile(join(jobDirectory, crashPath), tampered);
+
+    const recovered = await new OutputDownloader({
+      repository: fixture.repository,
+      paths: fixture.paths,
+      resolveHost: publicDns,
+      fetch: async () => new Response(png, { headers: { 'content-type': 'image/png' } })
+    }).download(output.id);
+    expect(recovered.localPath).not.toBe(join(jobDirectory, crashPath));
+    expect(recovered.localPath && new Uint8Array(await readFile(recovered.localPath))).toEqual(png);
+    expect(new Uint8Array(await readFile(join(jobDirectory, crashPath)))).toEqual(tampered);
+  });
 });

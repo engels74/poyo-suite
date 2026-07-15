@@ -6,6 +6,7 @@ import {
 import { safeJobDto } from '$lib/server/jobs/events';
 import { jobHttpError } from '$lib/server/jobs/http';
 import { getJobRuntime } from '$lib/server/jobs/runtime';
+import { runtimeJobCreateDelay } from '$lib/server/jobs/runtime-settings';
 import { ManagedSourceRepository } from '$lib/server/media/managed-sources';
 import { readSameOriginJson } from '$lib/server/platform/request-security';
 import { getPlatformServices } from '$lib/server/platform/runtime';
@@ -30,6 +31,8 @@ export const POST: RequestHandler = async ({ request }) => {
   try {
     const input = await readSameOriginJson<unknown>(request);
     const platform = await getPlatformServices();
+    const createDelay = runtimeJobCreateDelay(platform.environment);
+    if (createDelay) await Bun.sleep(createDelay);
     const managedSources = new ManagedSourceRepository(platform.database, platform.paths);
     const prepared = await prepareJobCreateRequest(
       platform.database,

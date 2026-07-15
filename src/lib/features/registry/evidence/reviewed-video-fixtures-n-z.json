@@ -6638,7 +6638,7 @@
           "label": "unsupported duration",
           "values": {
             "prompt": "studio video",
-            "duration": "__unsupported_fixture_value__",
+            "duration": 6,
             "aspectRatio": "16:9",
             "resolution": "720p",
             "seed": 0,

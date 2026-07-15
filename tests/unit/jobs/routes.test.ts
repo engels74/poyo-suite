@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { safeJobDto } from '../../../src/lib/server/jobs/events';
 import {
+  runtimeJobCreateDelay,
   runtimeJobTimings,
   runtimeOperationsSettings
 } from '../../../src/lib/server/jobs/runtime-settings';
@@ -20,6 +21,10 @@ describe('job HTTP boundaries', () => {
         PLS_TEST_JOB_WORKER_MS: '50'
       })
     ).toEqual({ pollDelayMs: 75, workerIntervalMs: 50 });
+    expect(() => runtimeJobCreateDelay({ PLS_TEST_JOB_CREATE_MS: '600' })).toThrow(
+      'PLS_TEST_MODE=1'
+    );
+    expect(runtimeJobCreateDelay({ PLS_TEST_MODE: '1', PLS_TEST_JOB_CREATE_MS: '600' })).toBe(600);
   });
 
   test('SET-06 coordinator settings use validated persisted values and fail closed to defaults', () => {

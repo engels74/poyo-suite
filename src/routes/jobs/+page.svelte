@@ -1,14 +1,16 @@
 <script lang="ts">
+import { onMount } from 'svelte';
 import { invalidateAll } from '$app/navigation';
+import StatusBadge from '$lib/components/library/StatusBadge.svelte';
 import AppIcon from '$lib/components/ui/AppIcon.svelte';
 import LinkButton from '$lib/components/ui/LinkButton.svelte';
-import StatusBadge from '$lib/components/library/StatusBadge.svelte';
+import { nextMonotonicEventId } from '$lib/features/generation/studio-controller';
 import { dateTimeLabel, elapsedLabel } from '$lib/features/library/presentation';
-import { onMount } from 'svelte';
 import type { PageData } from './$types';
 
 let { data }: { data: PageData } = $props();
 let connection = $state<'connecting' | 'connected' | 'disconnected'>('connecting');
+let lastEventId = -1;
 
 const statusFilters = [
   ['all', 'All'],
@@ -47,11 +49,22 @@ function nextHref(): string {
   return `/jobs?${query}`;
 }
 
+function acceptDurableEvent(event: MessageEvent<string>): boolean {
+  const next = nextMonotonicEventId(lastEventId, event.lastEventId);
+  if (next === null) return false;
+  lastEventId = next;
+  return true;
+}
+
 onMount(() => {
   const events = new EventSource('/api/events/jobs');
   events.addEventListener('open', () => (connection = 'connected'));
-  events.addEventListener('snapshot', () => (connection = 'connected'));
-  events.addEventListener('job', () => {
+  events.addEventListener('snapshot', (event) => {
+    if (!acceptDurableEvent(event as MessageEvent<string>)) return;
+    connection = 'connected';
+  });
+  events.addEventListener('job', (event) => {
+    if (!acceptDurableEvent(event as MessageEvent<string>)) return;
     connection = 'connected';
     void invalidateAll();
   });

@@ -1,5 +1,10 @@
 import { RegistryValidationError } from './normalize';
-import { VIDEO_REGISTRY_ENTRIES } from './video-registry';
+import {
+  fieldValue,
+  isExpertOverride,
+  isStrictJsonValue,
+  validateFieldValue
+} from './runtime-validation';
 import type {
   ExpertOverride,
   FieldDefinition,
@@ -8,6 +13,7 @@ import type {
   NormalizedPreview,
   VideoRegistryEntry
 } from './types';
+import { VIDEO_REGISTRY_ENTRIES } from './video-registry';
 
 const protectedKeys =
   /(?:model|callback|api.?key|authorization|cookie|credential|password|secret|token|path|file|directory)/i;
@@ -40,6 +46,17 @@ function valuesForRole(values: GuidedVideoRequest, role: InputRole): string[] {
     : [];
 }
 
+function validateRoleValue(values: GuidedVideoRequest, role: InputRole): string[] {
+  if (!role.requestKey) return [];
+  const value: unknown = values[role.requestKey];
+  if (value === undefined) return [];
+  if (role.apiKey?.endsWith('_url'))
+    return typeof value === 'string' ? [] : [`${role.requestKey} must be a string.`];
+  return Array.isArray(value) && value.every((item) => typeof item === 'string')
+    ? []
+    : [`${role.requestKey} must be a list of strings.`];
+}
+
 function validateUrls(urls: readonly string[], label: string): string[] {
   const issues: string[] = [];
   for (const value of urls) {
@@ -56,58 +73,14 @@ function validateUrls(urls: readonly string[], label: string): string[] {
   return issues;
 }
 
-function validateField(field: FieldDefinition, value: unknown): string[] {
-  const issues: string[] = [];
-  if (
-    field.required &&
-    (value === undefined || value === '' || (Array.isArray(value) && !value.length))
-  )
-    issues.push(`${field.key} is required.`);
-  if (value === undefined) return issues;
-  if (field.kind === 'text' && typeof value !== 'string')
-    issues.push(`${field.key} must be a string.`);
-  if (field.kind === 'number' && typeof value !== 'number')
-    issues.push(`${field.key} must be a number.`);
-  if (field.kind === 'integer' && typeof value !== 'number')
-    issues.push(`${field.key} must be an integer.`);
-  if (field.key === 'duration' && typeof value !== 'number')
-    issues.push('duration must be a number.');
-  if (typeof value === 'string') {
-    if (field.min !== undefined && value.length < field.min)
-      issues.push(`${field.key} is too short.`);
-    if (field.max !== undefined && value.length > field.max)
-      issues.push(`${field.key} is too long.`);
-  }
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value)) issues.push(`${field.key} must be finite.`);
-    if (field.min !== undefined && value < field.min) issues.push(`${field.key} is below minimum.`);
-    if (field.max !== undefined && value > field.max) issues.push(`${field.key} exceeds maximum.`);
-  }
-  if (field.kind === 'integer' && typeof value === 'number' && !Number.isInteger(value))
-    issues.push(`${field.key} must be an integer.`);
-  if (field.kind === 'boolean' && typeof value !== 'boolean')
-    issues.push(`${field.key} must be boolean.`);
-  if (field.enum && !field.enum.includes(String(value)))
-    issues.push(`${field.key} is unsupported.`);
-  if (field.kind === 'object-list' && !Array.isArray(value))
-    issues.push(`${field.key} must be a list.`);
-  if (Array.isArray(value)) {
-    if (field.min !== undefined && value.length < field.min)
-      issues.push(`${field.key} has too few items.`);
-    if (field.max !== undefined && value.length > field.max)
-      issues.push(`${field.key} has too many items.`);
-  }
-  return issues;
-}
-
 function validate(entry: VideoRegistryEntry, values: GuidedVideoRequest): string[] {
   const issues: string[] = [];
   const acceptedFields = new Set(entry.fields.map((field) => field.key));
   for (const field of entry.fields) {
-    const value = values[field.key as keyof GuidedVideoRequest] ?? field.default;
-    issues.push(...validateField(field, value));
+    const value = fieldValue(values as Record<string, unknown>, field);
+    issues.push(...validateFieldValue(field, value));
   }
-  const acceptedMedia = new Set(
+  const acceptedMedia = new Set<string>(
     entry.inputRoles.flatMap((role) => (role.requestKey ? [role.requestKey] : []))
   );
   for (const key of mediaRequestKeys) {
@@ -116,6 +89,7 @@ function validate(entry: VideoRegistryEntry, values: GuidedVideoRequest): string
       issues.push(`${key} is not supported for this workflow.`);
   }
   for (const role of entry.inputRoles) {
+    issues.push(...validateRoleValue(values, role));
     const roleValues = valuesForRole(values, role);
     if (role.required && roleValues.length < role.min)
       issues.push(`${role.role} requires at least ${role.min} input.`);
@@ -123,31 +97,8 @@ function validate(entry: VideoRegistryEntry, values: GuidedVideoRequest): string
       issues.push(`${role.role} supports at most ${role.max} inputs.`);
     issues.push(...validateUrls(roleValues, role.role));
   }
-  const knownNonMediaKeys: Array<keyof GuidedVideoRequest> = [
-    'prompt',
-    'negativePrompt',
-    'aspectRatio',
-    'resolution',
-    'duration',
-    'seed',
-    'enableSafetyChecker',
-    'cfgScale',
-    'promptOptimizer',
-    'mode',
-    'sound',
-    'generateAudio',
-    'fixedLens',
-    'audioSetting',
-    'audio',
-    'characterOrientation',
-    'referenceVideoDuration',
-    'sourceVideoDuration',
-    'multiShots',
-    'multiPrompt',
-    'elements'
-  ];
-  for (const key of knownNonMediaKeys)
-    if (values[key] !== undefined && !acceptedFields.has(key))
+  for (const key of Object.keys(values))
+    if (!acceptedFields.has(key) && !acceptedMedia.has(key))
       issues.push(`${key} is not supported for this workflow.`);
 
   if (
@@ -257,27 +208,22 @@ function validate(entry: VideoRegistryEntry, values: GuidedVideoRequest): string
   return issues;
 }
 
-function serializable(value: unknown): boolean {
-  if (value === undefined || typeof value === 'function' || typeof value === 'symbol') return false;
-  try {
-    JSON.stringify(value);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 export function normalizeVideoRequest(
   entryKey: string,
   values: GuidedVideoRequest,
   overrides: readonly ExpertOverride[] = []
 ): NormalizedPreview {
   const entry = entryFor(entryKey);
+  if (!values || typeof values !== 'object' || Array.isArray(values))
+    throw new RegistryValidationError(['Guided values must be an object.']);
+  if (!Array.isArray(overrides) || !overrides.every(isExpertOverride))
+    throw new RegistryValidationError(['Expert overrides must contain key/value objects.']);
   const issues = validate(entry, values);
   if (issues.length) throw new RegistryValidationError(issues);
   const input: Record<string, unknown> = { ...(entry.payload.fixedInput ?? {}) };
+  const runtimeValues = values as Record<string, unknown>;
   for (const field of entry.fields) {
-    const value = values[field.key as keyof GuidedVideoRequest] ?? field.default;
+    const value = fieldValue(runtimeValues, field);
     if (value === undefined || field.apiKey.startsWith('__local_')) continue;
     input[field.apiKey] = value;
   }
@@ -304,10 +250,8 @@ export function normalizeVideoRequest(
       throw new RegistryValidationError([
         `Use the guided field for verified parameter ${override.key}.`
       ]);
-    if (!serializable(override.value))
-      throw new RegistryValidationError([
-        `Expert override ${override.key} is not JSON serializable.`
-      ]);
+    if (!isStrictJsonValue(override.value))
+      throw new RegistryValidationError([`Expert override ${override.key} must be strict JSON.`]);
     input[override.key] = override.value;
     expertDiff.push({ key: override.key, status: 'unverified', value: override.value });
   }

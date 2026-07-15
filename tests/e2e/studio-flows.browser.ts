@@ -1,13 +1,13 @@
+import { Database } from 'bun:sqlite';
 import { expect, setDefaultTimeout, test } from 'bun:test';
 import { mkdir } from 'node:fs/promises';
-import { Database } from 'bun:sqlite';
-import { chromium, type Page } from 'playwright';
+import { type APIResponse, chromium, type Page } from 'playwright';
+import { startBrowserAppHarness } from '../helpers/browser-app-harness';
 import {
   pageHasNoHorizontalOverflow,
   seriousAccessibilityViolations,
   trackBrowserIssues
 } from '../helpers/browser-assertions';
-import { startBrowserAppHarness } from '../helpers/browser-app-harness';
 
 setDefaultTimeout(120_000);
 
@@ -103,6 +103,7 @@ test('E2E-01..15 production studios, recovery, library, settings and accessibili
 
     const theme = page.getByRole('button', { name: /Light theme\. Activate next theme\./ }).first();
     await theme.click();
+    await page.locator('html[data-theme="dark"]').waitFor();
     expect(await page.locator('html').getAttribute('data-theme')).toBe('dark');
     await page.reload();
     expect(await page.locator('html').getAttribute('data-theme')).toBe('dark');
@@ -279,10 +280,22 @@ test('E2E-01..15 production studios, recovery, library, settings and accessibili
       .getByRole('textbox', { name: /^Prompt/ })
       .fill(lostResponsePrompt);
     await page.locator('#parameter-inspector').getByText('Request validated locally.').waitFor();
+    const submitsBeforeLostResponse = harness.mock.requests.filter(
+      (request) => request.pathname === '/api/generate/submit'
+    ).length;
+    const lostResponseServer = {} as {
+      completed?: boolean;
+      request?: Promise<APIResponse>;
+    };
     await page.route(
       '**/api/jobs',
       async (route) => {
-        await route.fetch();
+        const serverRequest = route.fetch();
+        lostResponseServer.request = serverRequest.then((response) => {
+          lostResponseServer.completed = true;
+          return response;
+        });
+        await Bun.sleep(75);
         await route.abort('failed');
       },
       { times: 1 }
@@ -292,6 +305,7 @@ test('E2E-01..15 production studios, recovery, library, settings and accessibili
       .getByRole('button', { name: 'Generate image' })
       .click();
     await page.getByText(/Automatic resubmission is blocked to avoid duplicate spend/).waitFor();
+    expect(lostResponseServer.completed).not.toBe(true);
     await page
       .locator('#parameter-inspector')
       .getByRole('button', { name: 'Reset', exact: true })
@@ -302,8 +316,83 @@ test('E2E-01..15 production studios, recovery, library, settings and accessibili
     );
     expect(pendingStorage).toContain('actionId');
     expect(pendingStorage).not.toContain(lostResponsePrompt);
-    await page.reload();
+    const lostActionId = (JSON.parse(pendingStorage ?? '{}') as { actionId?: string }).actionId;
+    expect(lostActionId).toBeString();
+    await waitUntil(
+      () =>
+        failedBrowserResponses.some((response) => {
+          const url = new URL(response.url);
+          return (
+            response.status === 404 &&
+            url.pathname === '/api/jobs' &&
+            url.searchParams.get('actionId') === lostActionId
+          );
+        }),
+      'Recovery did not observe the intentionally early action lookup 404.'
+    );
+    expect(lostResponseServer.completed).not.toBe(true);
+    if (!lostResponseServer.request)
+      throw new Error('The intercepted server request was not recorded.');
+    expect((await lostResponseServer.request).status()).toBe(202);
     await page.getByRole('link', { name: 'View job details' }).waitFor({ timeout: 15_000 });
+    expect(
+      await page.evaluate(() => sessionStorage.getItem('poyo-studio-pending-action:image'))
+    ).toBeNull();
+    const lostResponseDatabase = new Database(harness.databasePath, { readonly: true });
+    try {
+      expect(
+        lostResponseDatabase
+          .query<{ intents: number; jobs: number }, [string]>(
+            `SELECT COUNT(*) intents,COUNT(DISTINCT job_id) jobs
+             FROM submission_intents WHERE request_fingerprint=?`
+          )
+          .get(lostActionId ?? '')
+      ).toEqual({ intents: 1, jobs: 1 });
+    } finally {
+      lostResponseDatabase.close();
+    }
+    await waitUntil(
+      () =>
+        harness.mock.requests.filter((request) => request.pathname === '/api/generate/submit')
+          .length ===
+        submitsBeforeLostResponse + 1,
+      'Recovered paid action was not submitted exactly once.'
+    );
+
+    const abandonedActionId = crypto.randomUUID();
+    await page.evaluate(
+      ({ actionId }) =>
+        sessionStorage.setItem(
+          'poyo-studio-pending-action:image',
+          JSON.stringify({
+            actionId,
+            entryKey: 'flux-schnell:text-to-image',
+            createdAt: Date.now()
+          })
+        ),
+      { actionId: abandonedActionId }
+    );
+    await page.reload();
+    await page
+      .getByRole('button', { name: 'Acknowledge risk and start a new action' })
+      .waitFor({ timeout: 10_000 });
+    expect(
+      failedBrowserResponses.filter((response) => {
+        const url = new URL(response.url);
+        return response.status === 404 && url.searchParams.get('actionId') === abandonedActionId;
+      }).length
+    ).toBeGreaterThanOrEqual(6);
+    await page
+      .locator('#parameter-inspector')
+      .getByRole('button', { name: 'Reset', exact: true })
+      .click();
+    await page.getByText(/Reset is blocked until the unknown paid action is reconciled/).waitFor();
+    page.once('dialog', async (dialog) => {
+      expect(dialog.message()).toContain('spend credits twice');
+      await dialog.accept();
+    });
+    await page.getByRole('button', { name: 'Acknowledge risk and start a new action' }).click();
+    await page.getByText(/unresolved action was explicitly abandoned/).waitFor();
     expect(
       await page.evaluate(() => sessionStorage.getItem('poyo-studio-pending-action:image'))
     ).toBeNull();
@@ -338,20 +427,36 @@ test('E2E-01..15 production studios, recovery, library, settings and accessibili
         actionId: crypto.randomUUID(),
         normalizedPayload: { model: 'attacker-model', input: {} }
       });
+      const hostileImageType = await post({
+        ...body,
+        actionId: crypto.randomUUID(),
+        values: { prompt: { injected: true }, n: '4' }
+      });
+      const hostileVideoType = await post({
+        actionId: crypto.randomUUID(),
+        entryKey: 'happy-horse:text-to-video',
+        values: { prompt: 'animate', duration: '5', enableSafetyChecker: 'false' },
+        expertOverrides: [],
+        inputs: []
+      });
       return {
         firstStatus: first.status,
         secondStatus: second.status,
         firstId: firstBody.job?.id,
         secondId: secondBody.job?.id,
         alteredStatus: altered.status,
-        hostileStatus: hostile.status
+        hostileStatus: hostile.status,
+        hostileImageTypeStatus: hostileImageType.status,
+        hostileVideoTypeStatus: hostileVideoType.status
       };
     });
     expect(paidActionReplay).toMatchObject({
       firstStatus: 202,
       secondStatus: 202,
       alteredStatus: 409,
-      hostileStatus: 400
+      hostileStatus: 400,
+      hostileImageTypeStatus: 422,
+      hostileVideoTypeStatus: 422
     });
     expect(paidActionReplay.firstId).toBe(paidActionReplay.secondId);
     await waitUntil(
@@ -483,12 +588,18 @@ test('E2E-01..15 production studios, recovery, library, settings and accessibili
       const path = new URL(url).pathname;
       return (
         (path === '/api/requests/preview' && status === 422) ||
-        (path === '/api/jobs' && (status === 400 || status === 409))
+        (path === '/api/jobs' && [400, 409, 422].includes(status)) ||
+        (path === '/api/jobs' && status === 404 && new URL(url).searchParams.has('actionId'))
       );
     });
     expect(failedBrowserResponses).toEqual(allowedFailedResponses);
     expect(failedBrowserResponses.filter(({ status }) => status === 400)).toHaveLength(1);
     expect(failedBrowserResponses.filter(({ status }) => status === 409)).toHaveLength(1);
+    expect(
+      failedBrowserResponses.filter(
+        ({ status, url }) => status === 422 && new URL(url).pathname === '/api/jobs'
+      )
+    ).toHaveLength(2);
     expect(
       issues.consoleErrors.filter((message) => message.includes('net::ERR_FAILED'))
     ).toHaveLength(1);
@@ -500,6 +611,7 @@ test('E2E-01..15 production studios, recovery, library, settings and accessibili
         !message.includes('status of 422 (Unprocessable Entity)') &&
         !message.includes('status of 409 (Conflict)') &&
         !message.includes('status of 400 (Bad Request)') &&
+        !message.includes('status of 404 (Not Found)') &&
         !message.includes('net::ERR_FAILED')
     );
     expect(unexpectedConsoleErrors).toEqual([]);

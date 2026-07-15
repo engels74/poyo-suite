@@ -59,6 +59,19 @@ export function runtimeJobTimings(environment: Record<string, string | undefined
   };
 }
 
+export function runtimeJobCreateDelay(environment: Record<string, string | undefined>): number {
+  const value = environment.PLS_TEST_JOB_CREATE_MS;
+  if (value === undefined) return 0;
+  if (environment.PLS_TEST_MODE !== '1') {
+    throw new Error('Test job creation delay is available only when PLS_TEST_MODE=1.');
+  }
+  const milliseconds = Number(value);
+  if (!Number.isSafeInteger(milliseconds) || milliseconds < 25 || milliseconds > 5_000) {
+    throw new Error('PLS_TEST_JOB_CREATE_MS must be an integer between 25 and 5000 milliseconds.');
+  }
+  return milliseconds;
+}
+
 export function runtimeOperationsSettings(value: unknown): OperationsSettings {
   if (value === undefined) return DEFAULT_OPERATIONS_SETTINGS;
   try {

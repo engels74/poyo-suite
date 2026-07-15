@@ -1,5 +1,5 @@
-import { describe, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
+import { describe, expect, test } from 'bun:test';
 import { modelCatalogue, videoCatalogue } from '../../../src/lib/features/registry/catalogue';
 import { normalizeRegistryRequest } from '../../../src/lib/features/registry/normalize-registry';
 import {
@@ -106,6 +106,45 @@ describe('audited video registry coverage', () => {
 });
 
 describe('reviewed video conditional adapters', () => {
+  test('REG-04B rejects malformed scalar, structured and media role runtime kinds', () => {
+    const textKey = 'happy-horse:text-to-video';
+    const textValues = minimum(textKey);
+    for (const [values, message] of [
+      [{ ...textValues, prompt: { injected: true } }, 'prompt must be a string'],
+      [{ ...textValues, prompt: null }, 'prompt must be a string'],
+      [{ ...textValues, duration: '5' }, 'duration must be an integer'],
+      [{ ...textValues, duration: Number.NaN }, 'duration must be finite'],
+      [{ ...textValues, enableSafetyChecker: 'false' }, 'enableSafetyChecker must be boolean'],
+      [{ ...textValues, unknownField: true }, 'unknownField is not supported']
+    ] as const) {
+      expect(() => normalizeVideoRequest(textKey, values as unknown as GuidedVideoRequest)).toThrow(
+        message
+      );
+    }
+
+    const imageKey = 'happy-horse:image-to-video';
+    expect(() =>
+      normalizeVideoRequest(imageKey, {
+        ...minimum(imageKey),
+        imageUrls: 'https://assets.example/source.png'
+      } as unknown as GuidedVideoRequest)
+    ).toThrow('imageUrls must be a list of strings');
+    const frameKey = 'kling-2.6:frame-to-video';
+    expect(() =>
+      normalizeVideoRequest(frameKey, {
+        ...minimum(frameKey),
+        endImageUrl: ['https://assets.example/end.png']
+      } as unknown as GuidedVideoRequest)
+    ).toThrow('endImageUrl must be a string');
+    const shotsKey = 'kling-3.0/pro:multi-shot-video';
+    expect(() =>
+      normalizeVideoRequest(shotsKey, {
+        ...minimum(shotsKey),
+        multiPrompt: [null]
+      } as unknown as GuidedVideoRequest)
+    ).toThrow('multiPrompt must contain objects');
+  });
+
   test('REG-07 emits safety false only for Happy Horse and Wan 2.7 Video families', () => {
     const safetyIds = new Set([
       'happy-horse-1.1',
@@ -354,5 +393,13 @@ describe('reviewed video conditional adapters', () => {
     expect(() =>
       normalizeRegistryRequest(key, minimum(key), [{ key: 'api_key', value: 'secret' }])
     ).toThrow('protected');
+    expect(() =>
+      normalizeRegistryRequest(key, minimum(key), [
+        { key: 'future_video_parameter', value: Number.NaN }
+      ])
+    ).toThrow('strict JSON');
+    expect(() => normalizeRegistryRequest(key, minimum(key), [null] as unknown as [])).toThrow(
+      'key/value objects'
+    );
   });
 });

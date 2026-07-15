@@ -135,6 +135,15 @@ Normal tests use mocked/loopback Poyo responses and do not spend credits. The pa
 fail-closed and skipped by default. The registry network audit fetches only public official
 documentation, sends no credentials, and spends zero credits:
 
+The optional production-download probe exercises Bun's real pinned HTTP/HTTPS transport
+against public `example.com` without authentication, Poyo traffic, or credits. It is disabled
+unless explicitly enabled:
+
+```bash
+env -u POYO_API_KEY PLS_RUN_PUBLIC_DOWNLOAD_TEST=1 \
+  bun test ./tests/live/public-download.live.ts
+```
+
 - [Repeatable registry audit](docs/registry-audit.md)
 - [Optional live integration procedure](docs/live-integration.md)
 

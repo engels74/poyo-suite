@@ -1,10 +1,10 @@
 <script lang="ts">
 import { onMount, untrack } from 'svelte';
-import type {
-  ExpertOverride,
-  FieldDefinition,
-  NormalizedPreview
-} from '$lib/features/registry/types';
+import AppIcon from '$lib/components/ui/AppIcon.svelte';
+import Badge from '$lib/components/ui/Badge.svelte';
+import Button from '$lib/components/ui/Button.svelte';
+import LinkButton from '$lib/components/ui/LinkButton.svelte';
+import Sheet from '$lib/components/ui/Sheet.svelte';
 import type {
   StudioEntry,
   StudioJobDto,
@@ -12,31 +12,32 @@ import type {
   StudioRoleInput
 } from '$lib/features/generation/contracts';
 import {
+  type BrowserMediaMetadata,
+  mediaMetadataLabel,
+  probeBrowserMedia,
+  validateLocalFileSelection
+} from '$lib/features/generation/media-preflight';
+import {
   createJobRequest,
   initialGuidedValues,
   initialRoleInputs,
   mediaAccept,
   nextMonotonicEventId,
   parseExpertOverrides,
+  pendingActionRecoveryDelay,
   presetValues,
   roleLabel,
-  sizeModes,
   type SizeMode,
+  sizeModes,
   valuesWithRoleInputs,
   visibleFields,
   workflowLabel
 } from '$lib/features/generation/studio-controller';
-import {
-  mediaMetadataLabel,
-  probeBrowserMedia,
-  validateLocalFileSelection,
-  type BrowserMediaMetadata
-} from '$lib/features/generation/media-preflight';
-import AppIcon from '$lib/components/ui/AppIcon.svelte';
-import Badge from '$lib/components/ui/Badge.svelte';
-import Button from '$lib/components/ui/Button.svelte';
-import LinkButton from '$lib/components/ui/LinkButton.svelte';
-import Sheet from '$lib/components/ui/Sheet.svelte';
+import type {
+  ExpertOverride,
+  FieldDefinition,
+  NormalizedPreview
+} from '$lib/features/registry/types';
 import FieldControl from './FieldControl.svelte';
 
 interface Props {
@@ -101,6 +102,8 @@ let dirty = $state(Boolean(initialData.preset));
 let submitting = $state(false);
 let submissionLocked = $state(false);
 let submissionUnknown = $state(false);
+let recoveryConcluded = $state(false);
+let recoveryExhausted = $state(false);
 let activeJob = $state<StudioJobDto | null>(null);
 let connection = $state<'connecting' | 'connected' | 'reconnecting'>('connecting');
 let balance = $state(initialData.balance);
@@ -121,6 +124,7 @@ let presetName = $state(initialData.preset?.name ?? '');
 let presetDescription = $state(initialData.preset?.description ?? '');
 let presetMessage = $state(initialData.preset ? `Loaded preset “${initialData.preset.name}”.` : '');
 let lastEventId = -1;
+let recoverySequence = 0;
 
 const pendingActionStorageKey = `poyo-studio-pending-action:${initialData.modality}`;
 interface PendingAction {
@@ -528,8 +532,12 @@ async function submit(): Promise<void> {
     });
     const result = (await response.json()) as { job?: StudioJobDto; error?: { message?: string } };
     if (!response.ok || !result.job) {
-      clearPendingAction(action.actionId);
-      previewIssues = [result.error?.message ?? 'Poyo rejected the job before submission.'];
+      submissionUnknown = true;
+      submissionLocked = true;
+      previewIssues = [
+        `${result.error?.message ?? 'The local server did not confirm the job.'} The paid action remains locked until reconciliation.`
+      ];
+      void reconcilePendingAction();
       return;
     }
     clearPendingAction(action.actionId);
@@ -547,6 +555,7 @@ async function submit(): Promise<void> {
     previewIssues = [
       'The local server did not confirm the paid submission outcome. Automatic resubmission is blocked to avoid duplicate spend.'
     ];
+    void reconcilePendingAction();
   } finally {
     submitting = false;
   }
@@ -654,28 +663,66 @@ function acceptDurableEvent(event: MessageEvent<string>): boolean {
 async function reconcilePendingAction(): Promise<void> {
   const pending = readPendingAction();
   if (!pending) return;
+  const sequence = ++recoverySequence;
   submissionLocked = true;
   submissionUnknown = true;
-  try {
-    const response = await fetch(`/api/jobs?actionId=${encodeURIComponent(pending.actionId)}`);
-    if (response.status === 404) {
-      clearPendingAction(pending.actionId);
-      submissionLocked = false;
-      submissionUnknown = false;
+  recoveryConcluded = false;
+  recoveryExhausted = false;
+  let onlyNotFound = true;
+  for (let attempt = 0; ; attempt += 1) {
+    const delay = pendingActionRecoveryDelay(attempt);
+    if (delay === null) {
+      if (sequence !== recoverySequence) return;
+      recoveryExhausted = true;
+      recoveryConcluded = onlyNotFound;
+      previewIssues = [
+        onlyNotFound
+          ? 'No local job appeared after repeated checks. The action remains locked until you check again or explicitly acknowledge the risk of abandoning it.'
+          : 'The local job database could not yet confirm this paid action. Reset and resubmission remain blocked.'
+      ];
       return;
     }
-    const result = (await response.json()) as { job?: StudioJobDto };
-    if (!response.ok || !result.job) throw new Error('Local reconciliation failed.');
-    activeJob = result.job;
-    entryKey = pending.entryKey;
-    submissionUnknown = false;
-    submissionLocked = true;
-    clearPendingAction(pending.actionId);
-  } catch {
-    previewIssues = [
-      'The local job database could not yet confirm this paid action. Reset and resubmission remain blocked.'
-    ];
+    if (delay) await new Promise((resolve) => window.setTimeout(resolve, delay));
+    if (sequence !== recoverySequence || readPendingAction()?.actionId !== pending.actionId) return;
+    try {
+      const response = await fetch(`/api/jobs?actionId=${encodeURIComponent(pending.actionId)}`);
+      if (response.status === 404) continue;
+      onlyNotFound = false;
+      const result = (await response.json()) as { job?: StudioJobDto };
+      if (!response.ok || !result.job) continue;
+      activeJob = result.job;
+      entryKey = pending.entryKey;
+      submissionUnknown = false;
+      recoveryConcluded = false;
+      recoveryExhausted = false;
+      submissionLocked = true;
+      previewIssues = [];
+      clearPendingAction(pending.actionId);
+      return;
+    } catch {
+      onlyNotFound = false;
+    }
   }
+}
+
+function abandonPendingAction(): void {
+  const pending = readPendingAction();
+  if (!pending || !recoveryConcluded) return;
+  if (
+    !window.confirm(
+      'The original request may still create a paid Poyo task. Abandon this action and accept the risk that a new action could spend credits twice?'
+    )
+  )
+    return;
+  recoverySequence += 1;
+  clearPendingAction(pending.actionId);
+  submissionUnknown = false;
+  submissionLocked = false;
+  recoveryConcluded = false;
+  recoveryExhausted = false;
+  previewIssues = [
+    'The unresolved action was explicitly abandoned. Review the request before creating a new paid action.'
+  ];
 }
 
 onMount(() => {
@@ -999,6 +1046,12 @@ function showMobileSection(section: MobileStep, mobile: boolean): boolean {
         <p class="mb-2 text-xs text-muted-foreground">
           {previewState === 'validating' ? 'Validating request…' : preview ? 'Request validated locally.' : 'Complete required fields to validate.'}
         </p>
+      {/if}
+      {#if recoveryExhausted}
+        <div class="mb-3 flex flex-wrap gap-2" aria-label="Unresolved paid action recovery">
+          <Button variant="outline" size="sm" onclick={() => void reconcilePendingAction()}>Check action again</Button>
+          {#if recoveryConcluded}<Button variant="ghost" size="sm" onclick={abandonPendingAction}>Acknowledge risk and start a new action</Button>{/if}
+        </div>
       {/if}
       <div class="mb-3 flex items-center justify-between gap-3 text-xs">
         <span>Estimated credits: <strong>Unavailable</strong></span>

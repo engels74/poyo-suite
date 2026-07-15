@@ -1,6 +1,6 @@
 import { join } from 'node:path';
-import { createTemporaryDirectory } from './temporary-directory';
 import { startStudioMockPoyoServer } from './studio-mock-poyo-server';
+import { createTemporaryDirectory } from './temporary-directory';
 
 const host = '127.0.0.1';
 
@@ -89,6 +89,7 @@ export async function startBrowserAppHarness(): Promise<{
       PLS_TEST_POYO_BASE_URL: mock.baseUrl,
       PLS_TEST_JOB_POLL_MS: '75',
       PLS_TEST_JOB_WORKER_MS: '50',
+      PLS_TEST_JOB_CREATE_MS: '1200',
       PLS_LOG_MAX_BYTES: '65536',
       PLS_LOG_MAX_FILES: '2'
     });

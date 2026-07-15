@@ -1,4 +1,10 @@
 import { IMAGE_REGISTRY_ENTRIES } from './image-registry';
+import {
+  fieldValue,
+  isExpertOverride,
+  isStrictJsonValue,
+  validateFieldValue
+} from './runtime-validation';
 import type {
   ExpertOverride,
   GuidedImageRequest,
@@ -37,33 +43,46 @@ function imageUrls(values: string[] | undefined): string[] | undefined {
 }
 function validate(entry: ImageRegistryEntry, values: GuidedImageRequest): string[] {
   const issues: string[] = [];
-  for (const field of entry.fields) {
-    const value = values[field.key as keyof GuidedImageRequest] ?? field.default;
-    if (field.required && (value === undefined || value === ''))
-      issues.push(`${field.key} is required.`);
-    if (typeof value === 'string' && field.kind === 'text') {
-      if (field.min !== undefined && value.length < field.min)
-        issues.push(`${field.key} is too short.`);
-      if (field.max !== undefined && value.length > field.max)
-        issues.push(`${field.key} is too long.`);
-    }
-    if (typeof value === 'number') {
-      if (field.min !== undefined && value < field.min)
-        issues.push(`${field.key} is below minimum.`);
-      if (field.max !== undefined && value > field.max)
-        issues.push(`${field.key} exceeds maximum.`);
-    }
-    if (field.enum && value !== undefined && !field.enum.includes(String(value)))
-      issues.push(`${field.key} is unsupported.`);
+  const runtimeValues = values as Record<string, unknown>;
+  const acceptedFields = new Set(
+    entry.fields.filter((field) => field.kind !== 'dimensions').map((field) => field.key)
+  );
+  if (entry.fields.some((field) => field.kind === 'dimensions')) {
+    acceptedFields.add('width');
+    acceptedFields.add('height');
   }
-  const refs = values.imageUrls?.length ?? 0;
-  const role = entry.inputRoles.find((item) => item.role === 'reference');
-  if (role) {
-    if (role.required && refs < role.min)
-      issues.push(`At least ${role.min} reference image is required.`);
-    if (role.max !== null && refs > role.max)
-      issues.push(`At most ${role.max} reference images are supported.`);
-  } else if (refs) issues.push('Reference images are not supported for this workflow.');
+  if (entry.inputRoles.some((role) => role.role === 'reference')) acceptedFields.add('imageUrls');
+  if (entry.inputRoles.some((role) => role.role === 'mask')) acceptedFields.add('maskUrl');
+  for (const key of Object.keys(runtimeValues))
+    if (!acceptedFields.has(key)) issues.push(`${key} is not supported for this workflow.`);
+  for (const field of entry.fields) {
+    if (field.kind === 'dimensions') continue;
+    issues.push(...validateFieldValue(field, fieldValue(runtimeValues, field)));
+  }
+  if (
+    values.imageUrls !== undefined &&
+    (!Array.isArray(values.imageUrls) ||
+      !values.imageUrls.every((value) => typeof value === 'string'))
+  )
+    issues.push('imageUrls must be a list of strings.');
+  if (values.maskUrl !== undefined && typeof values.maskUrl !== 'string')
+    issues.push('maskUrl must be a string.');
+  const refs = Array.isArray(values.imageUrls) ? values.imageUrls.length : 0;
+  for (const role of entry.inputRoles) {
+    const count = role.role === 'mask' ? (typeof values.maskUrl === 'string' ? 1 : 0) : refs;
+    if (role.required && count < role.min)
+      issues.push(
+        role.role === 'reference'
+          ? `At least ${role.min} reference image is required.`
+          : `At least ${role.min} ${role.role} input is required.`
+      );
+    if (role.max !== null && count > role.max)
+      issues.push(
+        role.role === 'reference'
+          ? `At most ${role.max} reference images are supported.`
+          : `At most ${role.max} ${role.role} inputs are supported.`
+      );
+  }
   const hasDimensions = values.width !== undefined || values.height !== undefined;
   if (hasDimensions) {
     if (!entry.output.customSize) issues.push('Custom dimensions are not supported.');
@@ -132,11 +151,16 @@ export function normalizeImageRequest(
   overrides: readonly ExpertOverride[] = []
 ): NormalizedPreview {
   const entry = entryFor(entryKey);
+  if (!values || typeof values !== 'object' || Array.isArray(values))
+    throw new RegistryValidationError(['Guided values must be an object.']);
+  if (!Array.isArray(overrides) || !overrides.every(isExpertOverride))
+    throw new RegistryValidationError(['Expert overrides must contain key/value objects.']);
   const issues = validate(entry, values);
   if (issues.length) throw new RegistryValidationError(issues);
   const input: Record<string, unknown> = {};
+  const runtimeValues = values as Record<string, unknown>;
   for (const field of entry.fields) {
-    const value = values[field.key as keyof GuidedImageRequest] ?? field.default;
+    const value = fieldValue(runtimeValues, field);
     if (value === undefined) continue;
     if (field.key === 'dimensions') continue;
     if (field.key === 'aspectRatio') {
@@ -166,14 +190,8 @@ export function normalizeImageRequest(
       throw new RegistryValidationError([
         `Use the guided field for verified parameter ${override.key}.`
       ]);
-    if (
-      override.value === undefined ||
-      typeof override.value === 'function' ||
-      typeof override.value === 'symbol'
-    )
-      throw new RegistryValidationError([
-        `Expert override ${override.key} is not JSON serializable.`
-      ]);
+    if (!isStrictJsonValue(override.value))
+      throw new RegistryValidationError([`Expert override ${override.key} must be strict JSON.`]);
     input[override.key] = override.value;
     expertDiff.push({ key: override.key, status: 'unverified', value: override.value });
   }

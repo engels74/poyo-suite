@@ -1,6 +1,5 @@
-import { describe, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { migrateDatabase } from '../../../src/lib/server/platform/database';
+import { describe, expect, test } from 'bun:test';
 import {
   IMAGE_AUDIT_RECORDS,
   IMAGE_PAGE_SLUGS,
@@ -13,6 +12,7 @@ import {
   normalizeImageRequest,
   RegistryValidationError
 } from '../../../src/lib/features/registry/normalize';
+import { migrateDatabase } from '../../../src/lib/server/platform/database';
 import { seedImageRegistry } from '../../../src/lib/server/registry/repository';
 
 function registryEntry(key: string) {
@@ -84,6 +84,42 @@ describe('audited image registry', () => {
       })
     ).toThrow('divisible by 16');
   });
+  test('REG-04B rejects every malformed runtime field kind before payload transformation', () => {
+    const flux = registryEntry('flux-schnell:text-to-image');
+    for (const [values, message] of [
+      [{ prompt: { injected: true } }, 'prompt must be a string'],
+      [{ prompt: null }, 'prompt must be a string'],
+      [{ prompt: ['array'] }, 'prompt must be a string'],
+      [{ prompt: 'render', n: '2' }, 'n must be an integer'],
+      [{ prompt: 'render', n: 1.5 }, 'n must be an integer'],
+      [{ prompt: 'render', n: Number.NaN }, 'n must be finite'],
+      [
+        { prompt: 'render', dimensions: { width: 1024, height: 1024 } },
+        'dimensions is not supported'
+      ],
+      [{ prompt: 'render', unknownField: true }, 'unknownField is not supported']
+    ] as const) {
+      expect(() =>
+        normalizeImageRequest(
+          flux.key,
+          values as unknown as Parameters<typeof normalizeImageRequest>[1]
+        )
+      ).toThrow(message);
+    }
+
+    expect(() =>
+      normalizeImageRequest('seedream-4.5:text-to-image', {
+        prompt: 'render',
+        enableSafetyChecker: 'false'
+      } as unknown as Parameters<typeof normalizeImageRequest>[1])
+    ).toThrow('enableSafetyChecker must be boolean');
+    expect(() =>
+      normalizeImageRequest('kling-o3-image:text-to-image', {
+        prompt: 'render',
+        elements: [null]
+      } as unknown as Parameters<typeof normalizeImageRequest>[1])
+    ).toThrow('elements must contain objects');
+  });
   test('REG-07 emits explicit false/true only for the four audited image safety families', () => {
     const safetyIds = new Set([
       'seedream-4.5',
@@ -135,6 +171,14 @@ describe('audited image registry', () => {
     expect(() =>
       normalizeImageRequest(key, { prompt: 'studio' }, [{ key: 'prompt', value: 'override' }])
     ).toThrow('guided field');
+    expect(() =>
+      normalizeImageRequest(key, { prompt: 'studio' }, [
+        { key: 'future_parameter', value: Number.NaN }
+      ])
+    ).toThrow('strict JSON');
+    expect(() => normalizeImageRequest(key, { prompt: 'studio' }, [null] as unknown as [])).toThrow(
+      'key/value objects'
+    );
   });
   test('REG-01 seeds the versioned manifest and definitions into SQLite idempotently', () => {
     const database = new Database(':memory:', { strict: true });

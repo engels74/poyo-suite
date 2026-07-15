@@ -1,6 +1,16 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { stat, unlink, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import {
+  mkdir,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  stat,
+  symlink,
+  unlink,
+  writeFile
+} from 'node:fs/promises';
+import { basename, dirname, join } from 'node:path';
 import { JobRepository } from '../../../src/lib/server/jobs/repository';
 import { ManagedSourceRepository } from '../../../src/lib/server/media/managed-sources';
 import { intakeLocalSource } from '../../../src/lib/server/media/source-intake';
@@ -81,12 +91,12 @@ describe('local source intake', () => {
       paths
     );
     expect(source.originalName).toBe('unsafe-name.png');
-    expect(source.localPath).toStartWith(paths.uploads);
+    expect(source.localPath).toStartWith(await realpath(paths.uploads));
     expect((await stat(source.localPath)).size).toBe(png.byteLength);
     expect(source.checksum).toHaveLength(64);
     expect(source.signature).toStartWith('89504e47');
-    expect((await repository.register(source)).localPath).toBe(source.localPath);
-    expect((await repository.resolveAvailable(source.id, 'image')).localPath).toBe(
+    expect(await realpath((await repository.register(source)).localPath)).toBe(source.localPath);
+    expect(await realpath((await repository.resolveAvailable(source.id, 'image')).localPath)).toBe(
       source.localPath
     );
     await expect(repository.resolveAvailable('../unsafe')).rejects.toThrow('not valid');
@@ -204,5 +214,113 @@ describe('local source intake', () => {
         )
         .get(job.id)
     ).toEqual({ local_reference: null, managed_source_id: source.id });
+  });
+
+  test('UPLOAD-05 rejects symlinked upload buckets and temporary roots without writing outside', async () => {
+    const { paths } = await fixture();
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const bucket = join(paths.uploads, new Date().toISOString().slice(0, 7));
+    const outsideBucket = join(paths.root, 'outside-bucket');
+    await mkdir(outsideBucket);
+    await symlink(outsideBucket, bucket, 'dir');
+    await expect(
+      intakeLocalSource(uploadRequest(png, 'image/png', 'http://127.0.0.1:5173'), paths)
+    ).rejects.toThrow('symbolic');
+    expect(await readdir(outsideBucket)).toEqual([]);
+
+    await unlink(bucket);
+    const outsideTemporary = join(paths.root, 'outside-temporary');
+    await mkdir(outsideTemporary);
+    await rm(paths.temporary, { recursive: true });
+    await symlink(outsideTemporary, paths.temporary, 'dir');
+    await expect(
+      intakeLocalSource(uploadRequest(png, 'image/png', 'http://127.0.0.1:5173'), paths)
+    ).rejects.toThrow('symbolic');
+    expect(await readdir(outsideTemporary)).toEqual([]);
+  });
+
+  test('UPLOAD-06 parent swaps cannot satisfy reconcile or delete an outside same-size file', async () => {
+    const { paths, repository } = await fixture();
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const source = await intakeLocalSource(
+      uploadRequest(png, 'image/png', 'http://127.0.0.1:5173'),
+      paths
+    );
+    await repository.register(source);
+    const bucket = dirname(source.localPath);
+    const retainedBucket = `${bucket}-retained`;
+    const outside = join(paths.root, 'outside-managed');
+    await rename(bucket, retainedBucket);
+    await mkdir(outside);
+    await writeFile(join(outside, basename(source.localPath)), png);
+    await symlink(outside, bucket, 'dir');
+
+    expect(await repository.reconcile(source.id)).toBe('missing');
+    await expect(repository.resolveAvailable(source.id)).rejects.toThrow('no longer available');
+    await expect(repository.discardUnreferenced(source.id)).rejects.toThrow(
+      /escapes|configured root/
+    );
+    expect(await Bun.file(join(outside, basename(source.localPath))).bytes()).toEqual(png);
+    expect(repository.get(source.id)).not.toBeNull();
+  });
+
+  test('UPLOAD-07 legacy adoption refuses a source reached through a swapped parent symlink', async () => {
+    const { paths, database, repository } = await fixture();
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const source = await intakeLocalSource(
+      uploadRequest(png, 'image/png', 'http://127.0.0.1:5173'),
+      paths
+    );
+    const job = createTestJob(new JobRepository(database), 'legacy-symlink-source');
+    database
+      .query(
+        `INSERT INTO job_inputs(job_id,role,input_order,media_kind,local_reference,upload_url,metadata_json,availability)
+         VALUES (?, 'source-image', 0, 'image', ?, 'https://poyo.test/source.png', '{}', 'available')`
+      )
+      .run(job.id, source.localPath);
+    const bucket = dirname(source.localPath);
+    const outside = join(paths.root, 'outside-legacy');
+    await rename(bucket, `${bucket}-retained`);
+    await mkdir(outside);
+    await writeFile(join(outside, basename(source.localPath)), png);
+    await symlink(outside, bucket, 'dir');
+
+    expect(await repository.adoptLegacyReferences()).toBe(0);
+    expect(repository.get(source.id)).toBeNull();
+    expect(await Bun.file(join(outside, basename(source.localPath))).bytes()).toEqual(png);
+    expect(
+      database
+        .query<{ local_reference: string | null }, [string]>(
+          'SELECT local_reference FROM job_inputs WHERE job_id=?'
+        )
+        .get(job.id)?.local_reference
+    ).toBe(source.localPath);
+  });
+
+  test('UPLOAD-08 canonical ancestor aliases remain valid for intake and registration', async () => {
+    const temporary = await createTemporaryDirectory('poyo-source-alias-');
+    const canonical = join(temporary.path, 'canonical');
+    const alias = join(temporary.path, 'alias');
+    await mkdir(canonical);
+    await symlink(canonical, alias, 'dir');
+    const paths = resolveAppPaths({
+      environment: { PLS_APP_DATA_DIR: join(alias, 'studio') },
+      homeDirectory: temporary.path
+    });
+    await ensureAppPaths(paths);
+    const database = await openDatabase(paths.database);
+    cleanups.push(async () => {
+      database.close();
+      await temporary.cleanup();
+    });
+    const repository = new ManagedSourceRepository(database, paths);
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const source = await intakeLocalSource(
+      uploadRequest(png, 'image/png', 'http://127.0.0.1:5173'),
+      paths
+    );
+    const registered = await repository.register(source);
+    expect(await realpath(registered.localPath)).toBe(await realpath(source.localPath));
+    expect((await repository.resolveAvailable(source.id)).availability).toBe('available');
   });
 });

@@ -1,5 +1,5 @@
 import { lookup } from 'node:dns/promises';
-import { request as httpRequest } from 'node:http';
+import { request as httpRequest, type RequestOptions } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { BlockList, isIP } from 'node:net';
 import { Readable } from 'node:stream';
@@ -15,6 +15,14 @@ export interface DownloadTarget {
   url: URL;
   hostname: string;
   addresses: readonly DownloadAddress[];
+}
+
+export interface PinnedDownloadRequestOptions {
+  signal?: AbortSignal;
+  connectTimeoutMs?: number;
+  headerTimeoutMs?: number;
+  /** Controlled test seam; production callers must use the default pinned lookup. */
+  lookup?: RequestOptions['lookup'];
 }
 
 const forbiddenAddresses = new BlockList();
@@ -57,6 +65,23 @@ function normalizedHostname(value: string): string {
     .replace(/^\[|\]$/g, '')
     .replace(/\.$/, '')
     .toLowerCase();
+}
+
+function mappedIpv4(address: string): string | null {
+  const normalized = address.toLowerCase();
+  const dotted = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(normalized)?.[1];
+  if (dotted && isIP(dotted) === 4) return dotted;
+  const hexadecimal = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(normalized);
+  if (!hexadecimal) return null;
+  const high = Number.parseInt(hexadecimal[1] ?? '', 16);
+  const low = Number.parseInt(hexadecimal[2] ?? '', 16);
+  if (!Number.isFinite(high) || !Number.isFinite(low)) return null;
+  return `${high >> 8}.${high & 0xff}.${low >> 8}.${low & 0xff}`;
+}
+
+function normalizedAddress(value: DownloadAddress): DownloadAddress {
+  const mapped = value.family === 6 ? mappedIpv4(value.address) : null;
+  return mapped ? { address: mapped, family: 4 } : value;
 }
 
 export function isPublicDownloadAddress(address: string): boolean {
@@ -106,9 +131,10 @@ export async function resolveDownloadTarget(
   } catch {
     throw new Error('Remote output host could not be resolved safely.');
   }
+  const normalizedAddresses = addresses.map(normalizedAddress);
   if (
-    addresses.length === 0 ||
-    addresses.some(
+    normalizedAddresses.length === 0 ||
+    normalizedAddresses.some(
       ({ address, family }) =>
         (family !== 4 && family !== 6) ||
         isIP(address) !== family ||
@@ -117,7 +143,7 @@ export async function resolveDownloadTarget(
   ) {
     throw new Error('Remote output address is not public.');
   }
-  return { url, hostname, addresses };
+  return { url, hostname, addresses: normalizedAddresses };
 }
 
 function responseHeaders(source: import('node:http').IncomingMessage): Headers {
@@ -130,51 +156,99 @@ function responseHeaders(source: import('node:http').IncomingMessage): Headers {
   return headers;
 }
 
-export function requestPinnedDownload(target: DownloadTarget): Promise<Response> {
+export function createPinnedLookup(target: DownloadTarget): NonNullable<RequestOptions['lookup']> {
+  const pinned = target.addresses[0];
+  if (!pinned || !isPublicDownloadAddress(pinned.address)) {
+    throw new Error('Remote output address is not public.');
+  }
+  return (hostname, options, callback) => {
+    if (normalizedHostname(hostname) !== target.hostname) {
+      callback(
+        new Error('Pinned lookup received an unexpected host.'),
+        pinned.address,
+        pinned.family
+      );
+      return;
+    }
+    if (typeof options === 'object' && options.all) {
+      callback(null, [{ address: pinned.address, family: pinned.family }]);
+      return;
+    }
+    callback(null, pinned.address, pinned.family);
+  };
+}
+
+function positiveTimeout(value: number | undefined, fallback: number): number {
+  return Number.isSafeInteger(value) && (value ?? 0) > 0 ? (value as number) : fallback;
+}
+
+export function requestPinnedDownload(
+  target: DownloadTarget,
+  options: PinnedDownloadRequestOptions = {}
+): Promise<Response> {
   const pinned = target.addresses[0];
   if (!pinned || !isPublicDownloadAddress(pinned.address)) {
     return Promise.reject(new Error('Remote output address is not public.'));
   }
-  // The socket connects to the validated IP directly while Host/SNI retain the original host.
-  // This prevents a second DNS lookup; residual trust is limited to the OS resolver result and
-  // Bun's node:http(s) compatibility because Poyo documents no stable output-host allowlist.
+  const connectTimeoutMs = positiveTimeout(options.connectTimeoutMs, 30_000);
+  const headerTimeoutMs = positiveTimeout(options.headerTimeoutMs, 30_000);
+  // A custom lookup supplies exactly the already-validated address and disables family selection.
+  // No second system DNS query or socket.remoteAddress support is required from Bun.
   return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(connectionTimer);
+      callback();
+    };
     const request = (target.url.protocol === 'https:' ? httpsRequest : httpRequest)(
       {
         protocol: target.url.protocol,
-        hostname: pinned.address,
+        hostname: target.hostname,
         family: pinned.family,
+        lookup: options.lookup ?? createPinnedLookup(target),
         port: target.url.port || undefined,
         path: `${target.url.pathname}${target.url.search}`,
         method: 'GET',
         agent: false,
-        servername: isIP(target.hostname) ? undefined : target.hostname,
+        ...(isIP(target.hostname) ? {} : { servername: target.hostname }),
         rejectUnauthorized: true,
+        maxHeaderSize: 16 * 1024,
+        signal: options.signal,
         headers: {
           accept: 'image/*, video/*',
           'accept-encoding': 'identity',
+          connection: 'close',
           host: target.url.host,
           'user-agent': 'Poyo-Local-Studio/0.1'
         }
       },
       (incoming) => {
-        const remoteAddress = incoming.socket.remoteAddress;
-        if (!remoteAddress || !isPublicDownloadAddress(remoteAddress)) {
-          incoming.destroy(new Error('Remote output connection address is not public.'));
-          reject(new Error('Remote output connection address is not public.'));
-          return;
-        }
         const status = incoming.statusCode ?? 502;
         const noBody = status === 204 || status === 205 || status === 304;
-        resolve(
-          new Response(
-            noBody ? null : (Readable.toWeb(incoming) as unknown as ReadableStream<Uint8Array>),
-            { status, headers: responseHeaders(incoming) }
+        finish(() =>
+          resolve(
+            new Response(
+              noBody ? null : (Readable.toWeb(incoming) as unknown as ReadableStream<Uint8Array>),
+              { status, headers: responseHeaders(incoming) }
+            )
           )
         );
       }
     );
-    request.once('error', reject);
+    const connectionTimer = setTimeout(
+      () => {
+        const error = new Error('Remote output connection/header deadline exceeded.');
+        finish(() => {
+          request.destroy(error);
+          reject(error);
+        });
+      },
+      Math.min(connectTimeoutMs, headerTimeoutMs)
+    );
+    connectionTimer.unref();
+    request.once('error', (error) => finish(() => reject(error)));
     request.end();
   });
 }

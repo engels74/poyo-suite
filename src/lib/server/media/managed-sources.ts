@@ -1,8 +1,9 @@
 import type { Database } from 'bun:sqlite';
-import { lstat, realpath } from 'node:fs/promises';
-import { basename, extname, isAbsolute, relative, sep } from 'node:path';
+import { unlink } from 'node:fs/promises';
+import { basename, extname } from 'node:path';
 import { type AppPaths, resolvePathWithin } from '../platform/app-paths';
 import { DatabaseRepository } from '../platform/repository';
+import { inspectCanonicalFile } from './filesystem-boundary';
 import type { LocalSourceIntake } from './source-intake';
 
 export type ManagedSourceAvailability = 'available' | 'missing' | 'deleted';
@@ -105,18 +106,12 @@ export class ManagedSourceRepository extends DatabaseRepository {
 
   async register(source: LocalSourceIntake): Promise<ManagedSourceRecord> {
     assertManagedSourceId(source.id);
-    const localPath = resolvePathWithin(this.paths.uploads, source.localPath);
-    const relativePath = relative(this.paths.uploads, localPath);
-    if (
-      !relativePath ||
-      relativePath === '..' ||
-      relativePath.startsWith(`..${sep}`) ||
-      isAbsolute(relativePath)
-    ) {
-      throw new Error('Managed source path is not inside the uploads directory.');
-    }
-    const details = await lstat(localPath);
-    if (!details.isFile() || details.isSymbolicLink() || details.size !== source.sizeBytes) {
+    const inspected = await inspectCanonicalFile(
+      this.paths.uploads,
+      source.localPath,
+      'Managed source'
+    );
+    if (!inspected || inspected.size !== source.sizeBytes) {
       throw new Error('Managed source copy could not be verified.');
     }
     this.database
@@ -132,7 +127,7 @@ export class ManagedSourceRepository extends DatabaseRepository {
         source.sizeBytes,
         source.checksum,
         source.signature,
-        relativePath,
+        inspected.relativePath,
         source.createdAt,
         source.createdAt
       );
@@ -153,34 +148,24 @@ export class ManagedSourceRepository extends DatabaseRepository {
       .all();
     let adopted = 0;
     for (const reference of references) {
-      let localPath: string;
+      let inspected: Awaited<ReturnType<typeof inspectCanonicalFile>>;
       try {
-        localPath = resolvePathWithin(this.paths.uploads, reference.local_reference);
+        inspected = await inspectCanonicalFile(
+          this.paths.uploads,
+          reference.local_reference,
+          'Legacy managed source'
+        );
       } catch {
         continue;
       }
+      if (!inspected) continue;
+      const localPath = inspected.path;
       const extension = extname(localPath).toLowerCase();
       const id = basename(localPath, extension);
       if (!managedSourceId.test(id)) continue;
-      const relativePath = relative(this.paths.uploads, localPath);
-      const details = await lstat(localPath).catch(() => null);
-      let available = Boolean(details?.isFile() && !details.isSymbolicLink());
-      if (available) {
-        try {
-          const [realRoot, realSource] = await Promise.all([
-            realpath(this.paths.uploads),
-            realpath(localPath)
-          ]);
-          resolvePathWithin(realRoot, realSource);
-        } catch {
-          available = false;
-        }
-      }
-      const inspected = available
-        ? await inspectLegacyFile(localPath)
-        : { byteSize: 0, checksum: 'legacy-unverified', signature: '' };
+      const content = await inspectLegacyFile(localPath);
       const existing = this.getRow(id);
-      if (existing && existing.relative_path !== relativePath) continue;
+      if (existing && existing.relative_path !== inspected.relativePath) continue;
       let originalName = basename(localPath);
       try {
         const metadata = JSON.parse(reference.metadata_json) as { name?: unknown };
@@ -200,21 +185,21 @@ export class ManagedSourceRepository extends DatabaseRepository {
             originalName,
             reference.media_kind,
             legacyMimeTypes[extension] ?? 'application/octet-stream',
-            inspected.byteSize,
-            inspected.checksum,
-            inspected.signature,
-            relativePath,
-            available ? 'available' : 'missing',
+            content.byteSize,
+            content.checksum,
+            content.signature,
+            inspected.relativePath,
+            'available',
             reference.created_at,
-            available ? now : null,
-            available ? null : now
+            now,
+            null
           );
         this.database
           .query(
             `UPDATE job_inputs SET managed_source_id=?,local_reference=NULL,availability=?
              WHERE local_reference=? AND managed_source_id IS NULL`
           )
-          .run(id, available ? 'available' : 'missing', reference.local_reference);
+          .run(id, 'available', reference.local_reference);
       });
       adopted += 1;
     }
@@ -248,10 +233,12 @@ export class ManagedSourceRepository extends DatabaseRepository {
     if (!source || source.availability === 'deleted') return source?.availability ?? null;
     let available = false;
     try {
-      const path = resolvePathWithin(this.paths.uploads, source.relative_path);
-      const details = await lstat(path);
-      available =
-        details.isFile() && !details.isSymbolicLink() && details.size === source.byte_size;
+      const inspected = await inspectCanonicalFile(
+        this.paths.uploads,
+        source.relative_path,
+        'Managed source'
+      );
+      available = inspected?.size === source.byte_size;
     } catch {
       available = false;
     }
@@ -294,7 +281,8 @@ export class ManagedSourceRepository extends DatabaseRepository {
   }
 
   async discardUnreferenced(id: string): Promise<boolean> {
-    const source = this.get(id);
+    assertManagedSourceId(id);
+    const source = this.getRow(id);
     if (!source) return false;
     const references =
       this.database
@@ -303,10 +291,22 @@ export class ManagedSourceRepository extends DatabaseRepository {
         )
         .get(id)?.count ?? 0;
     if (references > 0) return false;
-    const details = await lstat(source.localPath).catch(() => null);
-    if (details?.isSymbolicLink())
-      throw new Error('Managed source cleanup refuses symbolic links.');
-    if (details?.isFile()) await Bun.file(source.localPath).delete();
+    const inspected = await inspectCanonicalFile(
+      this.paths.uploads,
+      source.relative_path,
+      'Managed source cleanup'
+    );
+    if (inspected) {
+      const revalidated = await inspectCanonicalFile(
+        this.paths.uploads,
+        source.relative_path,
+        'Managed source cleanup'
+      );
+      if (!revalidated || revalidated.path !== inspected.path) {
+        throw new Error('Managed source cleanup path changed before deletion.');
+      }
+      await unlink(revalidated.path);
+    }
     return this.database.query('DELETE FROM managed_sources WHERE id=?').run(id).changes === 1;
   }
 
