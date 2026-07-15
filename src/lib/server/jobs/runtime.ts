@@ -17,31 +17,16 @@ async function createRuntime(): Promise<JobRuntime> {
   const platform = await getPlatformServices();
   const timings = runtimeJobTimings(platform.environment);
   const repository = new JobRepository(platform.database);
+  const createGatewayClient = () =>
+    createPoyoClient({
+      apiKeyManager: platform.apiKey,
+      logger: platform.logger,
+      environment: platform.environment
+    });
   const gateway: JobPoyoGateway = {
-    submit: async (request) =>
-      (
-        await createPoyoClient({
-          apiKeyManager: platform.apiKey,
-          logger: platform.logger,
-          environment: platform.environment
-        })
-      ).submit(request),
-    getStatus: async (id) =>
-      (
-        await createPoyoClient({
-          apiKeyManager: platform.apiKey,
-          logger: platform.logger,
-          environment: platform.environment
-        })
-      ).getStatus(id),
-    getBalance: async () =>
-      (
-        await createPoyoClient({
-          apiKeyManager: platform.apiKey,
-          logger: platform.logger,
-          environment: platform.environment
-        })
-      ).getBalance()
+    submit: async (request) => (await createGatewayClient()).submit(request),
+    getStatus: async (id) => (await createGatewayClient()).getStatus(id),
+    getBalance: async () => (await createGatewayClient()).getBalance()
   };
   const downloader = new OutputDownloader({ repository, paths: platform.paths });
   const coordinator = new JobCoordinator({

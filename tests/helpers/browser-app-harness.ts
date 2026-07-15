@@ -49,7 +49,6 @@ export async function startBrowserAppHarness(): Promise<{
   mock: Awaited<ReturnType<typeof startStudioMockPoyoServer>>;
   startApp: () => Promise<void>;
   stopApp: () => Promise<void>;
-  restartApp: () => Promise<void>;
   processPid: () => number | null;
   serverOutput: () => string;
   cleanup: () => Promise<void>;
@@ -133,11 +132,6 @@ export async function startBrowserAppHarness(): Promise<{
     activeStderr = null;
   }
 
-  async function restartApp(): Promise<void> {
-    await stopApp();
-    await startApp();
-  }
-
   await startApp();
 
   return {
@@ -148,7 +142,6 @@ export async function startBrowserAppHarness(): Promise<{
     mock,
     startApp,
     stopApp,
-    restartApp,
     processPid: () => (active?.exitCode === null ? active.pid : null),
     serverOutput: () => output.join('\n'),
     cleanup: async () => {

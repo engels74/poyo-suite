@@ -70,13 +70,3 @@ export async function createPoyoClient(options: PoyoClientFactoryOptions): Promi
   });
   return new PoyoClient(transport, clock);
 }
-
-export async function createRuntimePoyoClient(): Promise<PoyoClient> {
-  const { getPlatformServices } = await import('../platform/runtime');
-  const platform = await getPlatformServices();
-  return createPoyoClient({
-    apiKeyManager: platform.apiKey,
-    logger: platform.logger,
-    environment: platform.environment
-  });
-}

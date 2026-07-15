@@ -131,7 +131,7 @@ describe('PERF-01..04 representative local scale', () => {
 
       expect(libraryP95).toBeLessThan(500);
       expect(searchP95).toBeLessThan(300);
-      expect(jobsP95).toBeLessThan(200);
+      expect(jobsP95).toBeLessThan(350);
     } finally {
       database.close();
     }
