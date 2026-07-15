@@ -28,5 +28,12 @@ export interface HealthDto {
     files: number;
     bytes: number;
     lastRotationError: { name: string; message: string } | null;
+    rotation: {
+      separateErrorFile: boolean;
+      maxBytes: number;
+      maxAgeMs: number;
+      retentionAgeMs: number;
+      maxRotatedFiles: number;
+    };
   };
 }

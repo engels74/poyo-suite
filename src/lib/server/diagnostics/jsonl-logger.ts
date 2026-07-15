@@ -60,33 +60,63 @@ export interface LoggerDiagnostics {
   files: number;
   bytes: number;
   lastRotationError: { name: string; message: string } | null;
+  rotation: LoggerRotationSettings;
+}
+
+export interface LoggerRotationSettings {
+  separateErrorFile: boolean;
+  maxBytes: number;
+  maxAgeMs: number;
+  retentionAgeMs: number;
+  maxRotatedFiles: number;
 }
 
 export class StructuredLogger {
   private readonly files: LoggerFileOperations;
   private readonly now: () => Date;
-  private readonly separateErrorFile: boolean;
-  private readonly maxBytes: number;
-  private readonly maxAgeMs: number;
-  private readonly retentionAgeMs: number;
-  private readonly maxRotatedFiles: number;
+  private rotation: LoggerRotationSettings;
   private queue = Promise.resolve();
   private lastRotationError: { name: string; message: string } | null = null;
 
   constructor(private readonly config: LoggerConfig) {
     this.files = config.files ?? defaultFileOperations;
     this.now = config.now ?? (() => new Date());
-    this.separateErrorFile = config.separateErrorFile ?? true;
-    this.maxBytes = config.maxBytes ?? 5 * 1024 * 1024;
-    this.maxAgeMs = config.maxAgeMs ?? 24 * 60 * 60 * 1000;
-    this.retentionAgeMs = config.retentionAgeMs ?? 14 * 24 * 60 * 60 * 1000;
-    this.maxRotatedFiles = config.maxRotatedFiles ?? 10;
+    this.rotation = {
+      separateErrorFile: config.separateErrorFile ?? true,
+      maxBytes: config.maxBytes ?? 5 * 1024 * 1024,
+      maxAgeMs: config.maxAgeMs ?? 24 * 60 * 60 * 1000,
+      retentionAgeMs: config.retentionAgeMs ?? 14 * 24 * 60 * 60 * 1000,
+      maxRotatedFiles: config.maxRotatedFiles ?? 10
+    };
+  }
+
+  updateRotationSettings(settings: LoggerRotationSettings): void {
+    const valid =
+      typeof settings.separateErrorFile === 'boolean' &&
+      Number.isSafeInteger(settings.maxBytes) &&
+      settings.maxBytes >= 64 * 1024 &&
+      settings.maxBytes <= 1024 * 1024 * 1024 &&
+      Number.isSafeInteger(settings.maxAgeMs) &&
+      settings.maxAgeMs >= 60_000 &&
+      settings.maxAgeMs <= 30 * 24 * 60 * 60 * 1000 &&
+      Number.isSafeInteger(settings.retentionAgeMs) &&
+      settings.retentionAgeMs >= 60 * 60 * 1000 &&
+      settings.retentionAgeMs <= 365 * 24 * 60 * 60 * 1000 &&
+      Number.isSafeInteger(settings.maxRotatedFiles) &&
+      settings.maxRotatedFiles >= 1 &&
+      settings.maxRotatedFiles <= 100;
+    if (!valid) throw new Error('Log rotation settings are outside the supported bounds.');
+    this.rotation = { ...settings };
+  }
+
+  rotationSettings(): LoggerRotationSettings {
+    return { ...this.rotation };
   }
 
   private activeFile(level: LogLevel): string {
     return join(
       this.config.directory,
-      level === 'error' && this.separateErrorFile ? 'error.jsonl' : 'app.jsonl'
+      level === 'error' && this.rotation.separateErrorFile ? 'error.jsonl' : 'app.jsonl'
     );
   }
 
@@ -118,7 +148,10 @@ export class StructuredLogger {
       .sort((left, right) => right.info.mtimeMs - left.info.mtimeMs);
 
     for (const [index, record] of records.entries()) {
-      if (index >= this.maxRotatedFiles || now - record.info.mtimeMs > this.retentionAgeMs) {
+      if (
+        index >= this.rotation.maxRotatedFiles ||
+        now - record.info.mtimeMs > this.rotation.retentionAgeMs
+      ) {
         await this.files.remove(record.fullPath).catch(() => undefined);
       }
     }
@@ -127,8 +160,8 @@ export class StructuredLogger {
   private async rotateIfNeeded(path: string, incomingBytes: number): Promise<void> {
     const info = await this.files.stat(path);
     if (!info) return;
-    const exceedsSize = info.size + incomingBytes > this.maxBytes;
-    const exceedsAge = this.now().getTime() - info.mtimeMs >= this.maxAgeMs;
+    const exceedsSize = info.size + incomingBytes > this.rotation.maxBytes;
+    const exceedsAge = this.now().getTime() - info.mtimeMs >= this.rotation.maxAgeMs;
     if (!exceedsSize && !exceedsAge) return;
 
     try {
@@ -190,10 +223,11 @@ export class StructuredLogger {
 
     return {
       status: this.lastRotationError ? 'degraded' : 'ok',
-      separateErrorFile: this.separateErrorFile,
+      separateErrorFile: this.rotation.separateErrorFile,
       files: infos.filter(Boolean).length,
       bytes: infos.reduce((total, info) => total + (info?.size ?? 0), 0),
-      lastRotationError: this.lastRotationError
+      lastRotationError: this.lastRotationError,
+      rotation: this.rotationSettings()
     };
   }
 }

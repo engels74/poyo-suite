@@ -102,6 +102,29 @@ export class ApiKeyManager {
     return (await this.resolve()).status;
   }
 
+  recordConnectivity(status: 'ok' | 'failed'): void {
+    const previous = this.options.metadataRepository.get();
+    if (!previous) return;
+    this.options.metadataRepository.save(
+      {
+        activeSource: previous.activeSource,
+        status: previous.status,
+        storeKind: previous.storeKind,
+        lastConnectivityAt: this.now().toISOString(),
+        lastConnectivityStatus: status
+      },
+      this.now()
+    );
+  }
+
+  connectivityStatus(): { checkedAt: string | null; status: string | null } {
+    const metadata = this.options.metadataRepository.get();
+    return {
+      checkedAt: metadata?.lastConnectivityAt ?? null,
+      status: metadata?.lastConnectivityStatus ?? null
+    };
+  }
+
   async setLocal(secret: string): Promise<ApiKeyStatusDto> {
     if (environmentKey(this.options.environment)) throw new EnvironmentKeyActiveError();
     const value = secret.trim();

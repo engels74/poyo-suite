@@ -28,7 +28,9 @@ const expectedTables = [
   'app_settings',
   'balance_snapshots',
   'cleanup_actions',
+  'cleanup_attempts',
   'cleanup_policies',
+  'cleanup_previews',
   'download_attempts',
   'job_events',
   'job_inputs',
@@ -92,7 +94,7 @@ describe('database migrations', () => {
       const migrations = reopened
         .query<{ count: number }, []>('SELECT COUNT(*) AS count FROM schema_migrations')
         .get();
-      expect(migrations?.count).toBe(1);
+      expect(migrations?.count).toBe(2);
       expect(new SettingsRepository(reopened).get<{ mode: string }>('theme')?.value.mode).toBe(
         'dark'
       );

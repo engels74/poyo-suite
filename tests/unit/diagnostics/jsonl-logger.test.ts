@@ -85,4 +85,31 @@ describe('structured JSONL logging', () => {
       (await Bun.file(join(temporary.path, 'app.jsonl')).text()).trim().split('\n')
     ).toHaveLength(2);
   });
+
+  test('applies validated runtime rotation settings without recreating the logger', () => {
+    const logger = new StructuredLogger({ directory: '/tmp/poyo-test-logs' });
+    logger.updateRotationSettings({
+      separateErrorFile: false,
+      maxBytes: 65_536,
+      maxAgeMs: 60_000,
+      retentionAgeMs: 3_600_000,
+      maxRotatedFiles: 4
+    });
+    expect(logger.rotationSettings()).toEqual({
+      separateErrorFile: false,
+      maxBytes: 65_536,
+      maxAgeMs: 60_000,
+      retentionAgeMs: 3_600_000,
+      maxRotatedFiles: 4
+    });
+    expect(() =>
+      logger.updateRotationSettings({
+        separateErrorFile: true,
+        maxBytes: 0,
+        maxAgeMs: 1,
+        retentionAgeMs: 1,
+        maxRotatedFiles: 1
+      })
+    ).toThrow('supported bounds');
+  });
 });

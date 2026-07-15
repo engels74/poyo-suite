@@ -38,6 +38,17 @@ async function createPlatformServices(): Promise<PlatformServices> {
     retentionAgeMs: positiveInteger(env.PLS_LOG_RETENTION_AGE_MS, 14 * 24 * 60 * 60 * 1000),
     maxRotatedFiles: positiveInteger(env.PLS_LOG_MAX_FILES, 10)
   });
+  const settings = new SettingsRepository(database);
+  const storedLoggerSettings = settings.get<{
+    logs?: Parameters<typeof logger.updateRotationSettings>[0];
+  }>('operations')?.value.logs;
+  if (storedLoggerSettings) {
+    try {
+      logger.updateRotationSettings(storedLoggerSettings);
+    } catch {
+      // Invalid persisted settings fail closed to validated environment defaults.
+    }
+  }
   const secretStore = await createPreferredSecretStore({ paths });
   const apiKey = new ApiKeyManager({
     environment: env,
@@ -55,7 +66,7 @@ async function createPlatformServices(): Promise<PlatformServices> {
   return {
     paths,
     database,
-    settings: new SettingsRepository(database),
+    settings,
     apiKey,
     logger
   };

@@ -99,6 +99,11 @@ describe('API key configuration', () => {
         onboardingAvailable: true
       });
       expect((await setup.manager.resolve()).key).toBe('sk-test_local_canary_123456');
+      setup.manager.recordConnectivity('ok');
+      expect(setup.manager.connectivityStatus()).toEqual({
+        checkedAt: '2026-07-15T12:00:00.000Z',
+        status: 'ok'
+      });
       expect(await setup.manager.removeLocal()).toMatchObject({
         source: 'none',
         status: 'missing'
