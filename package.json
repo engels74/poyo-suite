@@ -18,8 +18,9 @@
     "format:check": "biome format .",
     "test": "bun test",
     "test:e2e": "bun scripts/test-e2e-placeholder.ts",
-    "validate:registry": "bun scripts/validate-registry-placeholder.ts",
+    "validate:registry": "bun scripts/validate-registry.ts",
     "registry:validate": "bun run validate:registry",
+    "registry:audit:network": "bun scripts/audit-registry-network.ts",
     "test:production-smoke": "bun scripts/production-smoke.ts",
     "test:smoke": "bun run test:production-smoke"
   },

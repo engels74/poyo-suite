@@ -7,6 +7,7 @@ import { ApiKeyManager } from '../settings/api-key-manager';
 import { SecretMetadataRepository } from '../settings/secret-metadata-repository';
 import { createPreferredSecretStore } from '../settings/secret-store';
 import { SettingsRepository } from '../settings/settings-repository';
+import { seedImageRegistry } from '../registry/repository';
 
 export interface PlatformServices {
   paths: ReturnType<typeof resolveAppPaths>;
@@ -27,6 +28,7 @@ async function createPlatformServices(): Promise<PlatformServices> {
   const paths = resolveAppPaths({ environment: env });
   await ensureAppPaths(paths);
   const database = await openDatabase(paths.database);
+  seedImageRegistry(database);
   const logger = new StructuredLogger({
     directory: paths.logs,
     separateErrorFile: env.PLS_LOG_SEPARATE_ERRORS !== 'false',
