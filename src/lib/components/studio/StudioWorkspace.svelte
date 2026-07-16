@@ -141,6 +141,12 @@ let outputsError = $state('');
 let loadingOutputs = $state(false);
 let selectedOutput = $state(0);
 let fetchedOutputsFor = '';
+let completedCredits = $state<number | null>(null);
+let nowMs = $state(0);
+const balanceStaleMs = 10 * 60_000;
+let balanceStale = $derived(
+  balance !== null && nowMs > 0 && nowMs - new Date(balance.fetchedAt).getTime() > balanceStaleMs
+);
 
 const pendingActionStorageKey = `poyo-studio-pending-action:${initialData.modality}`;
 interface PendingAction {
@@ -327,9 +333,13 @@ async function loadOutputs(jobId: string): Promise<void> {
   outputsError = '';
   try {
     const response = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/outputs`);
-    const result = (await response.json()) as { outputs?: StudioOutputDto[] };
+    const result = (await response.json()) as {
+      outputs?: StudioOutputDto[];
+      actualCredits?: number | null;
+    };
     if (response.ok && result.outputs) {
       outputs = result.outputs;
+      completedCredits = result.actualCredits ?? null;
       selectedOutput = 0;
     } else {
       outputsError = 'The generated media could not be loaded. Open the job to review it.';
@@ -348,6 +358,7 @@ $effect(() => {
   if (!job) {
     outputs = null;
     outputsError = '';
+    completedCredits = null;
     fetchedOutputsFor = '';
     return;
   }
@@ -358,6 +369,8 @@ $effect(() => {
   ) {
     fetchedOutputsFor = job.id;
     void loadOutputs(job.id);
+    // Refresh the balance after a paid job settles; the actual charge is now known upstream.
+    if (hasApiKey) void refreshBalanceSnapshot();
   }
 });
 
@@ -570,6 +583,7 @@ async function refreshBalanceSnapshot(): Promise<void> {
     });
     const result = (await response.json()) as { balance?: StudioLoadData['balance'] };
     if (response.ok && result.balance) balance = result.balance;
+    nowMs = Date.now();
   } finally {
     balanceRefreshing = false;
   }
@@ -836,6 +850,13 @@ onMount(() => {
     }
   }
   hydrated = true;
+  // Balance freshness: refresh once if it is missing or stale, then tick a clock so the "stale"
+  // indicator stays live without hammering the upstream balance endpoint.
+  nowMs = Date.now();
+  if (hasApiKey && (!balance || nowMs - new Date(balance.fetchedAt).getTime() > balanceStaleMs)) {
+    void refreshBalanceSnapshot();
+  }
+  const balanceTick = window.setInterval(() => (nowMs = Date.now()), 60_000);
   void reconcilePendingAction();
   const events = new EventSource('/api/events/jobs');
   events.onopen = () => (connection = 'connected');
@@ -858,7 +879,10 @@ onMount(() => {
     const message = event as MessageEvent<string>;
     if (acceptDurableEvent(message)) updateFromJobEvent(message);
   });
-  return () => events.close();
+  return () => {
+    events.close();
+    window.clearInterval(balanceTick);
+  };
 });
 
 function showMobileSection(section: MobileStep, mobile: boolean): boolean {
@@ -1161,11 +1185,26 @@ function showMobileSection(section: MobileStep, mobile: boolean): boolean {
           {#if recoveryConcluded}<Button variant="ghost" size="sm" onclick={abandonPendingAction}>Acknowledge risk and start a new action</Button>{/if}
         </div>
       {/if}
-      <div class="mb-3 flex items-center justify-between gap-3 text-xs">
-        <span>Estimated credits: <strong>Unavailable</strong></span>
-        <button type="button" class="focus-ring rounded text-right text-muted-foreground hover:text-foreground" onclick={refreshBalanceSnapshot} disabled={balanceRefreshing || !hasApiKey}>
-          {balance ? `${balance.credits} credits · ${new Date(balance.fetchedAt).toLocaleString()}` : hasApiKey ? 'Balance not refreshed' : 'API key required'}
-        </button>
+      <div class="mb-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs">
+        <span class="text-muted-foreground">
+          {#if completedCredits !== null}
+            Charged <strong class="text-foreground">{completedCredits} credits</strong> for this generation
+          {:else}
+            Billed per generation · Poyo does not publish a pre-generation estimate, so the exact cost appears after completion
+          {/if}
+        </span>
+        <span class="flex items-center gap-1.5">
+          {#if balance}
+            <span class:text-warning={balanceStale} title={`Balance as of ${new Date(balance.fetchedAt).toLocaleString()}`}>
+              {balance.credits} credits{balanceStale ? ' · stale' : ''}
+            </span>
+          {:else}
+            <span class="text-muted-foreground">{hasApiKey ? 'Balance not loaded' : 'API key required'}</span>
+          {/if}
+          <button type="button" class="focus-ring grid size-6 place-items-center rounded text-muted-foreground hover:text-foreground disabled:opacity-50" aria-label="Refresh balance" onclick={refreshBalanceSnapshot} disabled={balanceRefreshing || !hasApiKey}>
+            <AppIcon name="refresh" size={13} />
+          </button>
+        </span>
       </div>
       <div class="grid grid-cols-[auto_auto_1fr] gap-2">
         <Button variant="ghost" size="sm" onclick={resetDraft}>Reset</Button>

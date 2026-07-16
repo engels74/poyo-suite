@@ -22,5 +22,5 @@ export const GET: RequestHandler = async ({ params, setHeaders }) => {
     downloadState: output.downloadState,
     localAvailable: output.localAvailable
   }));
-  return Response.json({ outputs });
+  return Response.json({ outputs, actualCredits: detail.actualCredits });
 };
