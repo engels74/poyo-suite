@@ -5,6 +5,7 @@ import {
   isStrictJsonValue,
   validateFieldValue
 } from './runtime-validation';
+import { isRetiredImageInput } from './retired-inputs';
 import type {
   ExpertOverride,
   GuidedImageRequest,
@@ -112,16 +113,13 @@ function validate(entry: ImageRegistryEntry, values: GuidedImageRequest): string
       issues.push(`Custom dimensions allow an aspect ratio up to ${constraints.maxAspectRatio}:1.`);
     if (values.aspectRatio)
       issues.push('Custom dimensions and a size preset are mutually exclusive.');
-    if (
-      ['Seedream 4.5', 'Seedream 5.0 Lite', 'Seedream 5.0 Pro'].includes(entry.family) &&
-      values.resolution
-    )
+    if (['Seedream 4.5', 'Seedream 5.0 Lite'].includes(entry.family) && values.resolution)
       issues.push(`${entry.family} accepts custom dimensions or resolution, not both.`);
     if (entry.family === 'GPT Image 2' && values.resolution !== '2K' && values.resolution !== '4K')
       issues.push('GPT Image 2 custom dimensions require 2K or 4K resolution.');
   }
   if (
-    ['Seedream 4.5', 'Seedream 5.0 Lite', 'Seedream 5.0 Pro'].includes(entry.family) &&
+    ['Seedream 4.5', 'Seedream 5.0 Lite'].includes(entry.family) &&
     values.aspectRatio &&
     values.resolution
   )
@@ -184,6 +182,10 @@ export function normalizeImageRequest(
   );
   const expertDiff: NormalizedPreview['expertDiff'] = [];
   for (const override of overrides) {
+    if (isRetiredImageInput(entry.publicModelId, override.key))
+      throw new RegistryValidationError([
+        'Expert override n is retired for Seedream 5.0 Pro; current schema does not support it.'
+      ]);
     if (!/^[a-z][a-z0-9_]{0,63}$/.test(override.key) || protectedKeys.test(override.key))
       throw new RegistryValidationError([`Expert override ${override.key} is protected.`]);
     if (verifiedKeys.has(override.key))

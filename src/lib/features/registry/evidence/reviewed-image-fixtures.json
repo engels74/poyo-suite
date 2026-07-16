@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "registryVersion": "image-2026-07-15.2",
-  "reviewedAt": "2026-07-15T18:02:01Z",
+  "registryVersion": "image-2026-07-15.3",
+  "reviewedAt": "2026-07-15T21:58:12Z",
   "workflows": [
     {
       "entryKey": "flux-2-pro:text-to-image",
@@ -4896,23 +4896,16 @@
             "apiKey": "size",
             "kind": "enum",
             "level": "common",
-            "enum": ["1:1", "4:3", "3:4", "16:9", "9:16"]
+            "enum": ["1:1", "4:3", "3:4", "16:9", "9:16", "2:3", "3:2", "21:9"],
+            "default": "1:1"
           },
           {
             "key": "resolution",
-            "apiKey": "size",
+            "apiKey": "resolution",
             "kind": "enum",
             "level": "common",
-            "enum": ["1K", "2K"]
-          },
-          {
-            "key": "n",
-            "apiKey": "n",
-            "kind": "integer",
-            "level": "common",
-            "default": 1,
-            "min": 1,
-            "max": 6
+            "enum": ["1K", "2K"],
+            "default": "2K"
           },
           {
             "key": "outputFormat",
@@ -4933,20 +4926,18 @@
         "output": {
           "mediaKind": "image",
           "formats": ["jpeg", "png"],
-          "counts": [1, 2, 3, 4, 5, 6],
+          "counts": null,
           "customSize": false,
           "seed": false,
           "safetyChecker": true
         },
         "validation": {
-          "conditionalRules": ["size-is-one-of-resolution-ratio-or-custom"]
+          "conditionalRules": []
         },
         "payload": {
           "adapter": "image-input-v1"
         },
-        "limitations": [
-          "Resolution and aspect ratio are separate internal concepts, but the current API accepts exactly one size value."
-        ]
+        "limitations": []
       },
       "vectors": {
         "minimum": {
@@ -4957,7 +4948,8 @@
             "model": "seedream-5.0-pro",
             "input": {
               "prompt": "studio image",
-              "n": 1,
+              "size": "1:1",
+              "resolution": "2K",
               "enable_safety_checker": false
             }
           }
@@ -4965,8 +4957,8 @@
         "advanced": {
           "values": {
             "prompt": "studio image",
-            "aspectRatio": "9:16",
-            "n": 6,
+            "aspectRatio": "21:9",
+            "resolution": "2K",
             "outputFormat": "png",
             "enableSafetyChecker": true
           },
@@ -4974,13 +4966,13 @@
             "model": "seedream-5.0-pro",
             "input": {
               "prompt": "studio image",
-              "size": "9:16",
-              "n": 6,
+              "size": "21:9",
+              "resolution": "2K",
               "output_format": "png",
               "enable_safety_checker": true
             }
           },
-          "coveredFields": ["aspectRatio", "n", "outputFormat", "enableSafetyChecker"]
+          "coveredFields": ["aspectRatio", "resolution", "outputFormat", "enableSafetyChecker"]
         },
         "invalid": {
           "label": "required prompt",
@@ -4989,9 +4981,7 @@
         }
       },
       "manualDecisions": [
-        "Reviewed adapter condition: size-is-one-of-resolution-ratio-or-custom.",
-        "Project override: enable_safety_checker is explicitly false unless the user opts in.",
-        "Resolution and aspect ratio are separate internal concepts, but the current API accepts exactly one size value."
+        "Project override: enable_safety_checker is explicitly false unless the user opts in."
       ]
     },
     {
@@ -5020,23 +5010,16 @@
             "apiKey": "size",
             "kind": "enum",
             "level": "common",
-            "enum": ["1:1", "4:3", "3:4", "16:9", "9:16"]
+            "enum": ["1:1", "4:3", "3:4", "16:9", "9:16", "2:3", "3:2", "21:9"],
+            "default": "1:1"
           },
           {
             "key": "resolution",
-            "apiKey": "size",
+            "apiKey": "resolution",
             "kind": "enum",
             "level": "common",
-            "enum": ["1K", "2K"]
-          },
-          {
-            "key": "n",
-            "apiKey": "n",
-            "kind": "integer",
-            "level": "common",
-            "default": 1,
-            "min": 1,
-            "max": 6
+            "enum": ["1K", "2K"],
+            "default": "2K"
           },
           {
             "key": "outputFormat",
@@ -5066,20 +5049,18 @@
         "output": {
           "mediaKind": "image",
           "formats": ["jpeg", "png"],
-          "counts": [1, 2, 3, 4, 5, 6],
+          "counts": null,
           "customSize": false,
           "seed": false,
           "safetyChecker": true
         },
         "validation": {
-          "conditionalRules": ["size-is-one-of-resolution-ratio-or-custom"]
+          "conditionalRules": []
         },
         "payload": {
           "adapter": "image-input-v1"
         },
-        "limitations": [
-          "Resolution and aspect ratio are separate internal concepts, but the current API accepts exactly one size value."
-        ]
+        "limitations": []
       },
       "vectors": {
         "minimum": {
@@ -5091,7 +5072,8 @@
             "model": "seedream-5.0-pro-edit",
             "input": {
               "prompt": "studio image",
-              "n": 1,
+              "size": "1:1",
+              "resolution": "2K",
               "enable_safety_checker": false,
               "image_urls": ["https://assets.example/reference-0.png"]
             }
@@ -5101,8 +5083,8 @@
           "values": {
             "prompt": "studio image",
             "imageUrls": ["https://assets.example/reference-0.png"],
-            "aspectRatio": "9:16",
-            "n": 6,
+            "aspectRatio": "21:9",
+            "resolution": "2K",
             "outputFormat": "png",
             "enableSafetyChecker": true
           },
@@ -5110,14 +5092,14 @@
             "model": "seedream-5.0-pro-edit",
             "input": {
               "prompt": "studio image",
-              "size": "9:16",
-              "n": 6,
+              "size": "21:9",
+              "resolution": "2K",
               "output_format": "png",
               "enable_safety_checker": true,
               "image_urls": ["https://assets.example/reference-0.png"]
             }
           },
-          "coveredFields": ["aspectRatio", "n", "outputFormat", "enableSafetyChecker"]
+          "coveredFields": ["aspectRatio", "resolution", "outputFormat", "enableSafetyChecker"]
         },
         "invalid": {
           "label": "required prompt",
@@ -5128,9 +5110,7 @@
         }
       },
       "manualDecisions": [
-        "Reviewed adapter condition: size-is-one-of-resolution-ratio-or-custom.",
-        "Project override: enable_safety_checker is explicitly false unless the user opts in.",
-        "Resolution and aspect ratio are separate internal concepts, but the current API accepts exactly one size value."
+        "Project override: enable_safety_checker is explicitly false unless the user opts in."
       ]
     },
     {

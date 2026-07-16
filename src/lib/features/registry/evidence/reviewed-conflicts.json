@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "reviewedAt": "2026-07-15T18:02:01Z",
+  "reviewedAt": "2026-07-15T23:35:02Z",
   "conflicts": [
     {
       "scope": "operations:retention",
@@ -43,12 +43,6 @@
       "sources": ["operations:task-status:markdown", "operations:task-status:json"],
       "finding": "The paired Task Status JSON URL currently returns 404; historical JSON omitted audio while Markdown includes it.",
       "decision": "Preserve forward-compatible raw file types and index only image/video in the initial library."
-    },
-    {
-      "scope": "model:image:seedream-5-0-pro",
-      "sources": ["model:image:seedream-5-0-pro:markdown", "model:image:seedream-5-0-pro:json"],
-      "finding": "One size union accepts a resolution or aspect ratio, not both independently.",
-      "decision": "Keep concepts separate internally, reject simultaneous selection, and emit exactly one size."
     },
     {
       "scope": "project:safety-default",

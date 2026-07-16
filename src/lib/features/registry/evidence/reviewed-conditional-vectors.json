@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "reviewedAt": "2026-07-15T18:02:01Z",
+  "reviewedAt": "2026-07-15T21:58:12Z",
   "vectors": [
     {
       "rule": "size-and-resolution-required",
@@ -37,8 +37,8 @@
     },
     {
       "rule": "size-is-one-of-resolution-ratio-or-custom",
-      "entryKey": "seedream-5.0-pro:text-to-image",
-      "values": { "prompt": "studio image", "resolution": "1K", "aspectRatio": "1:1" },
+      "entryKey": "seedream-4.5:text-to-image",
+      "values": { "prompt": "studio image", "resolution": "2K", "aspectRatio": "1:1" },
       "issueIncludes": "resolution or aspect ratio, not both"
     },
     {

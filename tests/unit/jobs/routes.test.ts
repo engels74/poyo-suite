@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test';
+import { JobRequestError } from '../../../src/lib/server/jobs/create-request';
 import { safeJobDto } from '../../../src/lib/server/jobs/events';
+import { jobHttpError } from '../../../src/lib/server/jobs/http';
 import {
   runtimeJobCreateDelay,
   runtimeJobTimings,
@@ -66,6 +68,36 @@ describe('job HTTP boundaries', () => {
     expect(route).toContain('prepareJobCreateRequest');
     expect(route).not.toContain('CreateJobRequest');
     expect(route).not.toContain('normalizedPayload: input');
+  });
+
+  test('JOB-14 maps retired reruns to an exact safe 409 response', async () => {
+    const response = jobHttpError(
+      new JobRequestError(
+        'retired_input_requires_review',
+        'This Seedream 5 Pro job contains the retired n setting. Use Edit in studio to review current settings before creating a new paid job.',
+        409
+      )
+    );
+    expect(response.status).toBe(409);
+    const responseText = await response.clone().text();
+    expect(await response.json()).toEqual({
+      error: {
+        code: 'retired_input_requires_review',
+        message:
+          'This Seedream 5 Pro job contains the retired n setting. Use Edit in studio to review current settings before creating a new paid job.'
+      }
+    });
+    expect(responseText).not.toMatch(/stack|payload|internal/i);
+  });
+
+  test('JOB-14 rerun blocks before reconcile and maps repository errors safely', async () => {
+    const route = await Bun.file('src/routes/api/jobs/[jobId]/rerun/+server.ts').text();
+    const rerunIndex = route.indexOf('runtime.repository.rerunAsNew');
+    const reconcileIndex = route.indexOf('runtime.coordinator.reconcile');
+    expect(rerunIndex).toBeGreaterThan(-1);
+    expect(reconcileIndex).toBeGreaterThan(rerunIndex);
+    expect(route).toContain('catch (error)');
+    expect(route).toContain('return jobHttpError(error)');
   });
 
   test('SEC-04 private media streaming supports HEAD and never serializes filesystem paths', async () => {

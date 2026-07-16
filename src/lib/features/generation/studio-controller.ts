@@ -8,6 +8,7 @@ import type {
   InputRole,
   VideoRegistryEntry
 } from '../registry/types';
+import { isRetiredImageInput } from '../registry/retired-inputs';
 import type { StudioEntry, StudioRoleInput } from './contracts';
 
 export type SizeMode = 'resolution' | 'aspect-ratio' | 'custom';
@@ -68,7 +69,15 @@ export function initialGuidedValues(
   }
   if (entry.output.safetyChecker) values.enableSafetyChecker = false;
   if (preset) Object.assign(values, cloneJson(preset.guided));
+  if (!entry.fields.some((field) => field.key === 'n')) delete values.n;
   return values;
+}
+
+export function filterRetiredExpertOverrides(
+  entry: Pick<StudioEntry, 'publicModelId'>,
+  overrides: readonly ExpertOverride[]
+): ExpertOverride[] {
+  return overrides.filter((override) => !isRetiredImageInput(entry.publicModelId, override.key));
 }
 
 export function initialRoleInputs(
@@ -92,9 +101,8 @@ export function initialRoleInputs(
 }
 
 export function sizeModes(entry: StudioEntry): SizeMode[] {
-  const seedreamExclusive = entry.family.startsWith('Seedream 5.0 Pro');
   const customSize = 'customSize' in entry.output && entry.output.customSize;
-  if (!customSize && !seedreamExclusive) return [];
+  if (!customSize) return [];
   const modes: SizeMode[] = [];
   if (
     entry.fields.some((field) => field.key === 'resolution') &&

@@ -65,4 +65,33 @@ describe('SEC-01/ARCH-01 static stack and browser-boundary enforcement', () => {
       );
     }
   });
+
+  test('keeps retired-input policy runtime-neutral and consumers on direct safe boundaries', async () => {
+    const policy = await Bun.file('src/lib/features/registry/retired-inputs.ts').text();
+    expect(policy).not.toMatch(/^\s*import\b/m);
+    expect(policy).not.toMatch(
+      /\bBun\b|image-registry|source-evidence|evidence|\$lib\/server|\/server\//
+    );
+
+    const controller = await Bun.file('src/lib/features/generation/studio-controller.ts').text();
+    expect(controller).toContain("from '../registry/retired-inputs'");
+    expect(controller).not.toMatch(
+      /import(?!\s+type\b)[^\n]*from ['"]\.\.\/registry\/image-registry['"]/
+    );
+
+    for (const repository of [
+      'src/lib/server/presets/repository.ts',
+      'src/lib/server/jobs/repository.ts'
+    ]) {
+      const source = await Bun.file(repository).text();
+      expect(source, repository).toContain("from '../../features/registry/retired-inputs'");
+      expect(source, repository).not.toMatch(/import[^\n]*isRetiredImageInput[^\n]*image-registry/);
+    }
+
+    const workspace = await Bun.file('src/lib/components/studio/StudioWorkspace.svelte').text();
+    expect(workspace).toContain('filterRetiredExpertOverrides');
+    expect(workspace).toContain("from '$lib/features/generation/studio-controller'");
+    expect(workspace).not.toContain('retired-inputs');
+    expect(workspace).not.toContain('image-registry');
+  });
 });

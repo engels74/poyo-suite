@@ -1,4 +1,5 @@
 import type { Database } from 'bun:sqlite';
+import { isRetiredImageInput } from '../../features/registry/retired-inputs';
 import { DatabaseRepository } from '../platform/repository';
 import type { PoyoStatusResult, PoyoSubmitResult } from '../poyo/types';
 import { isPaidActionId, JobRequestError } from './create-request';
@@ -424,6 +425,18 @@ export class JobRepository extends DatabaseRepository {
     if (!job) throw new Error('Job not found.');
     if (job.attentionCode === 'submission_unknown')
       throw new Error('An ambiguous paid submission cannot be run again from its history record.');
+    const normalizedInput = job.normalizedPayload.input as Record<string, unknown>;
+    const containsRetiredInput = [
+      ...Object.keys(job.guidedRequest),
+      ...Object.keys(normalizedInput),
+      ...job.expertDiff.map((override) => override.key)
+    ].some((key) => isRetiredImageInput(job.publicModelId, key));
+    if (containsRetiredInput)
+      throw new JobRequestError(
+        'retired_input_requires_review',
+        'This Seedream 5 Pro job contains the retired n setting. Use Edit in studio to review current settings before creating a new paid job.',
+        409
+      );
     return this.create({
       actionId,
       ...(job.entryKey ? { entryKey: job.entryKey } : {}),

@@ -39,6 +39,114 @@ describe('server-authoritative paid request preparation', () => {
     }
   });
 
+  test('JOB-10 rebuilds Seedream 5 Pro size and resolution defaults at the paid boundary', async () => {
+    const fixture = await createJobFixture();
+    try {
+      seedImageRegistry(fixture.database);
+      const prepared = await prepareJobCreateRequest(
+        fixture.database,
+        {
+          actionId,
+          entryKey: 'seedream-5.0-pro:text-to-image',
+          values: { prompt: 'A registry-owned Seedream request' },
+          expertOverrides: [],
+          inputs: []
+        },
+        async () => {
+          throw new Error('No source should be resolved.');
+        }
+      );
+      expect(prepared.normalizedPayload).toMatchObject({
+        model: 'seedream-5.0-pro',
+        input: { size: '1:1', resolution: '2K' }
+      });
+      expect(prepared.normalizedPayload.input).not.toHaveProperty('n');
+      expect(prepared.guidedRequest).not.toHaveProperty('n');
+      expect(prepared.expectedOutputCount).toBe(1);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  test('JOB-10 rejects retired Seedream 5 Pro n at guided and Expert paid boundaries', async () => {
+    const fixture = await createJobFixture();
+    try {
+      seedImageRegistry(fixture.database);
+      const resolve = async () => {
+        throw new Error('No managed source should be resolved.');
+      };
+      for (const entryKey of [
+        'seedream-5.0-pro:text-to-image',
+        'seedream-5.0-pro-edit:image-edit'
+      ]) {
+        const inputs = entryKey.includes('-edit')
+          ? [
+              {
+                role: 'reference',
+                mediaKind: 'image' as const,
+                source: 'remote' as const,
+                url: 'https://assets.example/reference.png'
+              }
+            ]
+          : [];
+        await expect(
+          prepareJobCreateRequest(
+            fixture.database,
+            {
+              actionId,
+              entryKey,
+              values: { prompt: 'Retired guided count', n: 6 },
+              expertOverrides: [],
+              inputs
+            },
+            resolve
+          )
+        ).rejects.toThrow('Unsupported guided field n.');
+        await expect(
+          prepareJobCreateRequest(
+            fixture.database,
+            {
+              actionId,
+              entryKey,
+              values: { prompt: 'Retired Expert count' },
+              expertOverrides: [{ key: 'n', value: 6 }],
+              inputs
+            },
+            resolve
+          )
+        ).rejects.toThrow(
+          'Expert override n is retired for Seedream 5.0 Pro; current schema does not support it.'
+        );
+      }
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  test('JOB-10 preserves supported non-Pro output counts', async () => {
+    const fixture = await createJobFixture();
+    try {
+      seedImageRegistry(fixture.database);
+      const prepared = await prepareJobCreateRequest(
+        fixture.database,
+        {
+          actionId,
+          entryKey: 'flux-schnell:text-to-image',
+          values: { prompt: 'Two supported outputs', n: 2 },
+          expertOverrides: [],
+          inputs: []
+        },
+        async () => {
+          throw new Error('No source should be resolved.');
+        }
+      );
+      expect(prepared.normalizedPayload.input.n).toBe(2);
+      expect(prepared.expectedOutputCount).toBe(2);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
   test('JOB-10 rejects browser-authored envelopes, protected overrides, stale entries and media tampering', async () => {
     const fixture = await createJobFixture();
     try {

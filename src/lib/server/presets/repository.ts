@@ -1,6 +1,7 @@
 import type { Database } from 'bun:sqlite';
 import type { PresetRecord, PresetValues } from '../../features/presets/types';
 import { IMAGE_REGISTRY, IMAGE_REGISTRY_ENTRIES } from '../../features/registry/image-registry';
+import { isRetiredImageInput } from '../../features/registry/retired-inputs';
 import { VIDEO_REGISTRY, VIDEO_REGISTRY_ENTRIES } from '../../features/registry/video-registry';
 import { DatabaseRepository } from '../platform/repository';
 
@@ -25,13 +26,27 @@ export interface SavePresetInput {
   values: PresetValues;
 }
 
-function entryMetadata(entryKey: string): { registryVersion: string; workflow: string } {
+function entryMetadata(entryKey: string): {
+  registryVersion: string;
+  workflow: string;
+  publicModelId: string;
+} {
   const image = IMAGE_REGISTRY_ENTRIES.find((entry) => entry.key === entryKey);
-  if (image) return { registryVersion: IMAGE_REGISTRY.version, workflow: image.workflow };
+  if (image)
+    return {
+      registryVersion: IMAGE_REGISTRY.version,
+      workflow: image.workflow,
+      publicModelId: image.publicModelId
+    };
   const video = VIDEO_REGISTRY_ENTRIES.find(
     (entry) => entry.key === entryKey && entry.status === 'current'
   );
-  if (video) return { registryVersion: VIDEO_REGISTRY.version, workflow: video.workflow };
+  if (video)
+    return {
+      registryVersion: VIDEO_REGISTRY.version,
+      workflow: video.workflow,
+      publicModelId: video.publicModelId
+    };
   throw new Error('Preset model workflow is unknown or unavailable.');
 }
 
@@ -101,6 +116,17 @@ export class PresetRepository extends DatabaseRepository {
       throw new Error('Preset description is limited to 500 characters.');
     assertPresetValues(input.values);
     const metadata = entryMetadata(input.entryKey);
+    const valuesToPersist: PresetValues = {
+      ...input.values,
+      guided: Object.fromEntries(
+        Object.entries(input.values.guided).filter(
+          ([key]) => !isRetiredImageInput(metadata.publicModelId, key)
+        )
+      ),
+      expertOverrides: input.values.expertOverrides.filter(
+        (override) => !isRetiredImageInput(metadata.publicModelId, override.key)
+      )
+    };
     const existing = input.id ? this.get(input.id) : null;
     if (input.id && !existing) throw new Error('Preset not found.');
     const id = existing?.id ?? crypto.randomUUID();
@@ -118,7 +144,7 @@ export class PresetRepository extends DatabaseRepository {
         metadata.workflow,
         name,
         description,
-        JSON.stringify(input.values),
+        JSON.stringify(valuesToPersist),
         existing?.createdAt ?? timestamp,
         timestamp
       );

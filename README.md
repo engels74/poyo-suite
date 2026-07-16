@@ -101,8 +101,6 @@ reserved thumbnail directory, and—only when required—the local secret-store 
   deletion.
 - Poyo's output-retention documentation conflicts between 24 hours and three days. The studio
   downloads completed outputs immediately and treats 24 hours as the safe floor.
-- Seedream 5.0 Pro currently accepts one `size` choice: a resolution **or** an aspect ratio,
-  not both independently.
 - For every audited model that supports `enable_safety_checker`, the project deliberately
   sends `false` by default and exposes an opt-in control.
 - Kling Avatar 2.0 is recorded but excluded from current selectors because avatars and
