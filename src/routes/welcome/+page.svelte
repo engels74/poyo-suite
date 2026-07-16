@@ -126,12 +126,21 @@ async function markStep(patch: Partial<OnboardingStateDto['steps']>): Promise<vo
 function checkDirectory(): void {
   if (!directoryInput.trim()) return;
   void run(async () => {
-    const result = await request<{ result: DirectoryCheck }>(
-      '/api/settings/output-location',
-      'POST',
-      { directory: directoryInput }
-    );
-    directoryCheck = result.result;
+    // The check endpoint returns a structured `result` for both success and expected validation
+    // failures (422), so read it directly rather than via request(), whose throw-on-non-2xx would
+    // drop the per-field feedback and leave only the page-level error banner.
+    const response = await fetch('/api/settings/output-location', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ directory: directoryInput })
+    });
+    const payload = (await response.json().catch(() => ({}))) as {
+      result?: DirectoryCheck;
+      error?: { message?: string };
+    };
+    if (!payload.result)
+      throw new Error(payload.error?.message ?? `Request failed (${response.status}).`);
+    directoryCheck = payload.result;
   });
 }
 
