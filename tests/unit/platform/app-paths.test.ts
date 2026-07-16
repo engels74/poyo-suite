@@ -94,4 +94,32 @@ describe('application paths', () => {
     // A user-chosen output folder must retain its own permissions (unlike the app's private dirs).
     expect((await lstat(target)).mode & 0o777).toBe(0o755);
   });
+
+  test('ensureAppPaths keeps an environment-managed PLS_MEDIA_DIR folder’s permissions', async () => {
+    if (process.platform === 'win32') return;
+    const temporary = await createTemporaryDirectory('poyo-env-media-');
+    cleanups.push(temporary.cleanup);
+
+    const paths = resolveAppPaths({
+      environment: {
+        PLS_APP_DATA_DIR: join(temporary.path, 'studio'),
+        PLS_MEDIA_DIR: join(temporary.path, 'shared-media')
+      },
+      platform: process.platform,
+      homeDirectory: temporary.path
+    });
+    // The environment-managed case: media differs from the platform default under the app root.
+    expect(paths.media).not.toBe(paths.defaultMedia);
+
+    // Simulate an existing shared folder the operator pointed PLS_MEDIA_DIR at.
+    await mkdir(paths.media, { recursive: true });
+    await chmod(paths.media, 0o755);
+
+    await ensureAppPaths(paths);
+
+    // The environment-managed media folder keeps its own permissions (no forced 0o700 that would
+    // change a shared folder or EPERM-fail startup), while the app's private root stays locked down.
+    expect((await lstat(paths.media)).mode & 0o777).toBe(0o755);
+    expect((await lstat(paths.root)).mode & 0o077).toBe(0);
+  });
 });

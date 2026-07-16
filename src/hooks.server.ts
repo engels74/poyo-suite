@@ -27,8 +27,10 @@ async function installThemeDefault(): Promise<ThemePreference> {
 export const handle: Handle = async ({ event, resolve }) => {
   let themeDefault: ThemePreference | null = null;
   return resolve(event, {
+    // injectThemeDefault matches the <html> tag case-insensitively and no-ops on chunks without it,
+    // so it is the single source of truth for the match. installThemeDefault is memoized, so the
+    // settings read still happens at most once per request.
     transformPageChunk: async ({ html }) => {
-      if (!html.includes('<html')) return html;
       themeDefault ??= await installThemeDefault();
       return injectThemeDefault(html, themeDefault);
     }

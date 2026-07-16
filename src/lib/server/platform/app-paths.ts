@@ -141,10 +141,19 @@ export async function ensureDirectoryExists(path: string): Promise<void> {
 }
 
 export async function ensureAppPaths(paths: AppPaths): Promise<void> {
+  // The media directory is the one location an operator can redirect via PLS_MEDIA_DIR. When it is
+  // environment-managed (anything other than the platform default under the app root), ensure it
+  // exists without forcing 0o700: chmod'ing an existing/shared folder would either change its
+  // permissions unexpectedly or fail with EPERM and block startup. This mirrors how a user-chosen
+  // output folder is handled in the runtime; the platform default stays private.
+  const mediaIsEnvironmentManaged =
+    paths.defaultMedia !== undefined && paths.media !== paths.defaultMedia;
   await Promise.all([
     ensurePrivateDirectory(paths.root),
     ensurePrivateDirectory(dirname(paths.database)),
-    ensurePrivateDirectory(paths.media),
+    mediaIsEnvironmentManaged
+      ? ensureDirectoryExists(paths.media)
+      : ensurePrivateDirectory(paths.media),
     ensurePrivateDirectory(paths.uploads),
     ensurePrivateDirectory(paths.thumbnails),
     ensurePrivateDirectory(paths.logs),
