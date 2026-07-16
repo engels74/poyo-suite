@@ -8,7 +8,7 @@ import type {
 } from './types';
 import { OFFICIAL_SOURCE_MANIFEST, officialModelSources } from './evidence/source-evidence';
 
-export const IMAGE_REGISTRY_VERSION = 'image-2026-07-15.2';
+export const IMAGE_REGISTRY_VERSION = 'image-2026-07-15.3';
 export const IMAGE_VERIFIED_AT = OFFICIAL_SOURCE_MANIFEST.verifiedAt;
 const ratios8 = ['1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3', 'auto'];
 const seedreamRatios = ['1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3', '21:9'];
@@ -51,6 +51,7 @@ type Page = {
   formats?: string[];
   formatDefault?: string;
   ratioDefault?: string;
+  resDefault?: string;
   refs?: [number, number | null];
   optionalRefs?: [number, number | null];
   custom?:
@@ -317,15 +318,13 @@ const pages: Page[] = [
     provider: 'ByteDance',
     family: 'Seedream 5.0 Pro',
     ids: ['seedream-5.0-pro', 'seedream-5.0-pro-edit'],
-    ratios: ['1:1', '4:3', '3:4', '16:9', '9:16'],
+    ratios: ['1:1', '4:3', '3:4', '16:9', '9:16', '2:3', '3:2', '21:9'],
+    ratioDefault: '1:1',
     res: ['1K', '2K'],
+    resDefault: '2K',
     refs: [1, 10],
-    n: [1, 6],
     formats: ['jpeg', 'png'],
-    safety: true,
-    limitations: [
-      'Resolution and aspect ratio are separate internal concepts, but the current API accepts exactly one size value.'
-    ]
+    safety: true
   },
   {
     slug: 'wan-2-7-image',
@@ -390,7 +389,7 @@ function entry(page: Page, id: string, mode: 'base' | 'edit'): ImageRegistryEntr
     page.family === 'Kling O3 Image' && !isEdit
       ? page.ratios?.filter((ratio) => ratio !== 'auto')
       : page.ratios;
-  const unionSize = ['Seedream 4.5', 'Seedream 5.0 Lite', 'Seedream 5.0 Pro'].includes(page.family);
+  const unionSize = ['Seedream 4.5', 'Seedream 5.0 Lite'].includes(page.family);
   const fields: FieldDefinition[] = [
     prompt(...(page.prompt ?? [1, 5000])),
     ...(effectiveRatios
@@ -412,7 +411,8 @@ function entry(page: Page, id: string, mode: 'base' | 'edit'): ImageRegistryEntr
             apiKey: unionSize ? 'size' : 'resolution',
             kind: 'enum' as const,
             level: 'common' as const,
-            enum: page.res
+            enum: page.res,
+            ...(page.resDefault ? { default: page.resDefault } : {})
           }
         ]
       : []),

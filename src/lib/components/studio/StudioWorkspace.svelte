@@ -19,6 +19,7 @@ import {
 } from '$lib/features/generation/media-preflight';
 import {
   createJobRequest,
+  filterRetiredExpertOverrides,
   initialGuidedValues,
   initialRoleInputs,
   mediaAccept,
@@ -71,6 +72,10 @@ const initialEntry =
 if (!initialEntry) throw new Error('The studio registry has no selectable workflows.');
 const initialGuided = initialGuidedValues(initialEntry, initialData.preset?.values);
 const initialRoles = initialRoleInputs(initialEntry, initialData.preset?.values);
+const initialExpertOverrides = filterRetiredExpertOverrides(
+  initialEntry,
+  initialData.preset?.values.expertOverrides ?? []
+);
 
 function inferSizeMode(entry: StudioEntry, values: Record<string, unknown>): SizeMode {
   if (values.aspectRatio !== undefined) return 'aspect-ratio';
@@ -83,11 +88,9 @@ let guided = $state<Record<string, unknown>>(initialGuided);
 let roleInputs = $state<Record<string, StudioRoleInput[]>>(initialRoles);
 let sizeMode = $state<SizeMode>(inferSizeMode(initialEntry, initialGuided));
 let expertText = $state(
-  initialData.preset?.values.expertOverrides.length
+  initialExpertOverrides.length
     ? JSON.stringify(
-        Object.fromEntries(
-          initialData.preset.values.expertOverrides.map((item) => [item.key, item.value])
-        ),
+        Object.fromEntries(initialExpertOverrides.map((item) => [item.key, item.value])),
         null,
         2
       )
@@ -584,7 +587,7 @@ function resetDraft(): void {
 async function savePreset(): Promise<void> {
   presetMessage = '';
   try {
-    const overrides = parseExpertOverrides(expertText);
+    const overrides = filterRetiredExpertOverrides(selectedEntry, parseExpertOverrides(expertText));
     const response = await fetch('/api/presets', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -958,9 +961,6 @@ function showMobileSection(section: MobileStep, mobile: boolean): boolean {
                   </label>
                 {/each}
               </div>
-              {#if selectedEntry.family === 'Seedream 5.0 Pro'}
-                <p class="mt-2 text-xs leading-5 text-warning">Poyo currently accepts resolution or aspect ratio for Seedream 5.0 Pro, never both. The unselected concept is not sent.</p>
-              {/if}
             </fieldset>
           {/if}
           <div class="mt-4 grid gap-4">

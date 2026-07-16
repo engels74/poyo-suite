@@ -12,6 +12,7 @@ import {
   normalizeImageRequest,
   RegistryValidationError
 } from '../../../src/lib/features/registry/normalize';
+import { isRetiredImageInput } from '../../../src/lib/features/registry/retired-inputs';
 import { migrateDatabase } from '../../../src/lib/server/platform/database';
 import { seedImageRegistry } from '../../../src/lib/server/registry/repository';
 
@@ -142,18 +143,130 @@ describe('audited image registry', () => {
       } else expect(preview.request.input).not.toHaveProperty('enable_safety_checker');
     }
   });
-  test('REG-08 Seedream 5 Pro exposes separate concepts but emits exactly one size', () => {
-    const entry = registryEntry('seedream-5.0-pro:text-to-image');
+  test('REG-08 Seedream 5 Pro emits independent defaults without retired output counts', () => {
+    const ratios = ['1:1', '4:3', '3:4', '16:9', '9:16', '2:3', '3:2', '21:9'];
+    for (const key of ['seedream-5.0-pro:text-to-image', 'seedream-5.0-pro-edit:image-edit']) {
+      const entry = registryEntry(key);
+      expect(entry.fields.find((field) => field.key === 'aspectRatio')).toMatchObject({
+        apiKey: 'size',
+        enum: ratios,
+        default: '1:1'
+      });
+      expect(entry.fields.find((field) => field.key === 'resolution')).toMatchObject({
+        apiKey: 'resolution',
+        enum: ['1K', '2K'],
+        default: '2K'
+      });
+      expect(entry.fields.find((field) => field.key === 'n')).toBeUndefined();
+      expect(entry.output.counts).toBeNull();
+      expect(entry.validation.conditionalRules).not.toContain(
+        'size-is-one-of-resolution-ratio-or-custom'
+      );
+      expect(entry.limitations).toEqual([]);
+
+      const minimum = normalizeImageRequest(entry.key, {
+        prompt: 'dream',
+        ...(entry.workflow === 'image-edit'
+          ? { imageUrls: ['https://assets.example/reference.png'] }
+          : {})
+      }).request.input;
+      expect(minimum).toMatchObject({
+        size: '1:1',
+        resolution: '2K',
+        enable_safety_checker: false
+      });
+      expect(minimum).not.toHaveProperty('n');
+      if (entry.workflow === 'image-edit')
+        expect(minimum.image_urls).toEqual(['https://assets.example/reference.png']);
+
+      const values = {
+        prompt: 'dream',
+        ...(entry.workflow === 'image-edit'
+          ? { imageUrls: ['https://assets.example/reference.png'] }
+          : {})
+      };
+      expect(() => normalizeImageRequest(entry.key, { ...values, n: 6 })).toThrow(
+        'n is not supported'
+      );
+      expect(() => normalizeImageRequest(entry.key, values, [{ key: 'n', value: 6 }])).toThrow(
+        'Expert override n is retired for Seedream 5.0 Pro; current schema does not support it.'
+      );
+    }
+
+    expect(
+      normalizeImageRequest('seedream-5.0-pro:text-to-image', {
+        prompt: 'dream',
+        aspectRatio: '16:9',
+        resolution: '1K'
+      }).request.input
+    ).toMatchObject({ size: '16:9', resolution: '1K' });
+
+    const nonProExpert = normalizeImageRequest(
+      'flux-2-pro:text-to-image',
+      { prompt: 'dream', aspectRatio: '1:1', resolution: '1K' },
+      [{ key: 'n', value: 6 }]
+    );
+    expect(nonProExpert.expertDiff).toEqual([{ key: 'n', status: 'unverified', value: 6 }]);
+    expect(nonProExpert.request.input.n).toBe(6);
+  });
+
+  test('REG-08A retired input policy matches only Seedream 5 Pro n', () => {
+    expect(isRetiredImageInput('seedream-5.0-pro', 'n')).toBe(true);
+    expect(isRetiredImageInput('seedream-5.0-pro-edit', 'n')).toBe(true);
+    expect(isRetiredImageInput('seedream-5.0-pro', 'resolution')).toBe(false);
+    expect(isRetiredImageInput('seedream-5.0-pro-edit', 'seed')).toBe(false);
+    expect(isRetiredImageInput('seedream-5.0-lite', 'n')).toBe(false);
+    expect(isRetiredImageInput('flux-schnell', 'n')).toBe(false);
+  });
+
+  test('REG-08B preserves union-size neighbors and Flux.2 independent requirements', () => {
+    for (const key of ['seedream-4.5:text-to-image', 'seedream-5.0-lite:text-to-image']) {
+      expect(() =>
+        normalizeImageRequest(key, {
+          prompt: 'dream',
+          aspectRatio: '1:1',
+          resolution: key.includes('4.5') ? '2K' : '3K'
+        })
+      ).toThrow('not both');
+      expect(() =>
+        normalizeImageRequest(key, {
+          prompt: 'dream',
+          width: 1024,
+          height: 1024,
+          resolution: key.includes('4.5') ? '2K' : '3K'
+        })
+      ).toThrow('custom dimensions or resolution');
+    }
+
     expect(() =>
-      normalizeImageRequest(entry.key, { prompt: 'dream', resolution: '1K', aspectRatio: '1:1' })
-    ).toThrow('not both');
+      normalizeImageRequest('flux-2-pro:text-to-image', {
+        prompt: 'dream',
+        aspectRatio: '1:1'
+      })
+    ).toThrow('requires both');
+    expect(() =>
+      normalizeImageRequest('flux-2-pro:text-to-image', {
+        prompt: 'dream',
+        resolution: '1K'
+      })
+    ).toThrow('requires both');
     expect(
-      normalizeImageRequest(entry.key, { prompt: 'dream', resolution: '2K' }).request.input
-    ).toMatchObject({ size: '2K', enable_safety_checker: false });
-    expect(
-      normalizeImageRequest(entry.key, { prompt: 'dream', aspectRatio: '16:9' }).request.input
-    ).toMatchObject({ size: '16:9' });
-    expect(entry.limitations.join(' ')).toContain('exactly one size');
+      normalizeImageRequest('flux-2-pro:text-to-image', {
+        prompt: 'dream',
+        aspectRatio: '1:1',
+        resolution: '1K'
+      }).request.input
+    ).toMatchObject({ size: '1:1', resolution: '1K' });
+
+    for (const [key, count] of [
+      ['seedream-4.5:text-to-image', 3],
+      ['seedream-5.0-lite:text-to-image', 4],
+      ['flux-schnell:text-to-image', 2]
+    ] as const) {
+      const entry = registryEntry(key);
+      expect(entry.fields.find((field) => field.key === 'n')).toBeDefined();
+      expect(normalizeImageRequest(key, { prompt: 'dream', n: count }).request.input.n).toBe(count);
+    }
   });
   test('REG-09 marks controlled unknown expert overrides and blocks protected/verified fields', () => {
     const key = 'flux-schnell:text-to-image';
