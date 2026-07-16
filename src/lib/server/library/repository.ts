@@ -678,7 +678,7 @@ export class LibraryRepository extends DatabaseRepository {
     jobId: string,
     outputId: string,
     choice: LocalDeleteChoice,
-    paths: Pick<AppPaths, 'media'>
+    paths: Pick<AppPaths, 'media' | 'mediaReadRoots'>
   ): Promise<void> {
     this.requireJob(jobId);
     const output = this.database
@@ -688,12 +688,26 @@ export class LibraryRepository extends DatabaseRepository {
       .get(outputId, jobId);
     if (!output) throw new Error('Output not found.');
     if ((choice === 'file' || choice === 'both') && output.local_path) {
-      const path = resolvePathWithin(paths.media, output.local_path);
-      await Bun.file(path)
-        .delete()
-        .catch((error) => {
-          if ((error as { code?: string }).code !== 'ENOENT') throw error;
-        });
+      // Outputs written before the output directory changed live under a historical media root, so
+      // resolve against every readable root (as the serve path does) instead of only the active
+      // `media`. local_path is stored absolute, so exactly one root lexically contains it.
+      const roots = paths.mediaReadRoots ?? [paths.media];
+      let resolved: string | null = null;
+      for (const root of roots) {
+        try {
+          resolved = resolvePathWithin(root, output.local_path);
+          break;
+        } catch {
+          // Not under this root; try the next historical media root.
+        }
+      }
+      if (resolved) {
+        await Bun.file(resolved)
+          .delete()
+          .catch((error) => {
+            if ((error as { code?: string }).code !== 'ENOENT') throw error;
+          });
+      }
     }
     const timestamp = this.now().toISOString();
     this.transaction(() => {

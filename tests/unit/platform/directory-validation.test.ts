@@ -74,4 +74,14 @@ describe('validateOutputDirectory', () => {
     // The write probe must never overwrite or delete a user file, even one named like the probe.
     expect(await readFile(clash, 'utf8')).toBe('user data');
   });
+
+  test('returns a structured result instead of throwing when the path cannot be stat-ed', async () => {
+    const dir = await temp();
+    // A path component far longer than NAME_MAX makes lstat throw ENAMETOOLONG; validation must
+    // surface a structured result rather than propagating the error as a server fault.
+    const target = join(dir, 'x'.repeat(5000));
+    const result = await validateOutputDirectory(target);
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe('not_writable');
+  });
 });

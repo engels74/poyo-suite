@@ -36,7 +36,8 @@ function firstIncompleteStep(state: OnboardingStateDto): Step {
   if (!state.steps.location) return 'location';
   if (!state.steps.connection) return 'apiKey';
   if (!state.steps.theme) return 'theme';
-  return 'intro';
+  // All steps are done: resume on the final screen rather than restarting the flow at the intro.
+  return 'done';
 }
 
 let step = $state<Step>(untrack(() => firstIncompleteStep(initial.onboarding)));

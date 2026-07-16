@@ -70,10 +70,18 @@ export async function validateOutputDirectory(input: string): Promise<DirectoryV
   let existed = false;
   let created = false;
 
-  const info = await lstat(path).catch((error: NodeJS.ErrnoException) => {
-    if (error.code === 'ENOENT') return null;
-    throw error;
-  });
+  let info: Awaited<ReturnType<typeof lstat>> | null = null;
+  try {
+    info = await lstat(path);
+  } catch (error) {
+    // Only ENOENT means "does not exist yet" (created below). Any other error — EACCES/EPERM,
+    // ELOOP, ENAMETOOLONG — is an expected validation failure, not a server fault, so return a
+    // structured result instead of throwing (which would otherwise surface as a generic error).
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
+      return result('not_writable', 'The folder exists but is not writable.', path, {
+        freeBytes: await freeSpace(path)
+      });
+  }
 
   if (info) {
     if (info.isSymbolicLink())

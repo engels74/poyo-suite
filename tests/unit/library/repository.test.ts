@@ -138,6 +138,26 @@ describe('server-side jobs and grouped library repository', () => {
     });
   });
 
+  test('deletes a local file stored under a historical media read root', async () => {
+    const { fixture, job, output, localPath } = await completedGeneration('relocated');
+    const repository = new LibraryRepository(fixture.database);
+    // Simulate the output directory having moved: the active `media` is elsewhere, but the file
+    // still lives under a historical root that stays readable. Resolving against only the active
+    // `media` would throw "path escapes"; resolving against mediaReadRoots must find and delete it.
+    const movedMedia = `${fixture.paths.media}-new`;
+    const movedPaths = {
+      ...fixture.paths,
+      media: movedMedia,
+      mediaReadRoots: [movedMedia, fixture.paths.media]
+    };
+    await repository.deleteOutput(job.id, output.id, 'file', movedPaths);
+    expect(await Bun.file(localPath).exists()).toBe(false);
+    expect((await repository.getJobDetail(job.id))?.outputs[0]).toMatchObject({
+      downloadState: 'deleted',
+      localAvailable: false
+    });
+  });
+
   test('accounts managed sources once and exposes missing-file history without local paths', async () => {
     const { fixture, job } = await completedGeneration('managed-source');
     const sourceId = crypto.randomUUID();
