@@ -74,6 +74,17 @@ describe('storage preferences', () => {
     expect(stored.outputDirectory).toBeNull();
     expect(stored.previousRoots).toContain('/a');
   });
+
+  test('trims whitespace-polluted persisted roots so later path matching stays reliable', async () => {
+    const settings = await repository();
+    settings.set('storage', {
+      outputDirectory: '  /vol/media  ',
+      previousRoots: ['  /old  ', '/old']
+    });
+    const stored = readStoragePreferences(settings);
+    expect(stored.outputDirectory).toBe('/vol/media');
+    expect(stored.previousRoots).toEqual(['/old']);
+  });
 });
 
 describe('resolveEffectiveMedia', () => {

@@ -347,11 +347,13 @@ async function loadOutputs(jobId: string): Promise<void> {
     // A newer job may have become active while this request was in flight; a late response for a
     // superseded job must not paint its media (or error) under the current job's header.
     if (activeJob?.id !== jobId) return;
+    // The charge is known from the job record regardless of whether the files are still viewable,
+    // so surface it even when the media itself can't be loaded.
+    if (response.ok) completedCredits = result.actualCredits ?? null;
     // Treat "no viewable output" (e.g. files deleted or moved after completion) as an error rather
     // than a blank success, so the result stage shows guidance instead of an empty preview.
     if (response.ok && result.outputs?.some((output) => output.mediaUrl)) {
       outputs = result.outputs;
-      completedCredits = result.actualCredits ?? null;
       selectedOutput = 0;
     } else {
       outputsError = 'The generated media could not be loaded. Open the job to review it.';

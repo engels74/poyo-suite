@@ -33,7 +33,7 @@ function cleanStrings(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   const seen = new Set<string>();
   for (const entry of value) {
-    if (typeof entry === 'string' && entry.trim()) seen.add(entry);
+    if (typeof entry === 'string' && entry.trim()) seen.add(entry.trim());
   }
   return [...seen];
 }
@@ -42,7 +42,7 @@ export function readStoragePreferences(settings: SettingsRepository): StoragePre
   const stored = settings.get<Partial<StoragePreferences>>(STORAGE_KEY)?.value;
   const outputDirectory =
     typeof stored?.outputDirectory === 'string' && stored.outputDirectory.trim()
-      ? stored.outputDirectory
+      ? stored.outputDirectory.trim()
       : null;
   return { outputDirectory, previousRoots: cleanStrings(stored?.previousRoots) };
 }

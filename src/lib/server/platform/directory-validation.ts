@@ -78,9 +78,14 @@ export async function validateOutputDirectory(input: string): Promise<DirectoryV
     // ELOOP, ENAMETOOLONG — is an expected validation failure, not a server fault, so return a
     // structured result instead of throwing (which would otherwise surface as a generic error).
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
-      return result('not_writable', 'The folder exists but is not writable.', path, {
-        freeBytes: await freeSpace(path)
-      });
+      return result(
+        'not_writable',
+        'The folder could not be accessed. Check the path and permissions.',
+        path,
+        {
+          freeBytes: await freeSpace(path)
+        }
+      );
   }
 
   if (info) {
