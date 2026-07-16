@@ -72,9 +72,11 @@ export function resolveAppPaths(options: ResolveAppPathsOptions = {}): AppPaths 
   // Match the trim()-based check the output-location endpoints use for "environment managed": a
   // whitespace-only PLS_MEDIA_DIR is not a real override, so it must not resolve a media path.
   const mediaOverride = environment.PLS_MEDIA_DIR?.trim();
-  const media = mediaOverride
-    ? requireSafePath(mediaOverride, 'PLS_MEDIA_DIR')
-    : join(root, 'media');
+  // The platform default stays fixed at <root>/media regardless of any PLS_MEDIA_DIR override, so an
+  // install that later adds the override can still expose its previous default directory as a read
+  // root and keep older outputs readable (see resolveEffectiveMedia).
+  const defaultMedia = join(root, 'media');
+  const media = mediaOverride ? requireSafePath(mediaOverride, 'PLS_MEDIA_DIR') : defaultMedia;
 
   return {
     root,
@@ -82,7 +84,7 @@ export function resolveAppPaths(options: ResolveAppPathsOptions = {}): AppPaths 
       ? requireSafePath(environment.PLS_DATABASE_PATH, 'PLS_DATABASE_PATH')
       : join(root, 'data', 'poyo-studio.sqlite'),
     media,
-    defaultMedia: media,
+    defaultMedia,
     mediaReadRoots: [media],
     uploads: join(root, 'uploads'),
     thumbnails: join(root, 'thumbnails'),
@@ -128,8 +130,10 @@ export async function ensurePrivateDirectory(path: string): Promise<void> {
  */
 export async function ensureDirectoryExists(path: string): Promise<void> {
   await mkdir(path, { recursive: true, mode: 0o700 });
-  if (process.platform === 'win32') return;
 
+  // The non-symlink guarantee is portable — lstat detects symlinks/junctions on win32 too (it stats
+  // the link itself without following it) — and this function never chmods, so unlike
+  // ensurePrivateDirectory there is no POSIX-only step to skip. Enforce the check on every platform.
   const info = await lstat(path);
   if (!info.isDirectory() || info.isSymbolicLink()) {
     throw new Error(`Expected a directory at ${path}.`);

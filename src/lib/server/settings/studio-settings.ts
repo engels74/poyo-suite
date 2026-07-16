@@ -91,23 +91,28 @@ export function resolveEffectiveMedia(
   storage: StoragePreferences,
   mediaFromEnvironment: boolean
 ): { media: string; mediaReadRoots: string[]; environmentManaged: boolean } {
-  const defaultMedia = basePaths.media;
+  // The platform default is independent of any PLS_MEDIA_DIR override, so outputs downloaded under
+  // it before the override was introduced stay readable even though writes now go elsewhere.
+  const platformDefault = basePaths.defaultMedia ?? basePaths.media;
   const historical = storage.previousRoots;
   if (!mediaFromEnvironment && storage.outputDirectory) {
     const media = storage.outputDirectory;
-    const roots = [media, defaultMedia, ...historical].filter(
+    const roots = [media, platformDefault, ...historical].filter(
       (root, index, all) => all.indexOf(root) === index
     );
     return { media, mediaReadRoots: roots, environmentManaged: false };
   }
-  // Keep a still-configured custom directory readable even when the environment manages writes:
-  // media may already have been downloaded there before PLS_MEDIA_DIR was introduced.
+  // Environment media (or the platform default) owns writes, but keep the platform default and any
+  // still-configured custom directory readable: media may already have been downloaded to either
+  // before PLS_MEDIA_DIR was introduced.
+  const media = basePaths.media;
   const roots = [
-    defaultMedia,
+    media,
+    platformDefault,
     ...(storage.outputDirectory ? [storage.outputDirectory] : []),
     ...historical
   ].filter((root, index, all) => all.indexOf(root) === index);
-  return { media: defaultMedia, mediaReadRoots: roots, environmentManaged: mediaFromEnvironment };
+  return { media, mediaReadRoots: roots, environmentManaged: mediaFromEnvironment };
 }
 
 export function outputLocationDto(

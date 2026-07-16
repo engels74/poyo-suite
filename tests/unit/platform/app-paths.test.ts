@@ -58,6 +58,9 @@ describe('application paths', () => {
       homeDirectory: '/home/studio'
     });
     expect(custom.media).toBe('/mnt/media');
+    // defaultMedia stays the platform default regardless of the override, so the previous default
+    // root remains available to mediaReadRoots for older outputs.
+    expect(custom.defaultMedia).toBe('/srv/poyo/media');
   });
 
   test('creates private local directories and keeps paths inside configured roots', async () => {

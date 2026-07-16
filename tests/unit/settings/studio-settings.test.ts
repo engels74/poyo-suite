@@ -124,6 +124,19 @@ describe('resolveEffectiveMedia', () => {
     expect(effective.environmentManaged).toBe(true);
   });
 
+  test('keeps the platform default readable when PLS_MEDIA_DIR overrides an existing install', () => {
+    // An install that wrote to <root>/media before PLS_MEDIA_DIR was added: the env dir owns writes
+    // now, but the previous default root must stay in mediaReadRoots so older outputs remain servable.
+    const effective = resolveEffectiveMedia(
+      { ...paths('/env/media'), defaultMedia: '/root/media' },
+      { outputDirectory: null, previousRoots: [] },
+      true
+    );
+    expect(effective.media).toBe('/env/media');
+    expect(effective.mediaReadRoots).toEqual(['/env/media', '/root/media']);
+    expect(effective.environmentManaged).toBe(true);
+  });
+
   test('falls back to the default media directory when nothing is configured', () => {
     const effective = resolveEffectiveMedia(
       paths('/root/media'),
