@@ -215,7 +215,12 @@ export function updateOnboarding(
     dismissedAt: update.reopen
       ? null
       : (current.dismissedAt ?? (update.dismiss ? now.toISOString() : null)),
-    steps: { ...current.steps, ...update.steps }
+    // Reopening ("re-run setup") restarts the flow from the first step, so reset the recorded steps
+    // to their defaults; otherwise firstIncompleteStep() sees an all-complete record and lands the
+    // user straight on the done screen instead of the beginning.
+    steps: update.reopen
+      ? { ...DEFAULT_STEPS, ...update.steps }
+      : { ...current.steps, ...update.steps }
   };
   settings.set(ONBOARDING_KEY, next);
   return next;

@@ -246,6 +246,14 @@ describe('onboarding state', () => {
     const reopened = updateOnboarding(settings, { reopen: true });
     expect(reopened.completedAt).toBeNull();
     expect(reopened.dismissedAt).toBeNull();
+    // Reopening restarts the flow: previously-completed steps reset so firstIncompleteStep() lands
+    // on the first step rather than the done screen.
+    expect(reopened.steps).toEqual({
+      location: false,
+      connection: false,
+      theme: false,
+      defaults: false
+    });
   });
 
   test('dismiss marks completion without a completedAt', async () => {
