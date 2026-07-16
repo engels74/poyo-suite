@@ -376,7 +376,15 @@ async function loadOutputs(jobId: string): Promise<void> {
     // marker so it does not refetch a permanently empty result.
     if (fetchedOutputsFor === jobId) fetchedOutputsFor = '';
   } finally {
-    if (activeJob?.id === jobId) loadingOutputs = false;
+    // Release the spinner unless a *different* settled job is now loading its own outputs: that
+    // newer in-flight load owns loadingOutputs. In every other case (this job still active, no
+    // active job, or a superseding in-progress/failed job) clear it so a superseded fetch can't
+    // strand a stale "Loading the generated media…" state.
+    const supersededByLoadingJob =
+      activeJob?.id !== jobId &&
+      activeJob?.localPhase === 'complete' &&
+      activeJob?.remoteStatus !== 'failed';
+    if (!supersededByLoadingJob) loadingOutputs = false;
   }
 }
 

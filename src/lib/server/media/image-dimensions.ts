@@ -14,7 +14,11 @@ export function readImageDimensions(bytes: Uint8Array): PixelDimensions | null {
 }
 
 export function aspectRatioLabel(width: number, height: number): string | null {
-  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
+  // Require positive integers: gcd() reduces via `a % b` until `b === 0`, which only terminates for
+  // integers — a fractional input could recurse without ever hitting zero. Number.isInteger also
+  // rejects NaN/Infinity, so it subsumes the previous finiteness guard.
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0)
+    return null;
   const divisor = gcd(width, height);
   return `${width / divisor}:${height / divisor}`;
 }

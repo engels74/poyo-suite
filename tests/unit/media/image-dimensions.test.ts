@@ -123,4 +123,12 @@ describe('aspectRatioLabel', () => {
   test('returns null for non-positive dimensions', () => {
     expect(aspectRatioLabel(0, 10)).toBeNull();
   });
+
+  test('returns null for non-integer or non-finite dimensions', () => {
+    // Guards gcd() termination: fractional inputs could recurse without ever reaching b === 0.
+    expect(aspectRatioLabel(100.5, 50)).toBeNull();
+    expect(aspectRatioLabel(16, 9.5)).toBeNull();
+    expect(aspectRatioLabel(Number.NaN, 10)).toBeNull();
+    expect(aspectRatioLabel(Number.POSITIVE_INFINITY, 10)).toBeNull();
+  });
 });
