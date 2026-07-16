@@ -392,15 +392,17 @@ $effect(() => {
     fetchedOutputsFor = '';
     return;
   }
-  if (
-    job.localPhase === 'complete' &&
-    job.remoteStatus !== 'failed' &&
-    fetchedOutputsFor !== job.id
-  ) {
+  const settled = job.localPhase === 'complete' && job.remoteStatus !== 'failed';
+  if (settled && fetchedOutputsFor !== job.id) {
     fetchedOutputsFor = job.id;
     void loadOutputs(job.id);
     // Refresh the balance after a paid job settles; the actual charge is now known upstream.
     if (hasApiKey) void refreshBalanceSnapshot();
+  } else if (!settled) {
+    // The active job is not a settled/successful generation (a new in-progress job, or a failed
+    // one): clear the previous completed job's charge so its "Charged X credits" line does not
+    // linger under the new job. A settled job whose outputs we've already loaded keeps its charge.
+    completedCredits = null;
   }
 });
 
