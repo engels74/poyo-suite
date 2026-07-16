@@ -87,6 +87,49 @@ describe('studio draft persistence', () => {
     expect(readStudioDraft('image')).toBeNull();
   });
 
+  test('rejects a PresetValues shape with missing or mistyped required fields', () => {
+    const base = { version: 1, entryKey: 'seedream-5-0-pro', sizeMode: 'aspect-ratio' };
+    const malformed: unknown[] = [
+      { version: 1, modality: 'image', expertOverrides: [], inputRoles: [] }, // missing guided → cloneJson throws
+      { ...values, guided: [] }, // guided is not a plain object
+      { ...values, version: 2 }, // wrong inner PresetValues version
+      { ...values, modality: 'audio' }, // invalid modality
+      { ...values, inputRoles: {} }, // non-iterable inputRoles → for..of throws
+      { ...values, inputRoles: [{ role: 'reference', source: 'remote', urls: 'x' }] }, // urls not array → .map throws
+      { ...values, inputRoles: [{ role: 'reference', source: 'remote', urls: ['not a url'] }] }, // unparseable remote URL → new URL throws
+      { ...values, inputRoles: [{ role: 'reference', source: 'remote', urls: [123] }] }, // non-string url
+      { ...values, inputRoles: [{ role: 42, source: 'remote', urls: [] }] }, // non-string role
+      { ...values, inputRoles: [{ role: 'reference', source: 'other', urls: [] }] }, // invalid source
+      { ...values, expertOverrides: {} }, // non-array expertOverrides → .filter throws
+      { ...values, expertOverrides: [{ value: 1 }] } // expertOverride missing string key
+    ];
+    for (const bad of malformed) {
+      localStorage.setItem('poyo-studio-draft:image', JSON.stringify({ ...base, values: bad }));
+      expect(readStudioDraft('image')).toBeNull();
+    }
+  });
+
+  test('accepts an uploaded input role without URL-parsing its urls', () => {
+    // Only remote URLs are dereferenced on restore, so an uploaded role's opaque url string is valid.
+    const uploaded: PresetValues = {
+      version: 1,
+      modality: 'image',
+      guided: {},
+      expertOverrides: [{ key: 'seed', value: 7 }],
+      inputRoles: [{ role: 'reference', source: 'uploaded', urls: ['local-source-token'] }]
+    };
+    localStorage.setItem(
+      'poyo-studio-draft:image',
+      JSON.stringify({
+        version: 1,
+        entryKey: 'seedream-5-0-pro',
+        sizeMode: 'custom',
+        values: uploaded
+      })
+    );
+    expect(readStudioDraft('image')?.values).toEqual(uploaded);
+  });
+
   test('rejects malformed JSON', () => {
     localStorage.setItem('poyo-studio-draft:image', '{not json');
     expect(readStudioDraft('image')).toBeNull();
