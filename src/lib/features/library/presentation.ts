@@ -88,6 +88,36 @@ export function byteSizeLabel(bytes: number): string {
   return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
 }
 
+function ratioValue(value: string | null): number | null {
+  if (!value) return null;
+  const match = value.trim().match(/^(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)$/);
+  if (!match) return null;
+  const width = Number(match[1]);
+  const height = Number(match[2]);
+  return width > 0 && height > 0 ? width / height : null;
+}
+
+export function mediaFrameAspectRatio(
+  width: number | null,
+  height: number | null,
+  requestedRatio: string | null = null
+): string {
+  const fallback = ratioValue(requestedRatio);
+  if (
+    width === null ||
+    height === null ||
+    !Number.isSafeInteger(width) ||
+    !Number.isSafeInteger(height) ||
+    width <= 0 ||
+    height <= 0
+  )
+    return fallback === null
+      ? '4 / 3'
+      : String(Number(Math.min(16 / 9, Math.max(3 / 4, fallback)).toFixed(6)));
+  const ratio = Math.min(16 / 9, Math.max(3 / 4, width / height));
+  return String(Number(ratio.toFixed(6)));
+}
+
 const dateTimeFormatter = new Intl.DateTimeFormat('en-GB', {
   dateStyle: 'medium',
   timeStyle: 'short',

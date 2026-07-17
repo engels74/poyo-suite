@@ -56,7 +56,9 @@ describe('job HTTP boundaries', () => {
       'src/routes/api/library/[jobId]/pin/+server.ts',
       'src/routes/api/library/[jobId]/tags/+server.ts',
       'src/routes/api/library/[jobId]/open-folder/+server.ts',
-      'src/routes/api/library/[jobId]/outputs/[outputId]/delete/+server.ts'
+      'src/routes/api/library/[jobId]/outputs/[outputId]/delete/+server.ts',
+      'src/routes/api/media/[outputId]/open-native/+server.ts',
+      'src/routes/api/media/[outputId]/reveal/+server.ts'
     ];
     for (const route of routes) {
       expect(await Bun.file(route).text()).toContain('readSameOriginJson');
@@ -102,10 +104,20 @@ describe('job HTTP boundaries', () => {
 
   test('SEC-04 private media streaming supports HEAD and never serializes filesystem paths', async () => {
     const route = await Bun.file('src/routes/api/media/[outputId]/+server.ts').text();
-    expect(route).toContain('safeLocalMediaPath');
-    expect(route).toContain('assertPrivateMediaRequest');
+    expect(route).toContain('serveVerifiedMediaOutput');
     expect(route).toContain('export const HEAD');
     expect(route).not.toContain('Response.json');
+    const download = await Bun.file('src/routes/api/media/[outputId]/download/+server.ts').text();
+    expect(download).toContain('attachment: true');
+    const detail = await Bun.file('src/lib/components/library/JobDetailView.svelte').text();
+    expect(detail).toContain('download data-sveltekit-reload');
+    for (const mutation of ['open-native', 'reveal']) {
+      const source = await Bun.file(
+        `src/routes/api/media/[outputId]/${mutation}/+server.ts`
+      ).text();
+      expect(source).toContain('resolveVerifiedMediaOutput');
+      expect(source).not.toContain('localPath');
+    }
   });
 
   test('SEC-04 studio mutations apply bounded same-origin request checks', async () => {

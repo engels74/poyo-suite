@@ -1,7 +1,16 @@
 <script lang="ts">
 import { goto, invalidateAll } from '$app/navigation';
-import type { JobDetailDto, LocalDeleteChoice } from '$lib/features/library/contracts';
-import { byteSizeLabel, dateTimeLabel, elapsedLabel } from '$lib/features/library/presentation';
+import type {
+  JobDetailDto,
+  LocalDeleteChoice,
+  NativeMediaCapabilities
+} from '$lib/features/library/contracts';
+import {
+  byteSizeLabel,
+  dateTimeLabel,
+  elapsedLabel,
+  mediaFrameAspectRatio
+} from '$lib/features/library/presentation';
 import AppIcon from '$lib/components/ui/AppIcon.svelte';
 import Badge from '$lib/components/ui/Badge.svelte';
 import LinkButton from '$lib/components/ui/LinkButton.svelte';
@@ -12,9 +21,10 @@ import StatusBadge from './StatusBadge.svelte';
 interface Props {
   job: JobDetailDto;
   context: 'jobs' | 'library';
+  mediaCapabilities: NativeMediaCapabilities;
 }
 
-let { job, context }: Props = $props();
+let { job, context, mediaCapabilities }: Props = $props();
 let pending = $state<string | null>(null);
 let feedback = $state('');
 let tags = $state(untrack(() => job.tags.join(', ')));
@@ -27,6 +37,13 @@ let comparisonLeft = $derived(
 );
 let comparisonRight = $derived(
   job.outputs.find((output) => output.outputId === comparisonRightId) ?? job.outputs[1]
+);
+let requestedAspectRatio = $derived(
+  typeof job.guidedRequest.aspectRatio === 'string'
+    ? job.guidedRequest.aspectRatio
+    : typeof job.guidedRequest.size === 'string'
+      ? job.guidedRequest.size
+      : null
 );
 
 async function post(path: string, body: Record<string, unknown> = {}): Promise<Response> {
@@ -141,6 +158,14 @@ function openFolder(): void {
   });
 }
 
+function nativeOutputAction(outputId: string, kind: 'open-native' | 'reveal'): void {
+  void action(`${kind}-${outputId}`, async () => {
+    await post(`/api/media/${outputId}/${kind}`);
+    feedback =
+      kind === 'open-native' ? 'Opened the output in its default app.' : 'Revealed the output.';
+  });
+}
+
 function removeOutput(outputId: string): void {
   const choice = deleteChoices[outputId] ?? 'file';
   const consequence =
@@ -213,13 +238,17 @@ function removeOutput(outputId: string): void {
                 {#if comparisonLeft}
                   <div>
                     <p class="mb-2 text-xs font-semibold">A · Output {comparisonLeft.outputOrder + 1}</p>
-                    <MediaPreview mediaKind={comparisonLeft.mediaKind} src={comparisonLeft.mediaUrl} alt={`${job.displayName} comparison output A`} class="aspect-[4/3] rounded" controls={comparisonLeft.mediaKind === 'video'} viewable />
+                    <div class="overflow-hidden rounded" style={`aspect-ratio: ${mediaFrameAspectRatio(comparisonLeft.pixelWidth, comparisonLeft.pixelHeight, comparisonLeft.aspectRatio ?? requestedAspectRatio)};`}>
+                      <MediaPreview mediaKind={comparisonLeft.mediaKind} src={comparisonLeft.mediaUrl} alt={`${job.displayName} comparison output A`} fit="contain" class="size-full" controls={comparisonLeft.mediaKind === 'video'} viewable />
+                    </div>
                   </div>
                 {/if}
                 {#if comparisonRight}
                   <div>
                     <p class="mb-2 text-xs font-semibold">B · Output {comparisonRight.outputOrder + 1}</p>
-                    <MediaPreview mediaKind={comparisonRight.mediaKind} src={comparisonRight.mediaUrl} alt={`${job.displayName} comparison output B`} class="aspect-[4/3] rounded" controls={comparisonRight.mediaKind === 'video'} viewable />
+                    <div class="overflow-hidden rounded" style={`aspect-ratio: ${mediaFrameAspectRatio(comparisonRight.pixelWidth, comparisonRight.pixelHeight, comparisonRight.aspectRatio ?? requestedAspectRatio)};`}>
+                      <MediaPreview mediaKind={comparisonRight.mediaKind} src={comparisonRight.mediaUrl} alt={`${job.displayName} comparison output B`} fit="contain" class="size-full" controls={comparisonRight.mediaKind === 'video'} viewable />
+                    </div>
                   </div>
                 {/if}
               </div>
@@ -228,12 +257,19 @@ function removeOutput(outputId: string): void {
           <div class="mt-4 grid gap-5 sm:grid-cols-2">
             {#each job.outputs as output (output.outputId)}
               <article class="overflow-hidden rounded-lg border border-border bg-card">
-                <MediaPreview mediaKind={output.mediaKind} src={output.mediaUrl} alt={`${job.displayName} output ${output.outputOrder + 1}`} class="aspect-[4/3]" controls={output.mediaKind === 'video'} viewable />
+                <div style={`aspect-ratio: ${mediaFrameAspectRatio(output.pixelWidth, output.pixelHeight, output.aspectRatio ?? requestedAspectRatio)};`}>
+                  <MediaPreview mediaKind={output.mediaKind} src={output.mediaUrl} alt={`${job.displayName} output ${output.outputOrder + 1}`} fit="contain" class="size-full" controls={output.mediaKind === 'video'} viewable />
+                </div>
                 <div class="p-4">
                   <div class="flex flex-wrap items-center justify-between gap-2"><p class="text-sm font-semibold">Output {output.outputOrder + 1}</p><Badge tone={output.localAvailable ? 'success' : output.downloadState === 'failed' ? 'danger' : 'warning'}>{output.downloadState}</Badge></div>
-                  <dl class="mt-3 grid grid-cols-2 gap-3 text-xs"><div><dt class="text-muted-foreground">File</dt><dd class="mt-1 truncate font-medium">{output.fileName ?? 'No local file'}</dd></div><div><dt class="text-muted-foreground">Size</dt><dd class="mt-1 font-medium">{output.byteSize === null ? '—' : byteSizeLabel(output.byteSize)}</dd></div><div><dt class="text-muted-foreground">Remote</dt><dd class="mt-1 font-medium">{output.remoteHost ?? 'Unavailable'}</dd></div><div><dt class="text-muted-foreground">Checksum</dt><dd class="mt-1 truncate font-mono">{output.checksum?.slice(0, 12) ?? '—'}</dd></div></dl>
+                  <dl class="mt-3 grid grid-cols-2 gap-3 text-xs"><div><dt class="text-muted-foreground">File</dt><dd class="mt-1 truncate font-medium">{output.fileName ?? 'No local file'}</dd></div><div><dt class="text-muted-foreground">Size</dt><dd class="mt-1 font-medium">{output.byteSize === null ? '—' : byteSizeLabel(output.byteSize)}</dd></div><div><dt class="text-muted-foreground">Dimensions</dt><dd class="mt-1 font-medium">{output.pixelWidth && output.pixelHeight ? `${output.pixelWidth} × ${output.pixelHeight}` : '—'}</dd></div><div><dt class="text-muted-foreground">Remote</dt><dd class="mt-1 font-medium">{output.remoteHost ?? 'Unavailable'}</dd></div><div><dt class="text-muted-foreground">Checksum</dt><dd class="mt-1 truncate font-mono">{output.checksum?.slice(0, 12) ?? '—'}</dd></div></dl>
                   <div class="mt-4 flex flex-wrap gap-2">
-                    {#if output.localAvailable}<a href={output.mediaUrl ?? '#'} download class="focus-ring rounded border border-border px-2.5 py-1.5 text-xs font-semibold">Download</a>{/if}
+                    {#if output.localAvailable}
+                      <a href={output.mediaUrl ?? '#'} target="_blank" rel="noreferrer" class="focus-ring rounded border border-border px-2.5 py-1.5 text-xs font-semibold">Open in browser</a>
+                      <a href={`/api/media/${output.outputId}/download`} download data-sveltekit-reload class="focus-ring rounded border border-border px-2.5 py-1.5 text-xs font-semibold">Download copy</a>
+                      {#if mediaCapabilities.openNative}<button onclick={() => nativeOutputAction(output.outputId, 'open-native')} disabled={pending !== null} class="focus-ring rounded border border-border px-2.5 py-1.5 text-xs font-semibold">Open in app</button>{/if}
+                      {#if mediaCapabilities.reveal}<button onclick={() => nativeOutputAction(output.outputId, 'reveal')} disabled={pending !== null} class="focus-ring rounded border border-border px-2.5 py-1.5 text-xs font-semibold">{mediaCapabilities.revealLabel}</button>{/if}
+                    {/if}
                     {#if output.remoteAvailable && !output.localAvailable}<button onclick={() => retryDownload(output.outputId)} disabled={pending !== null} class="focus-ring rounded border border-border px-2.5 py-1.5 text-xs font-semibold">Download again</button>{/if}
                     {#if output.remoteAvailable && output.mediaKind === 'image'}
                       <LinkButton href={`/studio/image?fromJob=${job.id}&sourceOutput=${output.outputId}`} variant="ghost">Remix image</LinkButton>
@@ -242,6 +278,7 @@ function removeOutput(outputId: string): void {
                       <LinkButton href={`/studio/video?fromJob=${job.id}&sourceOutput=${output.outputId}`} variant="ghost">Remix video</LinkButton>
                     {/if}
                   </div>
+                  {#if output.localAvailable && !mediaCapabilities.openNative && !mediaCapabilities.reveal}<p class="mt-2 text-xs text-muted-foreground">Native file actions are unavailable on this platform.</p>{/if}
                   <details class="mt-4 border-t border-border pt-3"><summary class="cursor-pointer text-xs font-semibold">Local deletion</summary><p class="mt-2 text-xs leading-5 text-muted-foreground">Removing metadata can leave an untracked file. No option here deletes remote Poyo data.</p><div class="mt-2 flex gap-2"><select aria-label={`Deletion consequence for output ${output.outputOrder + 1}`} value={deleteChoices[output.outputId] ?? 'file'} onchange={(event) => (deleteChoices[output.outputId] = event.currentTarget.value as LocalDeleteChoice)} class="focus-ring min-w-0 flex-1 rounded border border-input bg-background px-2 text-xs"><option value="file">File only</option><option value="metadata">Metadata only</option><option value="both">File + metadata</option></select><button onclick={() => removeOutput(output.outputId)} disabled={pending !== null} class="focus-ring rounded border border-destructive/40 px-2.5 text-xs font-semibold text-destructive">Remove</button></div></details>
                 </div>
               </article>

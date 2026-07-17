@@ -9,7 +9,7 @@ async function serve(request: Request, outputId: string, head: boolean): Promise
     platform.database,
     platform.paths.mediaReadRoots ?? [platform.paths.media],
     outputId,
-    { head }
+    { head, attachment: true }
   );
 }
 

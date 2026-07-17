@@ -4,7 +4,11 @@ import MediaPreview from '$lib/components/library/MediaPreview.svelte';
 import AppIcon from '$lib/components/ui/AppIcon.svelte';
 import Badge from '$lib/components/ui/Badge.svelte';
 import LinkButton from '$lib/components/ui/LinkButton.svelte';
-import { byteSizeLabel, dateTimeLabel } from '$lib/features/library/presentation';
+import {
+  byteSizeLabel,
+  dateTimeLabel,
+  mediaFrameAspectRatio
+} from '$lib/features/library/presentation';
 import type { PageData } from './$types';
 
 let { data }: { data: PageData } = $props();
@@ -89,7 +93,11 @@ async function setFavorite(jobId: string, favorite: boolean): Promise<void> {
         {#each data.page.items as group (group.jobId)}
           <article class={data.filters.view === 'grid' ? 'group overflow-hidden rounded-lg border border-border bg-card shadow-[var(--shadow-xs)]' : 'grid gap-3 py-4 sm:grid-cols-[9rem_minmax(0,1fr)_auto] sm:items-center'}>
             <a href={`/library/${group.jobId}`} class="focus-ring block overflow-hidden rounded">
-              <MediaPreview mediaKind={group.representative?.mediaKind ?? group.modality} src={group.representative?.mediaUrl ?? null} alt={`Preview for ${group.displayName}`} fit="contain" class={data.filters.view === 'grid' ? 'aspect-[4/3]' : 'aspect-video'} />
+              <div
+                style={`aspect-ratio: ${data.filters.view === 'grid' ? mediaFrameAspectRatio(group.representative?.pixelWidth ?? null, group.representative?.pixelHeight ?? null, group.aspectRatio) : '16 / 9'};`}
+              >
+                <MediaPreview mediaKind={group.representative?.mediaKind ?? group.modality} src={group.representative?.mediaUrl ?? null} alt={`Preview for ${group.displayName}`} fit="contain" class="size-full" />
+              </div>
             </a>
             <div class={data.filters.view === 'grid' ? 'p-4' : 'min-w-0'}>
               <div class="flex items-start justify-between gap-3">

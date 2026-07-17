@@ -4,6 +4,7 @@ import {
   dateLabel,
   dateTimeLabel,
   elapsedLabel,
+  mediaFrameAspectRatio,
   parseJobFilters,
   parseLibraryFilters,
   statusLabel
@@ -47,5 +48,16 @@ describe('jobs and library presentation contracts', () => {
       'Submission outcome unknown'
     );
     expect(statusLabel('monitoring', 'running', null)).toBe('Generating');
+  });
+
+  test('keeps mixed-aspect media recognizable without allowing extreme frames', () => {
+    expect(mediaFrameAspectRatio(1200, 1200)).toBe('1');
+    expect(mediaFrameAspectRatio(1920, 1080)).toBe(String(Number((16 / 9).toFixed(6))));
+    expect(mediaFrameAspectRatio(1080, 1920)).toBe('0.75');
+    expect(mediaFrameAspectRatio(null, null)).toBe('4 / 3');
+    expect(mediaFrameAspectRatio(0, 100)).toBe('4 / 3');
+    expect(mediaFrameAspectRatio(null, null, '9:16')).toBe('0.75');
+    expect(mediaFrameAspectRatio(null, null, '16:9')).toBe(String(Number((16 / 9).toFixed(6))));
+    expect(mediaFrameAspectRatio(null, null, 'auto')).toBe('4 / 3');
   });
 });

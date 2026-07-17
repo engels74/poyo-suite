@@ -1,12 +1,14 @@
 import { Database } from 'bun:sqlite';
 import { expect, setDefaultTimeout, test } from 'bun:test';
 import { mkdir } from 'node:fs/promises';
+import { deflateSync } from 'node:zlib';
 import {
   type APIResponse,
   type Browser,
   type BrowserContext,
   chromium,
   type Dialog,
+  type Locator,
   type Page,
   type Route
 } from 'playwright';
@@ -262,19 +264,81 @@ function errorDiagnostics(error: unknown): Record<string, unknown> {
   return {};
 }
 
-async function waitUntil(predicate: () => boolean, message: string, timeoutMs = 10_000) {
+async function waitUntil(
+  predicate: () => boolean | Promise<boolean>,
+  message: string,
+  timeoutMs = 10_000
+) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (predicate()) return;
+    if (await predicate()) return;
     await Bun.sleep(25);
   }
   throw new Error(message);
 }
 
+async function selectRadioValue(scope: Locator, value: string): Promise<void> {
+  const selector = `input[type="radio"][value="${value}"]`;
+  await scope.locator(selector).evaluate((element) => (element as HTMLInputElement).click());
+  await waitUntil(
+    async () => scope.locator(selector).isChecked(),
+    `Radio choice ${value} did not become selected.`
+  );
+}
+
+function pngCrc(bytes: Uint8Array): number {
+  let crc = 0xffffffff;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function pngChunk(type: string, data: Uint8Array): Uint8Array {
+  const typeBytes = new TextEncoder().encode(type);
+  const chunk = new Uint8Array(12 + data.length);
+  const view = new DataView(chunk.buffer);
+  view.setUint32(0, data.length);
+  chunk.set(typeBytes, 4);
+  chunk.set(data, 8);
+  view.setUint32(8 + data.length, pngCrc(chunk.slice(4, 8 + data.length)));
+  return chunk;
+}
+
+function solidPng(width: number, height: number): Uint8Array {
+  const header = new Uint8Array(13);
+  const view = new DataView(header.buffer);
+  view.setUint32(0, width);
+  view.setUint32(4, height);
+  header.set([8, 6, 0, 0, 0], 8);
+  const rows = new Uint8Array((width * 4 + 1) * height);
+  for (let row = 0; row < height; row += 1) {
+    const start = row * (width * 4 + 1);
+    for (let column = 0; column < width; column += 1) {
+      const pixel = start + 1 + column * 4;
+      rows.set([44, 91, 132, 255], pixel);
+    }
+  }
+  const chunks = [
+    Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    pngChunk('IHDR', header),
+    pngChunk('IDAT', deflateSync(rows)),
+    pngChunk('IEND', new Uint8Array())
+  ];
+  const result = new Uint8Array(chunks.reduce((total, chunk) => total + chunk.length, 0));
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return result;
+}
+
 async function chooseImageTextWorkflow(page: Page): Promise<void> {
   const inspector = page.locator('#parameter-inspector');
-  await inspector.getByLabel('Creative intent').selectOption('text-to-image');
-  await inspector.getByLabel('Audited model').selectOption('flux-schnell:text-to-image');
+  await selectRadioValue(inspector, 'text-to-image');
+  await selectRadioValue(inspector, 'flux-schnell:text-to-image');
   await inspector
     .getByRole('textbox', { name: /^Prompt/ })
     .fill('A quiet blue observatory above a calm northern sea');
@@ -283,10 +347,20 @@ async function chooseImageTextWorkflow(page: Page): Promise<void> {
 
 async function assertSeedreamProSizeControls(page: Page, submitCount: () => number): Promise<void> {
   const inspector = page.locator('#parameter-inspector');
-  await inspector.getByLabel('Creative intent').selectOption('text-to-image');
-  await inspector.getByLabel('Audited model').selectOption('seedream-5.0-pro:text-to-image');
-  expect(await inspector.getByLabel('Aspect Ratio').inputValue()).toBe('1:1');
-  expect(await inspector.getByLabel('Resolution').inputValue()).toBe('2K');
+  await selectRadioValue(inspector, 'text-to-image');
+  await selectRadioValue(inspector, 'seedream-5.0-pro:text-to-image');
+  expect(
+    await inspector
+      .getByRole('group', { name: 'Aspect Ratio' })
+      .getByRole('radio', { name: 'Automatic (1:1)' })
+      .isChecked()
+  ).toBe(true);
+  expect(
+    await inspector
+      .getByRole('group', { name: 'Resolution' })
+      .getByRole('radio', { name: 'Automatic (2K)' })
+      .isChecked()
+  ).toBe(true);
   expect(await inspector.getByLabel('N', { exact: true }).count()).toBe(0);
   expect(await inspector.getByText('Size mode', { exact: true }).count()).toBe(0);
   expect(await inspector.getByText(/never both/i).count()).toBe(0);
@@ -307,22 +381,27 @@ async function assertSeedreamProSizeControls(page: Page, submitCount: () => numb
 
 async function chooseImageEditWorkflow(page: Page): Promise<void> {
   const inspector = page.locator('#parameter-inspector');
-  await inspector.getByLabel('Creative intent').selectOption('image-edit');
-  await inspector.getByLabel('Audited model').selectOption('flux-dev:image-edit');
+  await selectRadioValue(inspector, 'image-edit');
+  await selectRadioValue(inspector, 'flux-dev:image-edit');
   await inspector
     .getByRole('textbox', { name: /^Prompt/ })
     .fill('Transform the retained source into a quiet cyanotype');
-  await inspector.getByLabel('Add local file').setInputFiles('tests/fixtures/media/tiny.png');
-  await inspector.getByText('tiny.png').waitFor();
-  await inspector.getByText('1 × 1 px').waitFor();
+  await inspector.getByLabel('Add local file').setInputFiles({
+    name: 'portrait-near-nine-sixteen.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from(solidPng(900, 1601))
+  });
+  await inspector.getByText('portrait-near-nine-sixteen.png').waitFor();
+  await inspector.getByText('900 × 1601 px').waitFor();
+  await inspector.getByRole('radio', { name: 'Automatic (9:16 from 900 × 1601)' }).waitFor();
   await inspector.getByText('Local transfer and Poyo upload completed.').waitFor();
   await inspector.getByText('Request validated locally.').waitFor();
 }
 
 async function createMultiOutputImage(page: Page): Promise<void> {
   const inspector = page.locator('#parameter-inspector');
-  await inspector.getByLabel('Creative intent').selectOption('text-to-image');
-  await inspector.getByLabel('Audited model').selectOption('gpt-4o-image:text-to-image');
+  await selectRadioValue(inspector, 'text-to-image');
+  await selectRadioValue(inspector, 'gpt-4o-image:text-to-image');
   await inspector
     .getByRole('textbox', { name: /^Prompt/ })
     .fill('Two cobalt paper sculptures for a related-output comparison');
@@ -479,11 +558,17 @@ async function assertRestoredProOrigin(
     productStageBoundMs,
     async () => {
       expect(
-        await inspector.getByLabel('Aspect Ratio').inputValue({ timeout: productStageBoundMs })
-      ).toBe('1:1');
+        await inspector
+          .getByRole('group', { name: 'Aspect Ratio' })
+          .getByRole('radio', { name: '1:1', exact: true })
+          .isChecked({ timeout: productStageBoundMs })
+      ).toBe(true);
       expect(
-        await inspector.getByLabel('Resolution').inputValue({ timeout: productStageBoundMs })
-      ).toBe('2K');
+        await inspector
+          .getByRole('group', { name: 'Resolution' })
+          .getByRole('radio', { name: '2K', exact: true })
+          .isChecked({ timeout: productStageBoundMs })
+      ).toBe(true);
       expect(await inspector.getByLabel('N', { exact: true }).count()).toBe(0);
       await inspector
         .getByText('Expert request', { exact: true })
@@ -1196,7 +1281,15 @@ serial('E2E-01..15 production studios, recovery, library, settings and accessibi
     );
     await page.goto(`${harness.url}/studio/image`);
     await chooseImageTextWorkflow(page);
+    await page.goto(harness.url);
+    await page.goto(`${harness.url}/studio/image`);
     const inspector = page.locator('#parameter-inspector');
+    expect(await inspector.getByRole('textbox', { name: /^Prompt/ }).inputValue()).toBe(
+      'A quiet blue observatory above a calm northern sea'
+    );
+    expect(
+      await inspector.locator('input[type="radio"][value="flux-schnell:text-to-image"]').isChecked()
+    ).toBe(true);
     await inspector.getByRole('button', { name: 'Save preset', exact: true }).click();
     await inspector.getByLabel('Preset name').fill('Northern observatory');
     await inspector.getByLabel('Description').fill('Synthetic browser-suite preset');
@@ -1228,6 +1321,20 @@ serial('E2E-01..15 production studios, recovery, library, settings and accessibi
 
     await page.goto(`${harness.url}/studio/image`);
     await chooseImageEditWorkflow(page);
+    const storedImageDraft = await page.evaluate(() =>
+      localStorage.getItem('poyo-studio-draft:image')
+    );
+    expect(storedImageDraft).toContain('retained-source.invalid');
+    expect(storedImageDraft).not.toContain('portrait-near-nine-sixteen.png');
+    expect(storedImageDraft).not.toContain('/media/source.png');
+    await page.reload();
+    const restoredImageInspector = page.locator('#parameter-inspector');
+    await restoredImageInspector.getByText(/Restored your last setup/).waitFor();
+    await restoredImageInspector.getByText('900 × 1601 px').waitFor();
+    await restoredImageInspector
+      .getByRole('radio', { name: 'Automatic (9:16 from 900 × 1601)' })
+      .waitFor();
+    await restoredImageInspector.getByText('Request validated locally.').waitFor();
     await page
       .locator('#parameter-inspector')
       .getByRole('button', { name: 'Generate image' })
@@ -1237,7 +1344,11 @@ serial('E2E-01..15 production studios, recovery, library, settings and accessibi
     });
     expect(
       harness.mock.requests.filter((request) => request.pathname === '/api/common/upload/stream')
-    ).toHaveLength(1);
+    ).toHaveLength(2);
+    const imageEditSubmit = harness.mock.requests
+      .filter((request) => request.pathname === '/api/generate/submit')
+      .at(-1);
+    expect(imageEditSubmit?.json).toMatchObject({ input: { size: '9:16' } });
     const database = new Database(harness.databasePath, { readonly: true });
     try {
       const input = database
@@ -1336,6 +1447,40 @@ serial('E2E-01..15 production studios, recovery, library, settings and accessibi
     await viewer.getByText('Zoom 125 percent.').waitFor();
     expect(await seriousAccessibilityViolations(page)).toEqual([]);
     await page.keyboard.press('Escape');
+    const browserResult = page.waitForEvent('popup');
+    await page.getByRole('link', { name: 'Open in browser' }).first().click();
+    const resultPage = await browserResult;
+    await resultPage.waitForLoadState('domcontentloaded');
+    expect(new URL(resultPage.url()).pathname).toMatch(/^\/api\/media\//);
+    await resultPage.close();
+    const downloadHref = await page
+      .getByRole('link', { name: 'Download copy' })
+      .first()
+      .getAttribute('href');
+    if (!downloadHref) throw new Error('Download action did not expose a media route.');
+    const downloadResponse = await page.request.get(new URL(downloadHref, harness.url).toString());
+    expect(downloadResponse.status()).toBe(200);
+    expect(downloadResponse.headers()['content-disposition']).toContain('attachment;');
+    await page.route('**/api/media/*/open-native', async (route) => {
+      await route.fulfill({
+        status: 400,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: { message: 'Synthetic native action failure.' } })
+      });
+    });
+    await page.getByRole('button', { name: 'Open in app' }).first().click();
+    await page.getByText('Synthetic native action failure.').waitFor();
+    await page.unroute('**/api/media/*/open-native');
+    await page.route('**/api/media/*/reveal', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: '{"revealed":true}'
+      });
+    });
+    await page.getByRole('button', { name: 'Reveal in Finder' }).first().click();
+    await page.getByText('Revealed the output.').waitFor();
+    await page.unroute('**/api/media/*/reveal');
     await page.getByRole('link', { name: 'Remix image' }).first().waitFor();
     await page.getByRole('link', { name: 'Animate in Video Studio' }).first().click();
     const remixedVideoInspector = page.locator('#parameter-inspector');
@@ -1346,8 +1491,8 @@ serial('E2E-01..15 production studios, recovery, library, settings and accessibi
 
     await page.goto(`${harness.url}/studio/video`);
     const videoEditInspector = page.locator('#parameter-inspector');
-    await videoEditInspector.getByLabel('Creative intent').selectOption('video-edit');
-    await videoEditInspector.getByLabel('Audited model').selectOption('happy-horse:video-edit');
+    await selectRadioValue(videoEditInspector, 'video-edit');
+    await selectRadioValue(videoEditInspector, 'happy-horse:video-edit');
     await videoEditInspector
       .getByRole('textbox', { name: /^Prompt/ })
       .fill('Regrade the source video with cool evening light');
@@ -1625,15 +1770,199 @@ serial('E2E-01..15 production studios, recovery, library, settings and accessibi
     expect(await page.getByText(/No toggle, schedule, or simulated remote deletion/).count()).toBe(
       1
     );
-
     await page.goto(`${harness.url}/settings/diagnostics`);
     await page.getByRole('heading', { name: 'Application diagnostics' }).waitFor();
     expect(await page.getByText('127.0.0.1 · loopback only').count()).toBe(1);
     expect(await page.getByText('Disabled', { exact: true }).count()).toBeGreaterThan(0);
     expect(await page.locator('body').textContent()).not.toContain(harness.syntheticKey);
 
+    await page.goto(`${harness.url}/settings`);
+    await page.getByLabel('Download successful outputs automatically').check();
+    await page.getByRole('button', { name: 'Save operational settings' }).click();
+    await page.getByText('Operational settings saved.').waitFor();
+
+    await page.goto(`${harness.url}/studio/image`);
+    const imageBatchInspector = page.locator('#parameter-inspector');
+    await selectRadioValue(imageBatchInspector, 'text-to-image');
+    await selectRadioValue(imageBatchInspector, 'seedream-5.0-pro:text-to-image');
+    await imageBatchInspector
+      .getByRole('textbox', { name: /^Prompt/ })
+      .fill('Batch landscape study');
+    await selectRadioValue(
+      imageBatchInspector.getByRole('group', { name: 'Aspect Ratio' }),
+      '16:9'
+    );
+    await imageBatchInspector.getByText('Request validated locally.').waitFor();
+    await imageBatchInspector.getByRole('button', { name: 'Add to batch' }).click();
+    await imageBatchInspector.getByText('Added item 1 to the local batch.').waitFor();
+    await imageBatchInspector
+      .getByRole('textbox', { name: /^Prompt/ })
+      .fill('Batch portrait study');
+    await selectRadioValue(
+      imageBatchInspector.getByRole('group', { name: 'Aspect Ratio' }),
+      '9:16'
+    );
+    await imageBatchInspector.getByText('Request validated locally.').waitFor();
+    await imageBatchInspector.getByRole('button', { name: 'Add to batch' }).click();
+    harness.mock.queueOutcome('success');
+    harness.mock.queueOutcome('failed');
+    await imageBatchInspector.getByRole('button', { name: 'Review batch (2)' }).click();
+    let imageBatchDialog = page.getByRole('dialog', { name: 'Image batch' });
+    await imageBatchDialog.getByText('Batch landscape study · 16:9 · 2K').waitFor();
+    await imageBatchDialog.getByText('Batch portrait study · 9:16 · 2K').waitFor();
+    page.once('dialog', async (dialog) => {
+      expect(dialog.message()).toContain('replace the current setup draft');
+      await dialog.accept();
+    });
+    await imageBatchDialog.getByRole('button', { name: 'Edit' }).first().click();
+    await page.keyboard.press('Escape');
+    await imageBatchInspector
+      .getByRole('textbox', { name: /^Prompt/ })
+      .fill('Batch landscape study revised');
+    await imageBatchInspector.getByText('Request validated locally.').waitFor();
+    await imageBatchInspector.getByRole('button', { name: 'Update batch item' }).click();
+    await imageBatchInspector.getByText('Updated the batch item.').waitFor();
+    await imageBatchInspector.getByRole('button', { name: 'Review batch (2)' }).click();
+    imageBatchDialog = page.getByRole('dialog', { name: 'Image batch' });
+    await imageBatchDialog.getByText('Batch landscape study revised · 16:9 · 2K').waitFor();
+    await imageBatchDialog.getByRole('button', { name: 'Duplicate' }).first().click();
+    await page.getByRole('dialog', { name: 'Image batch' }).getByText('Item 3').waitFor();
+    await page
+      .getByRole('dialog', { name: 'Image batch' })
+      .getByRole('button', { name: 'Remove' })
+      .last()
+      .click();
+    await imageBatchDialog.getByRole('button', { name: 'Submit 2 separate billed jobs' }).click();
+    await imageBatchDialog.getByText('complete', { exact: true }).waitFor({ timeout: 15_000 });
+    await imageBatchDialog.getByText('failed', { exact: true }).waitFor({ timeout: 15_000 });
+    expect(
+      await imageBatchDialog.getByRole('link', { name: /Open result/ }).count()
+    ).toBeGreaterThan(0);
+    await page.reload();
+    await page
+      .locator('#parameter-inspector')
+      .getByRole('button', { name: 'Review batch (2)' })
+      .click();
+    imageBatchDialog = page.getByRole('dialog', { name: 'Image batch' });
+    await imageBatchDialog.getByText('complete', { exact: true }).waitFor();
+    await imageBatchDialog.getByText('failed', { exact: true }).waitFor();
+    page.once('dialog', async (dialog) => {
+      expect(dialog.message()).toContain('new paid Poyo job');
+      await dialog.accept();
+    });
+    await imageBatchDialog.getByRole('button', { name: 'Retry item' }).click();
+    await waitUntil(
+      async () => (await imageBatchDialog.getByText('complete', { exact: true }).count()) === 2,
+      'Both image batch items did not complete after retry.',
+      15_000
+    );
+    for (let remaining = 2; remaining > 0; remaining -= 1) {
+      await imageBatchDialog.getByRole('button', { name: 'Remove' }).first().click();
+    }
+    await page.keyboard.press('Escape');
+    await imageBatchInspector.getByRole('button', { name: 'Reset', exact: true }).click();
+    await selectRadioValue(imageBatchInspector, 'image-edit');
+    await selectRadioValue(imageBatchInspector, 'flux-dev:image-edit');
+    await imageBatchInspector
+      .getByRole('textbox', { name: /^Prompt/ })
+      .fill('Reference batch portrait treatment');
+    await imageBatchInspector
+      .getByLabel('Reference remote URL')
+      .fill('https://media.poyo-fixture.example/reference.png');
+    await imageBatchInspector.getByRole('button', { name: 'Add URL' }).click();
+    await selectRadioValue(
+      imageBatchInspector.getByRole('group', { name: 'Aspect Ratio' }),
+      '9:16'
+    );
+    await imageBatchInspector.getByText('Request validated locally.').waitFor();
+    await imageBatchInspector.getByRole('button', { name: 'Add to batch' }).click();
+    await imageBatchInspector
+      .getByRole('textbox', { name: /^Prompt/ })
+      .fill('Reference batch landscape treatment');
+    await selectRadioValue(
+      imageBatchInspector.getByRole('group', { name: 'Aspect Ratio' }),
+      '16:9'
+    );
+    await imageBatchInspector.getByText('Request validated locally.').waitFor();
+    await imageBatchInspector.getByRole('button', { name: 'Add to batch' }).click();
+    await imageBatchInspector.getByRole('button', { name: 'Review batch (2)' }).click();
+    const imageEditBatchDialog = page.getByRole('dialog', { name: 'Image batch' });
+    await imageEditBatchDialog
+      .getByRole('button', { name: 'Submit 2 separate billed jobs' })
+      .click();
+    await waitUntil(
+      async () => (await imageEditBatchDialog.getByText('complete', { exact: true }).count()) === 2,
+      'Both reference image batch items did not complete.',
+      20_000
+    );
+    for (let remaining = 2; remaining > 0; remaining -= 1) {
+      await imageEditBatchDialog.getByRole('button', { name: 'Remove' }).first().click();
+    }
+    await page.keyboard.press('Escape');
+    await imageBatchInspector.getByRole('button', { name: 'Reset', exact: true }).click();
+    await chooseImageTextWorkflow(page);
+    await imageBatchInspector
+      .getByRole('textbox', { name: /^Prompt/ })
+      .fill('Batch item with a deliberately interrupted local submission');
+    await imageBatchInspector.getByText('Request validated locally.').waitFor();
+    await imageBatchInspector.getByRole('button', { name: 'Add to batch' }).click();
+    await page.route('**/api/jobs', async (route) => route.abort('failed'), { times: 1 });
+    await imageBatchInspector.getByRole('button', { name: 'Review batch (1)' }).click();
+    const interruptedBatchDialog = page.getByRole('dialog', { name: 'Image batch' });
+    await interruptedBatchDialog
+      .getByRole('button', { name: 'Submit 1 separate billed job' })
+      .click();
+    await interruptedBatchDialog.getByText('unknown', { exact: true }).waitFor();
+    await interruptedBatchDialog.getByRole('button', { name: 'Check action' }).click();
+    await interruptedBatchDialog.getByText(/paid action stays locked/).waitFor();
+    page.once('dialog', async (dialog) => {
+      expect(dialog.message()).toContain('spend credits twice');
+      await dialog.accept();
+    });
+    await interruptedBatchDialog.getByRole('button', { name: 'Abandon action' }).click();
+    await interruptedBatchDialog.getByText(/explicitly abandoned/).waitFor();
+    await interruptedBatchDialog.getByRole('button', { name: 'Retry item' }).click();
+    await interruptedBatchDialog.getByText('complete', { exact: true }).waitFor({
+      timeout: 15_000
+    });
+    await interruptedBatchDialog.getByRole('button', { name: 'Remove' }).click();
+    await page.keyboard.press('Escape');
+
+    await page.goto(`${harness.url}/studio/video`);
+    const videoBatchInspector = page.locator('#parameter-inspector');
+    await videoBatchInspector.getByRole('button', { name: 'Reset', exact: true }).click();
+    await selectRadioValue(videoBatchInspector, 'text-to-video');
+    await videoBatchInspector
+      .getByRole('textbox', { name: /^Prompt/ })
+      .fill('Video batch orbit one');
+    await videoBatchInspector.getByText('Request validated locally.').waitFor();
+    await videoBatchInspector.getByRole('button', { name: 'Add to batch' }).click();
+    await videoBatchInspector
+      .getByRole('textbox', { name: /^Prompt/ })
+      .fill('Video batch orbit two');
+    await videoBatchInspector.getByText('Request validated locally.').waitFor();
+    await videoBatchInspector.getByRole('button', { name: 'Add to batch' }).click();
+    await videoBatchInspector.getByRole('button', { name: 'Review batch (2)' }).click();
+    const videoBatchDialog = page.getByRole('dialog', { name: 'Video batch' });
+    harness.mock.queueOutcome('held');
+    await videoBatchDialog.getByRole('button', { name: 'Submit 2 separate billed jobs' }).click();
+    await videoBatchDialog.getByText('running', { exact: true }).waitFor({ timeout: 15_000 });
+    await harness.stopApp();
+    await page.getByText('Live updates reconnecting').waitFor({ timeout: 8_000 });
+    await harness.startApp();
+    harness.mock.releaseHeldTasks();
+    await page.getByText('Live updates connected').waitFor({ timeout: 12_000 });
+    await waitUntil(
+      async () => (await videoBatchDialog.getByText('complete', { exact: true }).count()) === 2,
+      'Both video batch items did not complete.',
+      20_000
+    );
+
     harness.mock.queueOutcome('failed');
     await page.goto(`${harness.url}/studio/image`);
+    const failureInspector = page.locator('#parameter-inspector');
+    await failureInspector.getByRole('button', { name: 'Reset', exact: true }).click();
+    expect(await failureInspector.getByRole('textbox', { name: /^Prompt/ }).inputValue()).toBe('');
     await chooseImageTextWorkflow(page);
     await page
       .locator('#parameter-inspector')
@@ -1674,11 +2003,12 @@ serial('E2E-01..15 production studios, recovery, library, settings and accessibi
       return (
         (path === '/api/requests/preview' && status === 422) ||
         (path === '/api/jobs' && [400, 409, 422].includes(status)) ||
-        (path === '/api/jobs' && status === 404 && new URL(url).searchParams.has('actionId'))
+        (path === '/api/jobs' && status === 404 && new URL(url).searchParams.has('actionId')) ||
+        (path.endsWith('/open-native') && status === 400)
       );
     });
     expect(failedBrowserResponses).toEqual(allowedFailedResponses);
-    expect(failedBrowserResponses.filter(({ status }) => status === 400)).toHaveLength(1);
+    expect(failedBrowserResponses.filter(({ status }) => status === 400)).toHaveLength(2);
     expect(failedBrowserResponses.filter(({ status }) => status === 409)).toHaveLength(1);
     expect(
       failedBrowserResponses.filter(
@@ -1687,7 +2017,7 @@ serial('E2E-01..15 production studios, recovery, library, settings and accessibi
     ).toHaveLength(2);
     expect(
       issues.consoleErrors.filter((message) => message.includes('net::ERR_FAILED'))
-    ).toHaveLength(1);
+    ).toHaveLength(2);
     const unexpectedConsoleErrors = issues.consoleErrors.filter(
       (message) =>
         !message.includes('ERR_INCOMPLETE_CHUNKED_ENCODING') &&
