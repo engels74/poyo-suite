@@ -114,18 +114,11 @@ export class OperationsSettingsService {
 
   dto(paths: AppPaths, apiKey: ApiKeyStatusDto): SettingsDto {
     const operations = this.get();
-    const localCleanup =
-      this.cleanup.getPolicy() ?? this.cleanup.savePolicy(DEFAULT_CLEANUP_POLICY);
+    const localCleanup = this.cleanup.getPolicy() ?? DEFAULT_CLEANUP_POLICY;
     return {
       apiKey,
       storage: {
-        source: paths.source,
-        root: paths.root,
-        database: paths.database,
-        media: paths.media,
-        uploads: paths.uploads,
-        thumbnails: paths.thumbnails,
-        logs: paths.logs
+        source: paths.source
       },
       ...operations,
       localCleanup,

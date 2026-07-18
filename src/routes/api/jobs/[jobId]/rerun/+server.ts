@@ -3,6 +3,7 @@ import { safeJobDto } from '$lib/server/jobs/events';
 import { jobHttpError } from '$lib/server/jobs/http';
 import { createManagedSourceUploadRefresher } from '$lib/server/jobs/managed-source-upload';
 import { getJobRuntime } from '$lib/server/jobs/runtime';
+import { maintenanceGate } from '$lib/server/platform/maintenance-gate';
 import { readSameOriginJson } from '$lib/server/platform/request-security';
 import { getPlatformServices } from '$lib/server/platform/runtime';
 import type { RequestHandler } from './$types';
@@ -27,7 +28,9 @@ export const POST: RequestHandler = async ({ request, params }) => {
       body.actionId,
       createManagedSourceUploadRefresher(platform)
     );
-    void runtime.coordinator.reconcile(job.id).catch(() => undefined);
+    void maintenanceGate
+      .trackDetached('jobs.reconcile-rerun', () => runtime.coordinator.reconcile(job.id))
+      .catch(() => undefined);
     return Response.json({ job: safeJobDto(job) }, { status: 202 });
   } catch (error) {
     return jobHttpError(error);

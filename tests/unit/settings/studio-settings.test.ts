@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import { join } from 'node:path';
 import type { AppPaths } from '../../../src/lib/server/platform/app-paths';
 import { openDatabase } from '../../../src/lib/server/platform/database';
 import { SettingsRepository } from '../../../src/lib/server/settings/settings-repository';
@@ -12,7 +13,6 @@ import {
   updateOnboarding
 } from '../../../src/lib/server/settings/studio-settings';
 import { createTemporaryDirectory } from '../../helpers/temporary-directory';
-import { join } from 'node:path';
 
 const cleanups: Array<() => Promise<void> | void> = [];
 afterEach(async () => {
@@ -37,7 +37,8 @@ function paths(media: string): AppPaths {
     logs: '/root/logs',
     secrets: '/root/secrets',
     temporary: '/root/tmp',
-    source: 'platform-default'
+    source: 'project-default',
+    rootKind: 'project'
   };
 }
 

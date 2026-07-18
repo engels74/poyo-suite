@@ -138,6 +138,24 @@ CREATE TABLE job_events (
   observed_at TEXT NOT NULL
 );
 
+CREATE TABLE managed_sources (
+  id TEXT PRIMARY KEY,
+  original_name TEXT NOT NULL,
+  media_kind TEXT NOT NULL CHECK (media_kind IN ('image', 'video')),
+  mime_type TEXT NOT NULL,
+  byte_size INTEGER NOT NULL CHECK (byte_size >= 0),
+  checksum TEXT NOT NULL,
+  signature TEXT NOT NULL,
+  relative_path TEXT NOT NULL UNIQUE,
+  availability TEXT NOT NULL DEFAULT 'available' CHECK (
+    availability IN ('available', 'missing', 'deleted')
+  ),
+  created_at TEXT NOT NULL,
+  last_verified_at TEXT,
+  missing_at TEXT,
+  deleted_at TEXT
+);
+
 CREATE TABLE job_inputs (
   job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
   role TEXT NOT NULL,
@@ -149,6 +167,7 @@ CREATE TABLE job_inputs (
   metadata_json TEXT NOT NULL CHECK (json_valid(metadata_json)),
   checksum TEXT,
   availability TEXT NOT NULL DEFAULT 'available',
+  managed_source_id TEXT REFERENCES managed_sources(id) ON DELETE SET NULL,
   PRIMARY KEY (job_id, role, input_order)
 );
 
@@ -176,6 +195,8 @@ CREATE TABLE job_outputs (
   created_at TEXT NOT NULL,
   verified_at TEXT,
   deleted_at TEXT,
+  pixel_width INTEGER CHECK (pixel_width IS NULL OR pixel_width > 0),
+  pixel_height INTEGER CHECK (pixel_height IS NULL OR pixel_height > 0),
   UNIQUE (job_id, output_order)
 );
 
@@ -254,6 +275,29 @@ CREATE TABLE cleanup_actions (
   executed_at TEXT
 );
 
+CREATE TABLE cleanup_previews (
+  token TEXT PRIMARY KEY,
+  policy_id TEXT NOT NULL REFERENCES cleanup_policies(id),
+  action_kind TEXT NOT NULL CHECK (action_kind IN ('local_file', 'local_metadata', 'local_both')),
+  policy_hash TEXT NOT NULL,
+  candidate_hash TEXT NOT NULL,
+  candidate_count INTEGER NOT NULL CHECK (candidate_count >= 0),
+  total_bytes INTEGER NOT NULL CHECK (total_bytes >= 0),
+  created_at TEXT NOT NULL,
+  applied_at TEXT
+);
+
+CREATE TABLE cleanup_attempts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  action_id TEXT NOT NULL REFERENCES cleanup_actions(id) ON DELETE CASCADE,
+  attempt INTEGER NOT NULL CHECK (attempt >= 1),
+  status TEXT NOT NULL CHECK (status IN ('started', 'complete', 'failed', 'skipped')),
+  safe_result_json TEXT CHECK (safe_result_json IS NULL OR json_valid(safe_result_json)),
+  started_at TEXT NOT NULL,
+  completed_at TEXT,
+  UNIQUE (action_id, attempt)
+);
+
 CREATE INDEX idx_registry_entries_selector
   ON registry_entries(provider, modality, workflow, status);
 CREATE INDEX idx_jobs_lifecycle ON jobs(local_phase, next_poll_at, updated_at);
@@ -265,6 +309,7 @@ CREATE INDEX idx_submission_intents_state ON submission_intents(state, lease_exp
 CREATE INDEX idx_work_claims_expiry ON work_claims(work_type, expires_at);
 CREATE INDEX idx_job_events_job_cursor ON job_events(job_id, event_id);
 CREATE INDEX idx_job_inputs_kind ON job_inputs(media_kind, job_id);
+CREATE INDEX idx_job_inputs_managed_source ON job_inputs(managed_source_id, job_id);
 CREATE INDEX idx_job_outputs_library
   ON job_outputs(media_kind, download_state, favorite, created_at DESC);
 CREATE INDEX idx_job_outputs_job ON job_outputs(job_id, output_order);
@@ -274,5 +319,11 @@ CREATE INDEX idx_presets_model_workflow ON presets(entry_key, workflow, updated_
 CREATE INDEX idx_model_preferences_recent ON model_preferences(favorite, last_used_at DESC);
 CREATE INDEX idx_job_tags_tag ON job_tags(tag_id, job_id);
 CREATE INDEX idx_cleanup_actions_due ON cleanup_actions(state, due_at);
+CREATE INDEX idx_cleanup_attempts_action
+  ON cleanup_attempts(action_id, attempt DESC);
+CREATE INDEX idx_cleanup_previews_created
+  ON cleanup_previews(created_at DESC);
+CREATE INDEX idx_managed_sources_retention
+  ON managed_sources(availability, created_at, id);
 `
 };

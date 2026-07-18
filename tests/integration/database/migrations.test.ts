@@ -1,7 +1,7 @@
 import { Database } from 'bun:sqlite';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
-import type { Migration } from '../../../migrations';
+import { migrations, type Migration } from '../../../migrations';
 import {
   databaseHealth,
   migrateDatabase,
@@ -10,6 +10,8 @@ import {
 } from '../../../src/lib/server/platform/database';
 import { DATABASE_SCHEMA_VERSION } from '../../../src/lib/server/platform/version';
 import { SettingsRepository } from '../../../src/lib/server/settings/settings-repository';
+import preCollapseSchema from '../../fixtures/database/pre-collapse-schema-signature.json';
+import { databaseSchemaSignature } from '../../helpers/database-schema-signature';
 import { createTemporaryDirectory } from '../../helpers/temporary-directory';
 
 const cleanups: Array<() => Promise<void>> = [];
@@ -51,6 +53,20 @@ const expectedTables = [
 ];
 
 describe('database migrations', () => {
+  test('DB-00 matches the immutable pre-collapse final schema signature', async () => {
+    const database = await openDatabase(await databasePath());
+    try {
+      expect(preCollapseSchema.source.migrations.map((migration) => migration.version)).toEqual([
+        1, 2, 3, 4
+      ]);
+      expect(migrations).toHaveLength(1);
+      expect(migrations[0]?.version).toBe(DATABASE_SCHEMA_VERSION);
+      expect(databaseSchemaSignature(database)).toEqual(preCollapseSchema.schema);
+    } finally {
+      database.close();
+    }
+  });
+
   test('DB-01 creates the complete schema with SQLite safety pragmas', async () => {
     const database = await openDatabase(await databasePath());
     try {
@@ -109,10 +125,18 @@ describe('database migrations', () => {
 
     const reopened = await openDatabase(path);
     try {
-      const migrations = reopened
-        .query<{ count: number }, []>('SELECT COUNT(*) AS count FROM schema_migrations')
+      const applied = reopened
+        .query<{ version: number; name: string; checksum: string }, []>(
+          'SELECT version, name, checksum FROM schema_migrations'
+        )
         .get();
-      expect(migrations?.count).toBe(4);
+      const expectedMigration = migrations[0];
+      if (!expectedMigration) throw new Error('Expected the registered initial migration.');
+      expect(applied).toEqual({
+        version: 1,
+        name: expectedMigration.name,
+        checksum: migrationChecksum(expectedMigration)
+      });
       expect(new SettingsRepository(reopened).get<{ mode: string }>('theme')?.value.mode).toBe(
         'dark'
       );
@@ -121,7 +145,7 @@ describe('database migrations', () => {
     }
   });
 
-  test('DB-03 upgrades the zero-version fixture through every committed migration', async () => {
+  test('DB-03 applies the initial schema to a zero-version fixture', async () => {
     const path = await databasePath();
     const fixture = new Database(path, { create: true, strict: true });
     fixture.exec('CREATE TABLE fixture_data(value TEXT NOT NULL);');

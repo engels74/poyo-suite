@@ -1,3 +1,4 @@
+import { type MaintenanceGate, maintenanceGate } from '../platform/maintenance-gate';
 import { CleanupRepository } from './repository';
 import { CleanupService } from './service';
 
@@ -14,6 +15,7 @@ export interface CleanupRuntimeOptions {
   leaseMs?: number;
   intervalMs?: number;
   schedule?: CleanupSchedule;
+  gate?: MaintenanceGate;
 }
 
 function cleanupIntervalMs(value: unknown): number {
@@ -41,6 +43,7 @@ export class CleanupRuntime {
   private readonly intervalMs: number;
   private cancelSchedule: (() => void) | null = null;
   private running = false;
+  private currentRun: Promise<number> | null = null;
   private lastRunAt: string | null = null;
   private lastError: string | null = null;
 
@@ -51,32 +54,41 @@ export class CleanupRuntime {
   }
 
   async runOnce(maxActions = 100): Promise<number> {
-    if (this.running) return 0;
-    this.running = true;
-    let completed = 0;
-    try {
-      this.options.repository.reconcileExpiredClaims();
-      let policyError: unknown;
-      try {
-        await this.options.service.scheduleEnabledPolicy();
-      } catch (error) {
-        policyError = error;
-      }
-      for (let index = 0; index < maxActions; index += 1) {
-        const claim = this.options.repository.claimNext(this.owner, this.leaseMs);
-        if (!claim) break;
-        await this.options.service.execute(claim).catch(() => undefined);
-        completed += 1;
-      }
-      this.lastRunAt = new Date().toISOString();
-      this.lastError = policyError === undefined ? null : errorName(policyError);
-      return completed;
-    } catch (error) {
-      this.lastError = errorName(error);
-      throw error;
-    } finally {
-      this.running = false;
-    }
+    if (this.currentRun) return 0;
+    const gate = this.options.gate ?? maintenanceGate;
+    const run = gate
+      .withWriterPermit('cleanup.runOnce', async () => {
+        this.running = true;
+        let completed = 0;
+        try {
+          this.options.repository.reconcileExpiredClaims();
+          let policyError: unknown;
+          try {
+            await this.options.service.scheduleEnabledPolicy();
+          } catch (error) {
+            policyError = error;
+          }
+          for (let index = 0; index < maxActions; index += 1) {
+            const claim = this.options.repository.claimNext(this.owner, this.leaseMs);
+            if (!claim) break;
+            await this.options.service.execute(claim).catch(() => undefined);
+            completed += 1;
+          }
+          this.lastRunAt = new Date().toISOString();
+          this.lastError = policyError === undefined ? null : errorName(policyError);
+          return completed;
+        } catch (error) {
+          this.lastError = errorName(error);
+          throw error;
+        } finally {
+          this.running = false;
+        }
+      })
+      .finally(() => {
+        this.currentRun = null;
+      });
+    this.currentRun = run;
+    return run;
   }
 
   start(): () => void {
@@ -93,6 +105,11 @@ export class CleanupRuntime {
   stop(): void {
     this.cancelSchedule?.();
     this.cancelSchedule = null;
+  }
+
+  async stopAndDrain(): Promise<void> {
+    this.stop();
+    if (this.currentRun) await this.currentRun.catch(() => undefined);
   }
 
   diagnostics() {
@@ -114,11 +131,18 @@ export async function getCleanupRuntime(): Promise<CleanupRuntime> {
   runtimePromise ??= getPlatformServices()
     .then((platform) => {
       const repository = new CleanupRepository(platform.database);
-      return new CleanupRuntime({
+      const runtime = new CleanupRuntime({
         repository,
         service: new CleanupService({ repository, paths: platform.paths }),
-        intervalMs: cleanupIntervalMs(Bun.env.PLS_CLEANUP_INTERVAL_MS)
+        intervalMs: cleanupIntervalMs(Bun.env.PLS_CLEANUP_INTERVAL_MS),
+        gate: maintenanceGate
       });
+      maintenanceGate.registerDrain('cleanup-worker', async () => {
+        stopRuntime?.();
+        stopRuntime = undefined;
+        await runtime.stopAndDrain();
+      });
+      return runtime;
     })
     .catch((error) => {
       runtimePromise = undefined;
@@ -132,7 +156,8 @@ export async function startRuntimeCleanupWorker(): Promise<void> {
   stopRuntime = (await getCleanupRuntime()).start();
 }
 
-export function stopRuntimeCleanupWorker(): void {
+export async function stopRuntimeCleanupWorker(): Promise<void> {
   stopRuntime?.();
   stopRuntime = undefined;
+  if (runtimePromise) await (await runtimePromise).stopAndDrain();
 }

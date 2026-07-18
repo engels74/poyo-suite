@@ -1,9 +1,12 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { chmod, lstat, mkdir } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
+  deriveProjectRoot,
   ensureAppPaths,
   ensureDirectoryExists,
+  resolveAppPathCandidates,
   resolveAppPaths,
   resolvePathWithin
 } from '../../../src/lib/server/platform/app-paths';
@@ -16,20 +19,30 @@ afterEach(async () => {
 });
 
 describe('application paths', () => {
-  test('uses platform conventions and explicit environment overrides', () => {
-    expect(
-      resolveAppPaths({ environment: {}, platform: 'darwin', homeDirectory: '/Users/studio' }).root
-    ).toBe('/Users/studio/Library/Application Support/Poyo Local Studio');
-    expect(
-      resolveAppPaths({ environment: {}, platform: 'linux', homeDirectory: '/home/studio' }).root
-    ).toBe('/home/studio/.local/share/poyo-local-studio');
-    expect(
-      resolveAppPaths({
-        environment: { LOCALAPPDATA: 'C:\\Users\\studio\\AppData\\Local' },
-        platform: 'win32',
-        homeDirectory: 'C:\\Users\\studio'
-      }).root
-    ).toContain('Poyo Local Studio');
+  test('defaults to project data while preserving explicit deterministic platform candidates', () => {
+    const projectRoot = '/workspace/poyo-local-studio';
+    for (const platform of ['darwin', 'linux', 'win32'] as const) {
+      expect(
+        resolveAppPaths({
+          environment: {},
+          platform,
+          homeDirectory: '/home/studio',
+          projectRoot
+        }).root
+      ).toBe(join(projectRoot, 'data'));
+    }
+    const candidates = resolveAppPathCandidates({
+      environment: {},
+      platform: 'darwin',
+      homeDirectory: '/Users/studio',
+      projectRoot
+    });
+    expect(candidates.project.root).toBe(join(projectRoot, 'data'));
+    expect(candidates.project.database).toBe(join(projectRoot, 'data', 'poyo-studio.sqlite'));
+    expect(candidates.platform.root).toBe(
+      '/Users/studio/Library/Application Support/Poyo Local Studio'
+    );
+    expect(candidates.platform.source).toBe('platform-selected');
 
     const configured = resolveAppPaths({
       environment: { PLS_APP_DATA_DIR: '/srv/poyo', PLS_LOG_DIR: '/var/log/poyo' },
@@ -39,6 +52,37 @@ describe('application paths', () => {
     expect(configured.root).toBe('/srv/poyo');
     expect(configured.logs).toBe('/var/log/poyo');
     expect(configured.source).toBe('environment');
+  });
+
+  test.serial('derives repository and production-build roots independently of cwd', async () => {
+    const moduleDirectory = dirname(fileURLToPath(import.meta.url));
+    const repositoryRoot = resolve(moduleDirectory, '../../..');
+    expect(deriveProjectRoot()).toBe(repositoryRoot);
+    expect(deriveProjectRoot(join(repositoryRoot, 'build', 'server', 'chunks'))).toBe(
+      repositoryRoot
+    );
+
+    const temporary = await createTemporaryDirectory('poyo-changed-cwd-');
+    cleanups.push(temporary.cleanup);
+    const originalCwd = process.cwd();
+    try {
+      process.chdir(temporary.path);
+      expect(
+        resolveAppPaths({
+          environment: {},
+          platform: 'linux',
+          homeDirectory: '/home/studio'
+        }).root
+      ).toBe(join(repositoryRoot, 'data'));
+    } finally {
+      process.chdir(originalCwd);
+    }
+  });
+
+  test('fails project-root derivation without falling back to platform storage', () => {
+    expect(() => deriveProjectRoot('/isolated/build/chunks', () => false)).toThrow(
+      'Unable to derive'
+    );
   });
 
   test('treats a whitespace-only PLS_MEDIA_DIR as unset and trims a real override', () => {

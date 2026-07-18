@@ -25,6 +25,37 @@ describe('validated operations settings', () => {
         logger
       );
       expect(service.get()).toEqual(DEFAULT_OPERATIONS_SETTINGS);
+      const cleanupRows = () =>
+        database.query<{ count: number }, []>('SELECT COUNT(*) count FROM cleanup_policies').get()
+          ?.count ?? 0;
+      expect(cleanupRows()).toBe(0);
+      service.dto(
+        {
+          root: temporary.path,
+          database: join(temporary.path, 'studio.sqlite'),
+          media: join(temporary.path, 'media'),
+          uploads: join(temporary.path, 'uploads'),
+          thumbnails: join(temporary.path, 'thumbnails'),
+          logs: join(temporary.path, 'logs'),
+          secrets: join(temporary.path, 'secrets'),
+          temporary: join(temporary.path, 'tmp'),
+          source: 'project-default',
+          rootKind: 'project'
+        },
+        {
+          source: 'none',
+          status: 'missing',
+          storeKind: 'file',
+          selectedBackend: 'file',
+          backendAvailability: { file: 'available', os: 'unchecked' },
+          transition: null,
+          onboardingAvailable: true,
+          environmentManaged: false,
+          localMutationAvailable: true,
+          updatedAt: null
+        }
+      );
+      expect(cleanupRows()).toBe(0);
       const operations = {
         polling: { intervalMs: 10_000, staleAfterMs: 600_000 },
         downloads: { automatic: false },
@@ -46,6 +77,34 @@ describe('validated operations settings', () => {
       });
       expect(service.get()).toEqual(operations);
       expect(logger.rotationSettings()).toEqual(operations.logs);
+      const publicSettings = service.dto(
+        {
+          root: temporary.path,
+          database: join(temporary.path, 'studio.sqlite'),
+          media: join(temporary.path, 'media'),
+          uploads: join(temporary.path, 'uploads'),
+          thumbnails: join(temporary.path, 'thumbnails'),
+          logs: join(temporary.path, 'logs'),
+          secrets: join(temporary.path, 'secrets'),
+          temporary: join(temporary.path, 'tmp'),
+          source: 'project-default',
+          rootKind: 'project'
+        },
+        {
+          source: 'none',
+          status: 'missing',
+          storeKind: 'file',
+          selectedBackend: 'file',
+          backendAvailability: { file: 'available', os: 'unchecked' },
+          transition: null,
+          onboardingAvailable: true,
+          environmentManaged: false,
+          localMutationAvailable: true,
+          updatedAt: null
+        }
+      );
+      expect(publicSettings.storage).toEqual({ source: 'project-default' });
+      expect(JSON.stringify(publicSettings)).not.toContain(temporary.path);
       expect(() =>
         service.update({
           operations: { ...operations, polling: { intervalMs: 0, staleAfterMs: 1 } }

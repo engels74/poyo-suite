@@ -9,13 +9,7 @@ export function buildSettingsDto(paths: AppPaths, apiKey: ApiKeyStatusDto): Sett
   return {
     apiKey,
     storage: {
-      source: paths.source,
-      root: paths.root,
-      database: paths.database,
-      media: paths.media,
-      uploads: paths.uploads,
-      thumbnails: paths.thumbnails,
-      logs: paths.logs
+      source: paths.source
     },
     ...DEFAULT_OPERATIONS_SETTINGS,
     localCleanup: DEFAULT_CLEANUP_POLICY,

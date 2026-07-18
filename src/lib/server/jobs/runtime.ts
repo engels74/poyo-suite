@@ -1,3 +1,4 @@
+import { maintenanceGate } from '../platform/maintenance-gate';
 import { getPlatformServices } from '../platform/runtime';
 import { createPoyoClient } from '../poyo/factory';
 import { JobCoordinator, type JobPoyoGateway, JobWorker } from './coordinator';
@@ -53,11 +54,17 @@ async function createRuntime(): Promise<JobRuntime> {
       };
     }
   });
-  return {
+  const runtime = {
     repository,
     coordinator,
-    worker: new JobWorker(coordinator, timings.workerIntervalMs)
+    worker: new JobWorker(coordinator, timings.workerIntervalMs, maintenanceGate)
   };
+  maintenanceGate.registerDrain('job-worker', async () => {
+    stopWorker?.();
+    stopWorker = undefined;
+    await runtime.worker.stopAndDrain();
+  });
+  return runtime;
 }
 export function getJobRuntime(): Promise<JobRuntime> {
   runtimePromise ??= createRuntime().catch((error) => {
@@ -71,7 +78,8 @@ export async function startRuntimeJobWorker(): Promise<void> {
   const runtime = await getJobRuntime();
   stopWorker = runtime.worker.start();
 }
-export function stopRuntimeJobWorker(): void {
+export async function stopRuntimeJobWorker(): Promise<void> {
   stopWorker?.();
   stopWorker = undefined;
+  if (runtimePromise) await (await runtimePromise).worker.stopAndDrain();
 }

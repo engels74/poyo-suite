@@ -7,8 +7,12 @@ const missingStatus = {
   source: 'none' as const,
   status: 'missing' as const,
   storeKind: 'file' as const,
+  selectedBackend: 'file' as const,
+  backendAvailability: { file: 'available' as const, os: 'unchecked' as const },
+  transition: null,
   onboardingAvailable: true,
   environmentManaged: false,
+  localMutationAvailable: true,
   updatedAt: null
 };
 

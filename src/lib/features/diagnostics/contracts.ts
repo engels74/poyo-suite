@@ -56,7 +56,7 @@ export interface OperationsDiagnosticsDto {
     downloads: { automatic: boolean };
     theme: { defaultMode: 'light' | 'dark' | 'system' };
     logs: HealthDto['logging']['rotation'];
-    storageSource: 'environment' | 'platform-default';
+    storageSource: 'environment' | 'project-default' | 'platform-selected';
   };
   logging: HealthDto['logging'];
 }

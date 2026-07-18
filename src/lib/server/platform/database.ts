@@ -1,12 +1,13 @@
-import { Database } from 'bun:sqlite';
-import { mkdir } from 'node:fs/promises';
+import { constants, Database } from 'bun:sqlite';
+import { lstat, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { DATABASE_SCHEMA_VERSION } from './version';
+import { pathToFileURL } from 'node:url';
 import {
-  migrations as defaultMigrations,
   type AppliedMigration,
+  migrations as defaultMigrations,
   type Migration
 } from '../../../../migrations';
+import { DATABASE_SCHEMA_VERSION } from './version';
 
 const migrationTableSql = `
 CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -25,6 +26,215 @@ export interface OpenDatabaseOptions {
 export interface MigrationResult {
   currentVersion: number;
   appliedVersions: number[];
+}
+
+export class DatabasePreflightError extends Error {
+  constructor(
+    readonly code:
+      | 'database_not_regular'
+      | 'database_pending_journal'
+      | 'database_unknown'
+      | 'database_incompatible',
+    message: string
+  ) {
+    super(message);
+    this.name = 'DatabasePreflightError';
+  }
+}
+
+export interface DatabasePreflightResult {
+  state: 'absent' | 'compatible';
+  maxVersion: number | null;
+}
+
+interface MigrationIdentity {
+  version: number;
+  name: string;
+  checksum: string;
+}
+
+let defaultCanonicalSchemaSignature: string | null = null;
+
+export function canonicalDatabaseSchemaSignature(
+  registeredMigrations: readonly Migration[] = defaultMigrations,
+  maximumVersion = DATABASE_SCHEMA_VERSION
+): string {
+  const migrations = registeredMigrations.filter(
+    (migration) => migration.version <= maximumVersion
+  );
+  const isDefault =
+    registeredMigrations === defaultMigrations && maximumVersion === DATABASE_SCHEMA_VERSION;
+  if (isDefault && defaultCanonicalSchemaSignature) return defaultCanonicalSchemaSignature;
+
+  const database = new Database(':memory:', { strict: true });
+  try {
+    migrateDatabase(database, migrations, () => new Date(0));
+    const signature = databaseSchemaSignature(database);
+    if (isDefault) defaultCanonicalSchemaSignature = signature;
+    return signature;
+  } finally {
+    database.close();
+  }
+}
+
+async function fileSize(path: string): Promise<number | null> {
+  try {
+    return (await lstat(path)).size;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
+export async function preflightDatabase(
+  path: string,
+  maximumVersion = DATABASE_SCHEMA_VERSION,
+  registeredMigrations: readonly Migration[] = defaultMigrations
+): Promise<DatabasePreflightResult> {
+  let details: Awaited<ReturnType<typeof lstat>>;
+  try {
+    details = await lstat(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return { state: 'absent', maxVersion: null };
+    }
+    throw error;
+  }
+  if (!details.isFile() || details.isSymbolicLink()) {
+    throw new DatabasePreflightError(
+      'database_not_regular',
+      'The selected database is not a regular file.'
+    );
+  }
+  // A clean WAL-mode close may retain an SHM index beside an empty WAL. The SHM file contains no
+  // database changes, so only journal files that can carry unapplied pages make immutable
+  // inspection unsafe.
+  for (const sidecar of [`${path}-wal`, `${path}-journal`]) {
+    const size = await fileSize(sidecar);
+    if (size !== null && size !== 0) {
+      throw new DatabasePreflightError(
+        'database_pending_journal',
+        'The selected database has pending recovery state and cannot be inspected safely.'
+      );
+    }
+  }
+
+  const header = new Uint8Array(await Bun.file(path).slice(0, 16).arrayBuffer());
+  const expectedHeader = new TextEncoder().encode('SQLite format 3\0');
+  if (
+    header.length !== expectedHeader.length ||
+    header.some((value, index) => value !== expectedHeader[index])
+  ) {
+    throw new DatabasePreflightError(
+      'database_unknown',
+      'The selected database is not recognized.'
+    );
+  }
+
+  const uri = `${pathToFileURL(path).href}?mode=ro&immutable=1`;
+  let database: Database | undefined;
+  try {
+    database = new Database(
+      uri,
+      constants.SQLITE_OPEN_READONLY | constants.SQLITE_OPEN_URI | constants.SQLITE_OPEN_NOMUTEX
+    );
+    const migrationTable = database
+      .query<{ count: number }, []>(
+        "SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name='schema_migrations'"
+      )
+      .get()?.count;
+    if (migrationTable !== 1) {
+      throw new DatabasePreflightError(
+        'database_unknown',
+        'The selected database does not contain recognized migration metadata.'
+      );
+    }
+    const applied = database
+      .query<MigrationIdentity, []>(
+        'SELECT version, name, checksum FROM schema_migrations ORDER BY version'
+      )
+      .all();
+    const maxVersion = applied.at(-1)?.version;
+    if (!Number.isSafeInteger(maxVersion) || maxVersion === undefined || maxVersion < 1) {
+      throw new DatabasePreflightError(
+        'database_unknown',
+        'The selected database migration history is incomplete.'
+      );
+    }
+    if (maxVersion > maximumVersion) {
+      throw new DatabasePreflightError(
+        'database_incompatible',
+        `Database schema ${maxVersion} is incompatible with this fresh-only application schema.`
+      );
+    }
+    const expected = registeredMigrations
+      .filter((migration) => migration.version <= maximumVersion)
+      .map((migration) => ({
+        version: migration.version,
+        name: migration.name,
+        checksum: migrationChecksum(migration)
+      }));
+    if (JSON.stringify(applied) !== JSON.stringify(expected)) {
+      throw new DatabasePreflightError(
+        'database_incompatible',
+        'The selected database migration identity does not match this fresh-only application schema.'
+      );
+    }
+    const integrity = database.query<Record<string, string>, []>('PRAGMA integrity_check').all();
+    if (
+      integrity.length !== 1 ||
+      Object.values(integrity[0] ?? {}).length !== 1 ||
+      Object.values(integrity[0] ?? {})[0] !== 'ok'
+    ) {
+      throw new DatabasePreflightError(
+        'database_incompatible',
+        'The selected database failed its read-only integrity check.'
+      );
+    }
+    if (database.query<Record<string, unknown>, []>('PRAGMA foreign_key_check').all().length > 0) {
+      throw new DatabasePreflightError(
+        'database_incompatible',
+        'The selected database failed its read-only foreign-key check.'
+      );
+    }
+    if (
+      databaseSchemaSignature(database) !==
+      canonicalDatabaseSchemaSignature(registeredMigrations, maximumVersion)
+    ) {
+      throw new DatabasePreflightError(
+        'database_incompatible',
+        'The selected database schema does not match the canonical application schema.'
+      );
+    }
+    return { state: 'compatible', maxVersion };
+  } catch (error) {
+    if (error instanceof DatabasePreflightError) throw error;
+    throw new DatabasePreflightError(
+      'database_unknown',
+      'The selected database could not be inspected safely.'
+    );
+  } finally {
+    database?.close();
+  }
+}
+
+export function databaseSchemaSignature(database: Database): string {
+  const schema = database
+    .query<{ type: string; name: string; tableName: string; sql: string | null }, []>(
+      `SELECT type, name, tbl_name AS tableName, sql
+       FROM sqlite_master
+       WHERE name NOT LIKE 'sqlite_%'
+       ORDER BY type, name, tbl_name`
+    )
+    .all();
+  const migrations = database
+    .query<MigrationIdentity, []>(
+      'SELECT version, name, checksum FROM schema_migrations ORDER BY version'
+    )
+    .all();
+  return new Bun.CryptoHasher('sha256')
+    .update(JSON.stringify({ schema, migrations }))
+    .digest('hex');
 }
 
 export function migrationChecksum(migration: Pick<Migration, 'name' | 'sql'>): string {

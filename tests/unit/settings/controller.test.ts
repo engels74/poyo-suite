@@ -6,9 +6,11 @@ import {
   apiKeyUiState,
   cleanupConsequenceLabel,
   cleanupPolicyRequest,
+  credentialBackendUiState,
   diagnosticsReport,
   operationsRequest,
-  settingsDraft
+  settingsDraft,
+  storageRootUiState
 } from '../../../src/lib/features/settings/controller';
 
 const localCleanup: SettingsDto['localCleanup'] = {
@@ -25,8 +27,12 @@ function key(overrides: Partial<ApiKeySettingsDto> = {}): ApiKeySettingsDto {
     source: 'none',
     status: 'missing',
     storeKind: 'file',
+    selectedBackend: 'file',
+    backendAvailability: { file: 'available', os: 'unchecked' },
+    transition: null,
     onboardingAvailable: true,
     environmentManaged: false,
+    localMutationAvailable: true,
     updatedAt: null,
     ...overrides
   };
@@ -36,13 +42,7 @@ function settings(apiKey = key()): SettingsDto {
   return {
     apiKey,
     storage: {
-      source: 'platform-default',
-      root: '/private/root',
-      database: '/private/root/studio.sqlite',
-      media: '/private/root/media',
-      uploads: '/private/root/uploads',
-      thumbnails: '/private/root/thumbnails',
-      logs: '/private/root/logs'
+      source: 'project-default'
     },
     polling: { intervalMs: 5_000, staleAfterMs: 900_000 },
     downloads: { automatic: true },
@@ -109,7 +109,7 @@ function diagnostics(): OperationsDiagnosticsDto {
       downloads: settings().downloads,
       theme: settings().theme,
       logs: settings().logs,
-      storageSource: 'platform-default'
+      storageSource: 'project-default'
     },
     logging: {
       status: 'ok',
@@ -149,6 +149,91 @@ describe('settings UI controller', () => {
     );
     expect(state).toMatchObject({ canConfigure: true, canRemove: true, canTest: true });
     expect(JSON.stringify(state)).not.toContain('sk-');
+  });
+
+  test('presents selected and effective credential authority without probing or exposing values', () => {
+    expect(credentialBackendUiState(key())).toEqual({
+      selected: 'Permission-protected file',
+      effective: 'No active credential',
+      transition: null,
+      conflict: false,
+      actions: []
+    });
+    expect(
+      credentialBackendUiState(
+        key({
+          source: 'environment',
+          status: 'configured',
+          storeKind: 'environment',
+          environmentManaged: true,
+          selectedBackend: 'os'
+        })
+      )
+    ).toMatchObject({
+      selected: 'Operating-system credential store',
+      effective: 'POYO_API_KEY environment variable'
+    });
+  });
+
+  test('presents restart and retained-source root states honestly', () => {
+    const project = { kind: 'project' as const, label: 'Project data folder', location: './data' };
+    const platform = {
+      kind: 'platform' as const,
+      label: 'macOS Application Support',
+      location: '~/Library/Application Support/Poyo Local Studio'
+    };
+    expect(
+      storageRootUiState({
+        current: project,
+        selected: platform,
+        effective: project,
+        choices: [project, platform],
+        state: 'restart-required',
+        sourceRetention: 'retained-until-restart',
+        cleanupPhase: 'source-retained',
+        exclusions: [],
+        environmentManaged: false,
+        mutationAvailable: false,
+        restartRequired: true
+      })
+    ).toEqual({
+      detail:
+        'macOS Application Support is selected. Project data folder remains effective until restart.',
+      retention:
+        'The root-owned source data is retained until restart verifies and activates the copied data.',
+      exclusionSummary: ''
+    });
+
+    expect(
+      storageRootUiState({
+        current: project,
+        selected: project,
+        effective: project,
+        choices: [project, platform],
+        state: 'active',
+        sourceRetention: 'none',
+        cleanupPhase: 'none',
+        exclusions: [
+          {
+            resource: 'current-output-directory',
+            environmentManaged: false,
+            count: 1,
+            copied: false
+          },
+          {
+            resource: 'historical-output-directories',
+            environmentManaged: false,
+            count: 2,
+            copied: false
+          }
+        ],
+        environmentManaged: false,
+        mutationAvailable: true,
+        restartRequired: false
+      }).exclusionSummary
+    ).toBe(
+      'the current custom output directory, 2 historical output directories remain outside the selected root and are not copied.'
+    );
   });
 
   test('normalizes operation and cleanup form values into durable server units', () => {

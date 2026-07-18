@@ -5,9 +5,10 @@ import {
 } from '$lib/server/jobs/create-request';
 import { safeJobDto } from '$lib/server/jobs/events';
 import { jobHttpError } from '$lib/server/jobs/http';
+import { createManagedSourceResolver } from '$lib/server/jobs/managed-source-upload';
 import { getJobRuntime } from '$lib/server/jobs/runtime';
 import { runtimeJobCreateDelay } from '$lib/server/jobs/runtime-settings';
-import { createManagedSourceResolver } from '$lib/server/jobs/managed-source-upload';
+import { maintenanceGate } from '$lib/server/platform/maintenance-gate';
 import { readSameOriginJson } from '$lib/server/platform/request-security';
 import { getPlatformServices } from '$lib/server/platform/runtime';
 import type { RequestHandler } from './$types';
@@ -40,7 +41,9 @@ export const POST: RequestHandler = async ({ request }) => {
       createManagedSourceResolver(platform)
     );
     const job = runtime.repository.create(prepared);
-    void runtime.coordinator.reconcile(job.id).catch(() => undefined);
+    void maintenanceGate
+      .trackDetached('jobs.reconcile-created', () => runtime.coordinator.reconcile(job.id))
+      .catch(() => undefined);
     return Response.json({ job: safeJobDto(job) }, { status: 202 });
   } catch (error) {
     return jobHttpError(error);

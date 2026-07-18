@@ -1,5 +1,6 @@
-import { chmod, lstat, mkdir, rename, unlink } from 'node:fs/promises';
-import { join } from 'node:path';
+import { constants as fsConstants } from 'node:fs';
+import { chmod, lstat, mkdir, open, rename, unlink } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import type { AppPaths } from '../platform/app-paths';
 
 const service = 'ai.poyo.local-studio';
@@ -19,6 +20,11 @@ export interface BunSecretsApi {
   get(options: { service: string; name: string }): Promise<string | null>;
   set(options: { service: string; name: string; value: string }): Promise<void>;
   delete(options: { service: string; name: string }): Promise<boolean>;
+}
+
+export interface CredentialSecretStores {
+  file: SecretStore;
+  os: SecretStore;
 }
 
 export class SecretStoreUnavailableError extends Error {
@@ -41,6 +47,20 @@ export function detectBunSecrets(): BunSecretsApi | null {
   return candidate;
 }
 
+/**
+ * Bun's macOS credential implementation delegates to the Security framework. Some non-interactive
+ * command surfaces return only a prompt glyph instead of a credential or a useful error. Treat
+ * that output as unavailable rather than accepting it as an API key.
+ */
+export function parseMacOsSecuritySecretOutput(output: string | null): string | null {
+  if (output === null) return null;
+  const value = output.trim();
+  if (!value || /^[∙•·]+$/u.test(value)) {
+    throw new SecretStoreUnavailableError();
+  }
+  return value;
+}
+
 export class OsSecretStore implements SecretStore {
   readonly kind = 'os' as const;
 
@@ -48,15 +68,16 @@ export class OsSecretStore implements SecretStore {
 
   async checkAvailability(): Promise<boolean> {
     try {
-      await this.api.get({ service, name });
+      const value = await this.api.get({ service, name });
+      if (value !== null) parseMacOsSecuritySecretOutput(value);
       return true;
     } catch {
       return false;
     }
   }
 
-  get(): Promise<string | null> {
-    return this.api.get({ service, name });
+  async get(): Promise<string | null> {
+    return parseMacOsSecuritySecretOutput(await this.api.get({ service, name }));
   }
 
   set(secret: string): Promise<void> {
@@ -88,13 +109,47 @@ async function assertPrivateFile(path: string): Promise<void> {
   }
 }
 
+async function pathDetails(path: string) {
+  try {
+    return await lstat(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
+async function syncDirectory(path: string): Promise<void> {
+  const handle = await open(path, fsConstants.O_RDONLY);
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
+export type PermissionFileSecretStoreCheckpoint =
+  | 'directory-created'
+  | 'parent-directory-synced'
+  | 'temporary-opened'
+  | 'temporary-written'
+  | 'temporary-synced'
+  | 'target-renamed'
+  | 'directory-synced'
+  | 'target-deleted'
+  | 'delete-directory-synced';
+
+export interface PermissionFileSecretStoreOptions {
+  checkpoint?: (checkpoint: PermissionFileSecretStoreCheckpoint) => void | Promise<void>;
+}
+
 export class PermissionFileSecretStore implements SecretStore {
   readonly kind = 'file' as const;
   private readonly filePath: string;
 
   constructor(
     private readonly directory: string,
-    private readonly platform: NodeJS.Platform = process.platform
+    private readonly platform: NodeJS.Platform = process.platform,
+    private readonly options: PermissionFileSecretStoreOptions = {}
   ) {
     this.filePath = join(directory, name);
   }
@@ -106,14 +161,17 @@ export class PermissionFileSecretStore implements SecretStore {
       );
     }
 
-    try {
+    const existing = await pathDetails(this.directory);
+    if (existing) {
       await assertPrivateDirectory(this.directory);
-    } catch (error) {
-      if (error instanceof SecretStoreUnavailableError) throw error;
-      await mkdir(this.directory, { recursive: true, mode: 0o700 });
-      await chmod(this.directory, 0o700);
-      await assertPrivateDirectory(this.directory);
+      return;
     }
+    await mkdir(this.directory, { recursive: true, mode: 0o700 });
+    await chmod(this.directory, 0o700);
+    await assertPrivateDirectory(this.directory);
+    await this.options.checkpoint?.('directory-created');
+    await syncDirectory(dirname(this.directory));
+    await this.options.checkpoint?.('parent-directory-synced');
   }
 
   async checkAvailability(): Promise<boolean> {
@@ -126,8 +184,15 @@ export class PermissionFileSecretStore implements SecretStore {
   }
 
   async get(): Promise<string | null> {
-    await this.ensureDirectory();
-    if (!(await Bun.file(this.filePath).exists())) return null;
+    if (this.platform === 'win32') {
+      throw new SecretStoreUnavailableError(
+        'Permission-file fallback is unavailable on Windows without operating-system credentials.'
+      );
+    }
+    const directory = await pathDetails(this.directory);
+    if (!directory) return null;
+    await assertPrivateDirectory(this.directory);
+    if (!(await pathDetails(this.filePath))) return null;
     await assertPrivateFile(this.filePath);
     const value = await Bun.file(this.filePath).text();
     return value || null;
@@ -139,22 +204,47 @@ export class PermissionFileSecretStore implements SecretStore {
     if (await Bun.file(this.filePath).exists()) await assertPrivateFile(this.filePath);
 
     const temporaryPath = join(this.directory, `.${name}.${Bun.randomUUIDv7()}.tmp`);
+    let handle: Awaited<ReturnType<typeof open>> | undefined;
     try {
-      await Bun.write(temporaryPath, secret, { createPath: false, mode: 0o600 });
-      await chmod(temporaryPath, 0o600);
+      handle = await open(
+        temporaryPath,
+        fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_NOFOLLOW,
+        0o600
+      );
+      await this.options.checkpoint?.('temporary-opened');
+      await handle.writeFile(secret, 'utf8');
+      await handle.chmod(0o600);
+      await this.options.checkpoint?.('temporary-written');
+      await handle.sync();
+      await this.options.checkpoint?.('temporary-synced');
+      await handle.close();
+      handle = undefined;
       await rename(temporaryPath, this.filePath);
-      await chmod(this.filePath, 0o600);
+      await this.options.checkpoint?.('target-renamed');
       await assertPrivateFile(this.filePath);
+      await syncDirectory(this.directory);
+      await this.options.checkpoint?.('directory-synced');
     } finally {
+      await handle?.close();
       await unlink(temporaryPath).catch(() => undefined);
     }
   }
 
   async delete(): Promise<boolean> {
-    await this.ensureDirectory();
-    if (!(await Bun.file(this.filePath).exists())) return false;
+    if (this.platform === 'win32') {
+      throw new SecretStoreUnavailableError(
+        'Permission-file fallback is unavailable on Windows without operating-system credentials.'
+      );
+    }
+    const directory = await pathDetails(this.directory);
+    if (!directory) return false;
+    await assertPrivateDirectory(this.directory);
+    if (!(await pathDetails(this.filePath))) return false;
     await assertPrivateFile(this.filePath);
     await unlink(this.filePath);
+    await this.options.checkpoint?.('target-deleted');
+    await syncDirectory(this.directory);
+    await this.options.checkpoint?.('delete-directory-synced');
     return true;
   }
 }
@@ -185,21 +275,19 @@ export interface CreateSecretStoreOptions {
   bunSecrets?: BunSecretsApi | null;
 }
 
+export function createCredentialSecretStores(
+  options: CreateSecretStoreOptions
+): CredentialSecretStores {
+  const platform = options.platform ?? process.platform;
+  const bunSecrets = options.bunSecrets === undefined ? detectBunSecrets() : options.bunSecrets;
+  return {
+    file: new PermissionFileSecretStore(options.paths.secrets, platform),
+    os: bunSecrets ? new OsSecretStore(bunSecrets) : new UnavailableSecretStore()
+  };
+}
+
 export async function createPreferredSecretStore(
   options: CreateSecretStoreOptions
 ): Promise<SecretStore> {
-  const platform = options.platform ?? process.platform;
-  const bunSecrets = options.bunSecrets === undefined ? detectBunSecrets() : options.bunSecrets;
-
-  if (bunSecrets) {
-    const osStore = new OsSecretStore(bunSecrets);
-    if (await osStore.checkAvailability()) return osStore;
-  }
-
-  if (platform !== 'win32') {
-    const fileStore = new PermissionFileSecretStore(options.paths.secrets, platform);
-    if (await fileStore.checkAvailability()) return fileStore;
-  }
-
-  return new UnavailableSecretStore();
+  return createCredentialSecretStores(options).file;
 }

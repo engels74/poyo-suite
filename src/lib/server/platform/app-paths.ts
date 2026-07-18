@@ -1,7 +1,11 @@
+import { existsSync } from 'node:fs';
 import { chmod, lstat, mkdir } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export const APP_DIRECTORY_NAME = 'poyo-local-studio';
+export type AppRootKind = 'project' | 'platform';
+export type AppPathSource = 'environment' | 'project-default' | 'platform-selected';
 
 export interface AppPaths {
   root: string;
@@ -20,13 +24,17 @@ export interface AppPaths {
   logs: string;
   secrets: string;
   temporary: string;
-  source: 'environment' | 'platform-default';
+  source: AppPathSource;
+  rootKind: AppRootKind | 'environment';
 }
 
 export interface ResolveAppPathsOptions {
   environment?: Record<string, string | undefined>;
   platform?: NodeJS.Platform;
   homeDirectory?: string;
+  projectRoot?: string;
+  moduleDirectory?: string;
+  rootKind?: AppRootKind;
 }
 
 function requireSafePath(value: string, variable: string): string {
@@ -38,6 +46,21 @@ function resolveHome(environment: Record<string, string | undefined>, explicit?:
   const home = explicit ?? environment.HOME ?? environment.USERPROFILE;
   if (!home) throw new Error('Unable to resolve the current user home directory.');
   return requireSafePath(home, 'home directory');
+}
+
+export function deriveProjectRoot(
+  moduleDirectory = dirname(fileURLToPath(import.meta.url)),
+  fileExists: (path: string) => boolean = existsSync
+): string {
+  let candidate = resolve(moduleDirectory);
+  while (true) {
+    if (fileExists(join(candidate, 'package.json'))) return candidate;
+    const parent = dirname(candidate);
+    if (parent === candidate) {
+      throw new Error('Unable to derive the Poyo Local Studio project root.');
+    }
+    candidate = parent;
+  }
 }
 
 function platformRoot(
@@ -63,11 +86,19 @@ function platformRoot(
 export function resolveAppPaths(options: ResolveAppPathsOptions = {}): AppPaths {
   const environment = options.environment ?? Bun.env;
   const platform = options.platform ?? process.platform;
-  const home = resolveHome(environment, options.homeDirectory);
   const configuredRoot = environment.PLS_APP_DATA_DIR?.trim();
+  const rootKind = options.rootKind ?? 'project';
   const root = configuredRoot
     ? requireSafePath(configuredRoot, 'PLS_APP_DATA_DIR')
-    : platformRoot(platform, environment, home);
+    : rootKind === 'platform'
+      ? platformRoot(platform, environment, resolveHome(environment, options.homeDirectory))
+      : join(
+          requireSafePath(
+            options.projectRoot ?? deriveProjectRoot(options.moduleDirectory),
+            'project root'
+          ),
+          'data'
+        );
 
   // Match the trim()-based check the output-location endpoints use for "environment managed": a
   // whitespace-only PLS_MEDIA_DIR is not a real override, so it must not resolve a media path.
@@ -80,20 +111,35 @@ export function resolveAppPaths(options: ResolveAppPathsOptions = {}): AppPaths 
 
   return {
     root,
-    database: environment.PLS_DATABASE_PATH
-      ? requireSafePath(environment.PLS_DATABASE_PATH, 'PLS_DATABASE_PATH')
-      : join(root, 'data', 'poyo-studio.sqlite'),
+    database: environment.PLS_DATABASE_PATH?.trim()
+      ? requireSafePath(environment.PLS_DATABASE_PATH.trim(), 'PLS_DATABASE_PATH')
+      : join(root, 'poyo-studio.sqlite'),
     media,
     defaultMedia,
     mediaReadRoots: [media],
     uploads: join(root, 'uploads'),
     thumbnails: join(root, 'thumbnails'),
-    logs: environment.PLS_LOG_DIR
-      ? requireSafePath(environment.PLS_LOG_DIR, 'PLS_LOG_DIR')
+    logs: environment.PLS_LOG_DIR?.trim()
+      ? requireSafePath(environment.PLS_LOG_DIR.trim(), 'PLS_LOG_DIR')
       : join(root, 'logs'),
     secrets: join(root, 'secrets'),
     temporary: join(root, 'tmp'),
-    source: configuredRoot ? 'environment' : 'platform-default'
+    source: configuredRoot
+      ? 'environment'
+      : rootKind === 'platform'
+        ? 'platform-selected'
+        : 'project-default',
+    rootKind: configuredRoot ? 'environment' : rootKind
+  };
+}
+
+export function resolveAppPathCandidates(options: Omit<ResolveAppPathsOptions, 'rootKind'> = {}): {
+  project: AppPaths;
+  platform: AppPaths;
+} {
+  return {
+    project: resolveAppPaths({ ...options, rootKind: 'project' }),
+    platform: resolveAppPaths({ ...options, rootKind: 'platform' })
   };
 }
 

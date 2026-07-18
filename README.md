@@ -55,7 +55,8 @@ cd poyo-suite
 bun install --frozen-lockfile
 cp .env.example .env
 chmod 600 .env
-# Edit .env and set POYO_API_KEY. Never commit this file.
+# Optionally set POYO_API_KEY in .env, or add a local key during onboarding.
+# Never commit .env.
 bun run dev
 ```
 
@@ -75,23 +76,59 @@ cross-origin implications first.
 
 ## Credentials, storage, and privacy
 
-`POYO_API_KEY` is the preferred configuration and always wins over a locally stored key. When
-it is active, the Settings UI cannot replace or remove it. If it is absent, local onboarding
-uses Bun's operating-system secret service when available, otherwise a permission-restricted
-file store on supported non-Windows systems. Keys never enter page data, browser storage,
-SQLite, diagnostic exports, or structured logs.
+`POYO_API_KEY` always wins over a locally stored key. When it is active, the Settings UI keeps
+the local selection visible but cannot replace, move, or remove it. Without that override, the
+default backend is the permission-protected `<selected-root>/secrets/poyo-api-key` file. Its
+directory uses mode `0700` and the key file uses mode `0600` on supported non-Windows systems. The
+operating-system credential store—macOS Keychain when supported—is available only after an explicit
+choice in onboarding or Settings. Unselected Keychain content is ignored and cannot silently
+complete onboarding. Keys never enter page data, browser storage, SQLite, diagnostic exports, or
+structured logs.
 
-Application data uses platform conventions unless `PLS_APP_DATA_DIR` or the narrower storage
-variables in `.env.example` are set:
+Application data defaults to the repository's `./data` directory. The SQLite database is
+`./data/poyo-studio.sqlite`; the same root also contains retained uploads, verified media, logs,
+temporary files, thumbnails, root-transition metadata, and the file credential when selected. The
+platform application-data directory is an explicit onboarding/Settings choice:
 
-| Platform | Default application-data root |
+| Platform | Optional platform application-data root |
 | --- | --- |
 | macOS | `~/Library/Application Support/Poyo Local Studio` |
 | Windows | `%LOCALAPPDATA%\Poyo Local Studio` |
 | Linux | `${XDG_DATA_HOME:-~/.local/share}/poyo-local-studio` |
 
-The root contains SQLite data, retained uploads, verified media, logs, temporary files, a
-reserved thumbnail directory, and—only when required—the local secret-store directory.
+Changing between the project and platform roots copies and verifies the complete managed root,
+freezes further writes, and requires a process restart before the selected root becomes effective.
+The source is retained until restart verification succeeds. The application never silently imports
+a markerless legacy root. `PLS_APP_DATA_DIR` remains an authoritative root override; the narrower
+`PLS_DATABASE_PATH`, `PLS_MEDIA_DIR`, and `PLS_LOG_DIR` overrides remain authoritative for their
+individual locations. Environment-managed controls stay visible but disabled in the UI.
+
+### Reset all local application state
+
+This reset affects local files and credentials only. It does not delete Poyo tasks, uploads, or
+outputs held remotely.
+
+1. Stop the Studio completely. Do not remove or copy an active SQLite database, WAL, or SHM file.
+2. If the selected credential backend is the operating-system store, use **Settings → Remove local
+   key** before deleting the data root. On macOS, an already-orphaned item can instead be removed in
+   Keychain Access by finding the `ai.poyo.local-studio` service. Deleting a data directory does not
+   delete an operating-system credential.
+3. Delete the selected data root:
+   - project default: `rm -rf ./data`
+   - macOS platform opt-in: `rm -rf ~/Library/Application\ Support/Poyo\ Local\ Studio`
+   - Windows/Linux platform opt-in: remove the matching optional root from the table above
+   - `PLS_APP_DATA_DIR`: remove the configured directory instead
+4. If `PLS_DATABASE_PATH`, `PLS_MEDIA_DIR`, or `PLS_LOG_DIR` pointed outside that root, remove those
+   operator-managed locations separately if a complete local wipe is intended.
+5. Clear `POYO_API_KEY` everywhere it may be inherited—not only `.env`—then start a new shell or run
+   `unset POYO_API_KEY`. The environment value remains authoritative while present.
+6. Start the Studio. A fresh root opens `/welcome`, defaults to `./data` plus the file credential,
+   and does not adopt stale markerless Application Support or Keychain content.
+
+The application is unreleased and now has one version-1 initial database migration. Databases from
+earlier development builds that recorded migration versions 2–4 are intentionally unsupported:
+they are rejected read-only and are not imported, rewritten, or upgraded. Delete the old local data
+root and start fresh rather than editing `schema_migrations`.
 
 ## Important upstream limitations
 

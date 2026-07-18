@@ -7,13 +7,16 @@ import AppIcon from '$lib/components/ui/AppIcon.svelte';
 import Badge from '$lib/components/ui/Badge.svelte';
 import type { CleanupConsequence, CleanupPreviewDto } from '$lib/features/cleanup/contracts';
 import { byteSizeLabel, dateTimeLabel } from '$lib/features/library/presentation';
-import type { SettingsDto } from '$lib/features/settings/contracts';
+import type { SettingsDto, StorageRootSettingsDto } from '$lib/features/settings/contracts';
 import {
   apiKeyUiState,
   cleanupConsequenceLabel,
   cleanupPolicyRequest,
+  credentialBackendLabel,
+  credentialBackendUiState,
   operationsRequest,
-  settingsDraft
+  settingsDraft,
+  storageRootUiState
 } from '$lib/features/settings/controller';
 import { resolveTheme, themeStorageKey } from '$lib/theme';
 import type { PageData } from './$types';
@@ -21,6 +24,10 @@ import type { PageData } from './$types';
 let { data }: { data: PageData } = $props();
 const initial = untrack(() => data);
 let settings = $state<SettingsDto>(initial.settings);
+let storageRoot = $state<StorageRootSettingsDto>(initial.storageRoot);
+let rootChoice = $state<'project' | 'platform'>(
+  initial.storageRoot.selected.kind === 'platform' ? 'platform' : 'project'
+);
 let outputLocation = $state(initial.outputLocation);
 let directoryInput = $state('');
 let directoryCheck = $state<{ ok: boolean; message: string; freeBytes: number | null } | null>(
@@ -35,6 +42,8 @@ let draft = $state(settingsDraft(initial.settings));
 let connectivity = $state(initial.connectivity);
 let account = $state(initial.balance?.email ?? null);
 let apiKeyInput = $state('');
+let credentialChoice = $state<'file' | 'os'>(initial.settings.apiKey.selectedBackend);
+let replaceExistingCredential = $state(false);
 let pending = $state<string | null>(null);
 let message = $state('');
 let errorMessage = $state('');
@@ -43,6 +52,8 @@ let preview = $state<CleanupPreviewDto | null>(null);
 let cleanupConfirmed = $state(false);
 
 let keyState = $derived(apiKeyUiState(settings.apiKey));
+let credentialState = $derived(credentialBackendUiState(settings.apiKey));
+let rootState = $derived(storageRootUiState(storageRoot));
 
 async function request<T>(path: string, method: string, body: Record<string, unknown>): Promise<T> {
   const response = await fetch(path, {
@@ -51,13 +62,16 @@ async function request<T>(path: string, method: string, body: Record<string, unk
     body: JSON.stringify(body)
   });
   const payload = (await response.json().catch(() => ({}))) as T & {
-    error?: { message?: string };
+    error?: { code?: string; message?: string };
     result?: { message?: string };
   };
-  if (!response.ok)
-    throw new Error(
+  if (!response.ok) {
+    const error = new Error(
       payload.error?.message ?? payload.result?.message ?? `Request failed (${response.status}).`
     );
+    Object.assign(error, { code: payload.error?.code });
+    throw error;
+  }
   return payload;
 }
 
@@ -177,6 +191,96 @@ function configureApiKey(event: SubmitEvent): void {
   });
 }
 
+function switchCredentialBackend(): void {
+  if (
+    !settings.apiKey.localMutationAvailable ||
+    credentialChoice === settings.apiKey.selectedBackend
+  )
+    return;
+  void run('credential-backend', async () => {
+    try {
+      const result = await request<{ apiKey: SettingsDto['apiKey'] }>(
+        '/api/settings/credential-backend',
+        'POST',
+        {
+          backend: credentialChoice,
+          ...(apiKeyInput.trim() ? { apiKey: apiKeyInput } : {}),
+          replaceExisting: replaceExistingCredential
+        }
+      );
+      settings = { ...settings, apiKey: result.apiKey };
+      credentialChoice = result.apiKey.selectedBackend;
+      replaceExistingCredential = false;
+      message = result.apiKey.transition
+        ? `Key moved to ${credentialBackendLabel(result.apiKey.selectedBackend)}. The target is authoritative; the previous copy is retained pending cleanup.`
+        : `Key moved to ${credentialBackendLabel(result.apiKey.selectedBackend)} and verified before the previous copy was removed.`;
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        'code' in error &&
+        error.code === 'backend_unavailable' &&
+        credentialChoice === 'os'
+      ) {
+        settings = {
+          ...settings,
+          apiKey: {
+            ...settings.apiKey,
+            backendAvailability: { ...settings.apiKey.backendAvailability, os: 'unavailable' }
+          }
+        };
+      }
+      throw error;
+    } finally {
+      apiKeyInput = '';
+    }
+  });
+}
+
+function resolveCredentialConflict(
+  action: NonNullable<SettingsDto['apiKey']['transition']>['actions'][number]
+): void {
+  void run('credential-conflict', async () => {
+    const result = await request<{ apiKey: SettingsDto['apiKey'] }>(
+      '/api/settings/credential-backend/conflict',
+      'POST',
+      { action }
+    );
+    settings = { ...settings, apiKey: result.apiKey };
+    credentialChoice = result.apiKey.selectedBackend;
+    replaceExistingCredential = false;
+    message =
+      action === 'abandon'
+        ? 'The stale credential move was abandoned. Both stored copies were left unchanged.'
+        : action === 'acknowledge-retained-source'
+          ? 'The selected backend remains authoritative. The previous copy is explicitly retained and still reported.'
+          : action === 'retry-cleanup'
+            ? result.apiKey.transition
+              ? 'Cleanup remains pending. No unverified credential copy was deleted.'
+              : 'Credential cleanup was verified and completed.'
+            : action === 'resume-transition'
+              ? `The credential move resumed after fresh verification. ${credentialBackendLabel(result.apiKey.selectedBackend)} is now selected.`
+              : `Fresh replacement authorization was verified. ${credentialBackendLabel(result.apiKey.selectedBackend)} is now selected.`;
+  });
+}
+
+function relocateStorageRoot(): void {
+  if (
+    storageRoot.environmentManaged ||
+    !storageRoot.mutationAvailable ||
+    rootChoice === storageRoot.current.kind
+  )
+    return;
+  void run('storage-root', async () => {
+    const result = await request<{ storageRoot: StorageRootSettingsDto }>(
+      '/api/settings/storage-root',
+      'POST',
+      { targetRootKind: rootChoice }
+    );
+    storageRoot = result.storageRoot;
+    message = `${result.storageRoot.selected.label} is selected. Restart the Studio to verify and activate the copied data. Writes remain frozen until restart.`;
+  });
+}
+
 function removeApiKey(): void {
   if (!keyState.canRemove || !confirm('Remove the locally stored Poyo API key?')) return;
   void run('remove-key', async () => {
@@ -273,7 +377,46 @@ function applyCleanup(): void {
             <div><div class="flex flex-wrap items-center gap-2"><h3 id="api-heading" class="section-heading">Poyo API access</h3><Badge tone={settings.apiKey.status === 'configured' ? 'success' : 'warning'}>{keyState.label}</Badge></div><p class="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">{keyState.detail} No masked fragment or key value is returned to the browser.</p></div>
             <AppIcon name="shield" size={21} class="text-muted-foreground" />
           </div>
-          <dl class="mt-4 grid gap-3 text-xs sm:grid-cols-3"><div><dt class="text-muted-foreground">Source</dt><dd class="mt-1 font-semibold">{settings.apiKey.source}</dd></div><div><dt class="text-muted-foreground">Secret store</dt><dd class="mt-1 font-semibold">{settings.apiKey.storeKind}</dd></div><div><dt class="text-muted-foreground">Last key change</dt><dd class="mt-1 font-semibold">{settings.apiKey.updatedAt ? dateTimeLabel(settings.apiKey.updatedAt) : 'Never'}</dd></div></dl>
+          <dl class="mt-4 grid gap-3 text-xs sm:grid-cols-3"><div><dt class="text-muted-foreground">Selected local backend</dt><dd class="mt-1 font-semibold">{credentialState.selected}</dd></div><div><dt class="text-muted-foreground">Effective credential</dt><dd class="mt-1 font-semibold">{credentialState.effective}</dd></div><div><dt class="text-muted-foreground">Last key change</dt><dd class="mt-1 font-semibold">{settings.apiKey.updatedAt ? dateTimeLabel(settings.apiKey.updatedAt) : 'Never'}</dd></div></dl>
+          {#if credentialState.transition}<p class="mt-3 rounded border border-warning/30 bg-warning/10 px-3 py-2 text-xs" role={credentialState.conflict ? 'alert' : 'status'}>{credentialState.transition}</p>{/if}
+          {#if credentialState.conflict}
+            <div class="mt-3 flex flex-wrap gap-2">
+              {#if credentialState.actions.includes('abandon')}<button onclick={() => resolveCredentialConflict('abandon')} disabled={pending !== null} class="focus-ring min-h-9 rounded border border-border px-3 text-sm font-semibold disabled:opacity-50">Abandon stale move</button>{/if}
+              {#if credentialState.actions.includes('resume-transition')}<button onclick={() => resolveCredentialConflict('resume-transition')} disabled={pending !== null} class="focus-ring min-h-9 rounded bg-primary px-3 text-sm font-semibold text-primary-foreground disabled:opacity-50">Resume verified move</button>{/if}
+              {#if credentialState.actions.includes('retry-cleanup')}<button onclick={() => resolveCredentialConflict('retry-cleanup')} disabled={pending !== null} class="focus-ring min-h-9 rounded border border-border px-3 text-sm font-semibold disabled:opacity-50">Retry verified cleanup</button>{/if}
+              {#if credentialState.actions.includes('acknowledge-retained-source')}<button onclick={() => resolveCredentialConflict('acknowledge-retained-source')} disabled={pending !== null} class="focus-ring min-h-9 rounded border border-border px-3 text-sm font-semibold disabled:opacity-50">Keep previous copy</button>{/if}
+              {#if credentialState.actions.includes('reauthorize-replacement')}<button onclick={() => resolveCredentialConflict('reauthorize-replacement')} disabled={pending !== null} class="focus-ring min-h-9 rounded bg-primary px-3 text-sm font-semibold text-primary-foreground disabled:opacity-50">Re-authorize against current destination</button>{/if}
+            </div>
+          {/if}
+          <div class="mt-5 border-t border-border pt-4">
+            <div class="flex flex-wrap items-center justify-between gap-2"><h4 class="text-xs font-semibold">Local credential storage</h4>{#if settings.apiKey.environmentManaged}<Badge tone="neutral">Environment managed</Badge>{/if}</div>
+            {#if settings.apiKey.environmentManaged}
+              <p class="mt-2 text-xs leading-5 text-muted-foreground"><span class="font-mono">POYO_API_KEY</span> is authoritative. The selected local backend remains visible but inactive, and local changes are disabled.</p>
+              <fieldset class="mt-3" disabled>
+                <legend class="sr-only">Local credential backend</legend>
+                <div class="grid gap-2 sm:grid-cols-2">
+                  <label class="flex cursor-not-allowed items-start gap-3 rounded border border-border p-3 opacity-60"><input class="mt-0.5 size-4" type="radio" name="settings-credential-backend-environment" value="file" checked={settings.apiKey.selectedBackend === 'file'} /><span><strong class="text-sm">Permission-protected file (default)</strong><span class="mt-1 block text-xs leading-5 text-muted-foreground">Inactive while the environment key is effective.</span></span></label>
+                  <label class="flex cursor-not-allowed items-start gap-3 rounded border border-border p-3 opacity-60"><input class="mt-0.5 size-4" type="radio" name="settings-credential-backend-environment" value="os" checked={settings.apiKey.selectedBackend === 'os'} /><span><strong class="text-sm">Operating-system store</strong><span class="mt-1 block text-xs leading-5 text-muted-foreground">Inactive while the environment key is effective.</span></span></label>
+                </div>
+              </fieldset>
+            {:else}
+              <fieldset class="mt-3" disabled={pending !== null || !settings.apiKey.localMutationAvailable}>
+                <legend class="sr-only">Local credential backend</legend>
+                <div class="grid gap-2 sm:grid-cols-2">
+                  <label class="focus-within:ring-2 focus-within:ring-ring flex cursor-pointer items-start gap-3 rounded border border-border p-3"><input class="mt-0.5 size-4" type="radio" name="settings-credential-backend" value="file" bind:group={credentialChoice} /><span><strong class="text-sm">Permission-protected file (default)</strong><span class="mt-1 block text-xs leading-5 text-muted-foreground">Stored inside the selected Studio data root with private permissions.</span></span></label>
+                  <label class="focus-within:ring-2 focus-within:ring-ring flex cursor-pointer items-start gap-3 rounded border border-border p-3 {settings.apiKey.backendAvailability.os === 'unavailable' ? 'cursor-not-allowed opacity-60' : ''}"><input class="mt-0.5 size-4" type="radio" name="settings-credential-backend" value="os" bind:group={credentialChoice} disabled={settings.apiKey.backendAvailability.os === 'unavailable'} /><span><strong class="text-sm">Operating-system store</strong><span class="mt-1 block text-xs leading-5 text-muted-foreground">macOS Keychain when supported. Availability is checked only after explicit selection.</span></span></label>
+                </div>
+              </fieldset>
+              {#if credentialChoice !== settings.apiKey.selectedBackend}
+                {#if !keyState.canConfigure}
+                  <label class="mt-3 block max-w-xl text-xs font-semibold" for="backend-api-key">Poyo API key for the selected backend<input id="backend-api-key" type="password" bind:value={apiKeyInput} autocomplete="off" spellcheck="false" class="focus-ring mt-1.5 h-10 w-full rounded border border-input bg-background px-3 text-sm" placeholder="Temporary entry — never displayed again" /></label>
+                {/if}
+                <label class="mt-3 flex items-start gap-2 text-xs leading-5"><input class="focus-ring mt-0.5 size-4" type="checkbox" bind:checked={replaceExistingCredential} />Allow replacement only if a different key already exists in the selected destination.</label>
+                <button onclick={switchCredentialBackend} disabled={pending !== null || (settings.apiKey.status !== 'configured' && !apiKeyInput.trim())} class="focus-ring mt-3 min-h-9 rounded border border-border px-3 text-sm font-semibold disabled:opacity-50">{pending === 'credential-backend' ? 'Moving securely…' : 'Move key to selected storage'}</button>
+              {/if}
+              {#if settings.apiKey.backendAvailability.os === 'unavailable'}<p class="mt-2 text-xs text-warning" role="status">The operating-system credential store is unavailable in this runtime. The file backend remains selected unless a supported store is explicitly available.</p>{/if}
+            {/if}
+          </div>
           {#if keyState.canConfigure}
             <form onsubmit={configureApiKey} class="mt-5 max-w-xl">
               <label for="local-api-key" class="text-xs font-semibold">{settings.apiKey.source === 'local' ? 'Replace local key' : 'Add a local server-side key'}</label>
@@ -285,8 +428,45 @@ function applyCleanup(): void {
         </section>
 
         <section id="storage" class="py-6" aria-labelledby="storage-heading">
-          <div class="flex flex-wrap items-start justify-between gap-4"><div><h3 id="storage-heading" class="section-heading">Storage and downloads</h3><p class="mt-2 text-sm leading-6 text-muted-foreground">Paths are resolved by the local server. Media remains indefinitely unless an explicit cleanup policy is saved and confirmed.</p></div><Badge tone="neutral">{settings.storage.source === 'environment' ? 'Environment paths' : 'Platform defaults'}</Badge></div>
-          <dl class="mt-4 grid gap-3 text-xs sm:grid-cols-2"><div><dt class="text-muted-foreground">Indexed media</dt><dd class="mt-1 font-semibold">{byteSizeLabel(data.storage.indexedBytes)} · {data.storage.verifiedFiles} verified files</dd></div><div><dt class="text-muted-foreground">Disk free</dt><dd class="mt-1 font-semibold">{data.storage.freeBytes === null ? 'Unavailable' : byteSizeLabel(data.storage.freeBytes)}</dd></div>{#each [['Media', settings.storage.media], ['Uploads', settings.storage.uploads], ['Database', settings.storage.database], ['Logs', settings.storage.logs]] as [label, path]}<div><dt class="text-muted-foreground">{label}</dt><dd class="mt-1 break-all font-mono text-[0.6875rem]">{path}</dd></div>{/each}</dl>
+          <div class="flex flex-wrap items-start justify-between gap-4"><div><h3 id="storage-heading" class="section-heading">Storage and downloads</h3><p class="mt-2 text-sm leading-6 text-muted-foreground">The default keeps all Studio-managed data in <span class="font-mono">./data</span>. Platform application storage is an explicit opt-in, and media remains indefinitely unless a cleanup policy is saved and confirmed.</p></div><Badge tone="neutral">{storageRoot.state === 'environment-managed' ? 'Environment managed' : storageRoot.state === 'restart-required' ? 'Restart required' : storageRoot.state === 'cleanup-pending' ? 'Source retained' : 'Active'}</Badge></div>
+          <dl class="mt-4 grid gap-3 text-xs sm:grid-cols-2"><div><dt class="text-muted-foreground">Indexed media</dt><dd class="mt-1 font-semibold">{byteSizeLabel(data.storage.indexedBytes)} · {data.storage.verifiedFiles} verified files</dd></div><div><dt class="text-muted-foreground">Disk free</dt><dd class="mt-1 font-semibold">{data.storage.freeBytes === null ? 'Unavailable' : byteSizeLabel(data.storage.freeBytes)}</dd></div></dl>
+          <div class="mt-5 border-t border-border pt-4">
+            <h4 class="text-xs font-semibold">Application data location</h4>
+            <dl class="mt-3 grid gap-3 text-xs sm:grid-cols-3"><div><dt class="text-muted-foreground">Current</dt><dd class="mt-1 font-semibold">{storageRoot.current.label}</dd></div><div><dt class="text-muted-foreground">Selected</dt><dd class="mt-1 font-semibold">{storageRoot.selected.label}</dd></div><div><dt class="text-muted-foreground">Effective</dt><dd class="mt-1 font-semibold">{storageRoot.effective.label}</dd></div></dl>
+            <p class="mt-3 rounded bg-muted px-3 py-2 text-xs leading-5 text-muted-foreground">{rootState.detail} {rootState.retention}</p>
+            {#if storageRoot.exclusions.length > 0}
+              <p class="mt-3 rounded border border-border px-3 py-2 text-xs leading-5 text-muted-foreground">
+                This move covers root-owned Studio data only. {rootState.exclusionSummary}
+              </p>
+            {/if}
+            {#if storageRoot.environmentManaged}
+              <p class="mt-3 text-xs leading-5 text-muted-foreground"><span class="font-mono">PLS_APP_DATA_DIR</span> controls the root. In-app changes are disabled.</p>
+              <fieldset class="mt-3" disabled>
+                <legend class="sr-only">Application data location</legend>
+                <div class="grid gap-2 sm:grid-cols-2">
+                  {#each storageRoot.choices as choice (choice.kind)}
+                    <label class="flex cursor-not-allowed items-start gap-3 rounded border border-border p-3 opacity-60"><input class="mt-0.5 size-4" type="radio" name="settings-storage-root-environment" value={choice.kind} /><span><strong class="text-sm">{choice.label}{choice.kind === 'project' ? ' (default)' : ''}</strong><span class="mt-1 block font-mono text-xs text-muted-foreground">{choice.location}</span></span></label>
+                  {/each}
+                </div>
+              </fieldset>
+            {:else if storageRoot.restartRequired}
+              <p class="mt-3 rounded border border-warning/30 bg-warning/10 px-3 py-2 text-xs" role="status">
+                {storageRoot.selected.kind === storageRoot.current.kind
+                  ? 'Restart the Studio before making more local changes. This process is safely frozen.'
+                  : `Restart the Studio to verify and activate ${storageRoot.selected.label}. Writes are frozen, and root-owned source data is retained until verification succeeds.`}
+              </p>
+            {:else}
+              <fieldset class="mt-3" disabled={pending !== null || !storageRoot.mutationAvailable}>
+                <legend class="sr-only">Application data location</legend>
+                <div class="grid gap-2 sm:grid-cols-2">
+                  {#each storageRoot.choices as choice (choice.kind)}
+                    <label class="focus-within:ring-2 focus-within:ring-ring flex cursor-pointer items-start gap-3 rounded border border-border p-3"><input class="mt-0.5 size-4" type="radio" name="settings-storage-root" value={choice.kind} checked={rootChoice === choice.kind} onchange={() => { if (choice.kind !== 'environment') rootChoice = choice.kind; }} /><span><strong class="text-sm">{choice.label}{choice.kind === 'project' ? ' (default)' : ''}</strong><span class="mt-1 block font-mono text-xs text-muted-foreground">{choice.location}</span></span></label>
+                  {/each}
+                </div>
+              </fieldset>
+              <button onclick={relocateStorageRoot} disabled={pending !== null || rootChoice === storageRoot.current.kind || !storageRoot.mutationAvailable} class="focus-ring mt-3 min-h-9 rounded border border-border px-3 text-sm font-semibold disabled:opacity-50">{pending === 'storage-root' ? 'Copying and verifying…' : storageRoot.exclusions.length > 0 ? 'Move all root-owned Studio data' : 'Move all Studio data'}</button>
+            {/if}
+          </div>
           <div class="mt-5 border-t border-border pt-4">
             <div class="flex flex-wrap items-center justify-between gap-2">
               <h4 class="text-xs font-semibold">Output location</h4>

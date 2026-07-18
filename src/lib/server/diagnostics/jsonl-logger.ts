@@ -1,5 +1,10 @@
 import { appendFile, mkdir, readdir, rename, stat, unlink } from 'node:fs/promises';
 import { basename, join } from 'node:path';
+import {
+  type MaintenanceGate,
+  maintenanceGate,
+  type WriterPermit
+} from '../platform/maintenance-gate';
 import { redact, safeErrorSummary } from './redaction';
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
@@ -45,6 +50,7 @@ export interface LoggerConfig {
   now?: () => Date;
   files?: LoggerFileOperations;
   onRotationError?: (error: unknown) => void;
+  gate?: MaintenanceGate | null;
 }
 
 export interface LogContext {
@@ -76,6 +82,7 @@ export class StructuredLogger {
   private readonly now: () => Date;
   private rotation: LoggerRotationSettings;
   private queue = Promise.resolve();
+  private suspended = false;
   private lastRotationError: { name: string; message: string } | null = null;
 
   constructor(private readonly config: LoggerConfig) {
@@ -181,21 +188,33 @@ export class StructuredLogger {
   }
 
   log(level: LogLevel, event: string, context: LogContext = {}): Promise<void> {
+    if (this.suspended) return Promise.reject(new Error('Logger is suspended for maintenance.'));
+    const gate = this.config.gate === null ? null : (this.config.gate ?? maintenanceGate);
+    let permit: WriterPermit | undefined;
+    try {
+      permit = gate?.acquireWriter('logger.write');
+    } catch (error) {
+      return Promise.reject(error);
+    }
     return this.enqueue(async () => {
-      await this.files.mkdir(this.config.directory);
-      const record = redact({
-        timestamp: this.now().toISOString(),
-        level,
-        event,
-        correlationId: context.correlationId ?? null,
-        localJobId: context.localJobId ?? null,
-        poyoTaskId: context.poyoTaskId ?? null,
-        data: context.data ?? null
-      });
-      const line = `${JSON.stringify(record)}\n`;
-      const path = this.activeFile(level);
-      await this.rotateIfNeeded(path, Buffer.byteLength(line));
-      await this.files.append(path, line);
+      try {
+        await this.files.mkdir(this.config.directory);
+        const record = redact({
+          timestamp: this.now().toISOString(),
+          level,
+          event,
+          correlationId: context.correlationId ?? null,
+          localJobId: context.localJobId ?? null,
+          poyoTaskId: context.poyoTaskId ?? null,
+          data: context.data ?? null
+        });
+        const line = `${JSON.stringify(record)}\n`;
+        const path = this.activeFile(level);
+        await this.rotateIfNeeded(path, Buffer.byteLength(line));
+        await this.files.append(path, line);
+      } finally {
+        permit?.release();
+      }
     });
   }
 
@@ -211,10 +230,20 @@ export class StructuredLogger {
     return this.log('error', event, { ...context, data: { error, context: context.data ?? null } });
   }
 
+  async suspendAndDrain(): Promise<void> {
+    this.suspended = true;
+    await this.queue;
+  }
+
+  resumeBeforePublication(): void {
+    if (!this.suspended) throw new Error('Logger is not suspended.');
+    this.suspended = false;
+  }
+
   async diagnostics(): Promise<LoggerDiagnostics> {
     await this.queue;
-    await this.files.mkdir(this.config.directory);
-    const names = await this.files.list(this.config.directory);
+    const directory = await this.files.stat(this.config.directory);
+    const names = directory ? await this.files.list(this.config.directory) : [];
     const infos = await Promise.all(
       names
         .filter((name) => name.startsWith('app.jsonl') || name.startsWith('error.jsonl'))

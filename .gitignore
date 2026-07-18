@@ -45,6 +45,8 @@ credentials.*
 
 # Local application state and generated media
 /data/
+/.data.poyo-stage-*/
+/.data.poyo-failed-*/
 /.data/
 /app-data/
 /storage/

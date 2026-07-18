@@ -3,10 +3,11 @@ import { join } from 'node:path';
 import { CleanupRepository } from '../../../src/lib/server/cleanup/repository';
 import { CleanupRuntime } from '../../../src/lib/server/cleanup/runtime';
 import { CleanupService } from '../../../src/lib/server/cleanup/service';
-import { buildOperationsDiagnostics } from '../../../src/lib/server/diagnostics/operations';
 import { StructuredLogger } from '../../../src/lib/server/diagnostics/jsonl-logger';
+import { buildOperationsDiagnostics } from '../../../src/lib/server/diagnostics/operations';
 import { openDatabase } from '../../../src/lib/server/platform/database';
 import type { PlatformServices } from '../../../src/lib/server/platform/runtime';
+import { DATABASE_SCHEMA_VERSION } from '../../../src/lib/server/platform/version';
 import { SettingsRepository } from '../../../src/lib/server/settings/settings-repository';
 import { createTemporaryDirectory } from '../../helpers/temporary-directory';
 
@@ -27,7 +28,8 @@ describe('operations diagnostics', () => {
       logs: join(temporary.path, 'logs'),
       secrets: join(temporary.path, 'secrets'),
       temporary: join(temporary.path, 'tmp'),
-      source: 'platform-default' as const
+      source: 'project-default' as const,
+      rootKind: 'project' as const
     };
     const logger = new StructuredLogger({ directory: paths.logs });
     const sentinel = 'sk-test_diagnostics_canary_123456';
@@ -68,7 +70,7 @@ describe('operations diagnostics', () => {
         connectivity: { status: 'ok [REDACTED]' },
         remoteCleanup: { available: false, verifiedAt: '2026-07-15' },
         health: {
-          database: { schemaVersion: 4 },
+          database: { schemaVersion: DATABASE_SCHEMA_VERSION },
           apiKey: {
             source: 'local',
             status: 'configured',

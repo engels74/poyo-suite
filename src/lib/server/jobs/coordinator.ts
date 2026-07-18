@@ -1,3 +1,4 @@
+import { type MaintenanceGate, maintenanceGate } from '../platform/maintenance-gate';
 import { PoyoError } from '../poyo/errors';
 import type {
   PoyoBalanceResult,
@@ -218,19 +219,31 @@ export class JobCoordinator {
   }
 }
 
+export interface JobRecoveryCoordinator {
+  recoverOnce(): Promise<void>;
+}
+
 export class JobWorker {
   private timer: ReturnType<typeof setInterval> | null = null;
+  private readonly inFlight = new Set<Promise<void>>();
   constructor(
-    private readonly coordinator: JobCoordinator,
-    private readonly intervalMs = 1000
+    private readonly coordinator: JobRecoveryCoordinator,
+    private readonly intervalMs = 1000,
+    private readonly gate: MaintenanceGate = maintenanceGate
   ) {}
   async tick(): Promise<void> {
-    await this.coordinator.recoverOnce();
+    await this.gate.withWriterPermit('job-worker.tick', () => this.coordinator.recoverOnce());
+  }
+  private scheduleTick(): void {
+    const running = this.tick()
+      .catch(() => undefined)
+      .finally(() => this.inFlight.delete(running));
+    this.inFlight.add(running);
   }
   start(): () => void {
     if (!this.timer) {
-      void this.tick().catch(() => undefined);
-      this.timer = setInterval(() => void this.tick().catch(() => undefined), this.intervalMs);
+      this.scheduleTick();
+      this.timer = setInterval(() => this.scheduleTick(), this.intervalMs);
       this.timer.unref?.();
     }
     return () => this.stop();
@@ -238,5 +251,10 @@ export class JobWorker {
   stop(): void {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+  }
+
+  async stopAndDrain(): Promise<void> {
+    this.stop();
+    while (this.inFlight.size > 0) await Promise.allSettled([...this.inFlight]);
   }
 }

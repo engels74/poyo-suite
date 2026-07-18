@@ -1,0 +1,3908 @@
+{
+  "formatVersion": 1,
+  "source": {
+    "migrationFiles": [
+      "migrations/0001-initial.ts",
+      "migrations/0002-cleanup-operations.ts",
+      "migrations/0003-managed-sources.ts",
+      "migrations/0004-output-dimensions.ts"
+    ],
+    "migrations": [
+      {
+        "version": 1,
+        "name": "initial durable studio schema",
+        "checksum": "edf9dba89fc1f5be12cfcc4428085e91234f6e45c4e285a941d802c47daf18a7"
+      },
+      {
+        "version": 2,
+        "name": "durable local cleanup attempts",
+        "checksum": "ca3ed52666ba17c1a0f5badd40a3f29cbdfee0d7c929ed50a64d4ad0c8c761f2"
+      },
+      {
+        "version": 3,
+        "name": "durable managed source media",
+        "checksum": "680775344327f86d459c75c4cdb0c5a839acf2926c4ea514e40f810ac5f10445"
+      },
+      {
+        "version": 4,
+        "name": "persist verified output dimensions",
+        "checksum": "674dd357ca2b9dd6286a3b894e367691ab2d018bc36cb0e24e07c9c8bca83598"
+      }
+    ]
+  },
+  "schema": {
+    "sqliteMaster": [
+      {
+        "type": "index",
+        "name": "idx_balance_snapshots_date",
+        "tableName": "balance_snapshots",
+        "sql": "CREATE INDEX idx_balance_snapshots_date ON balance_snapshots(fetched_at DESC)"
+      },
+      {
+        "type": "index",
+        "name": "idx_cleanup_actions_due",
+        "tableName": "cleanup_actions",
+        "sql": "CREATE INDEX idx_cleanup_actions_due ON cleanup_actions(state, due_at)"
+      },
+      {
+        "type": "index",
+        "name": "idx_cleanup_attempts_action",
+        "tableName": "cleanup_attempts",
+        "sql": "CREATE INDEX idx_cleanup_attempts_action ON cleanup_attempts(action_id, attempt DESC)"
+      },
+      {
+        "type": "index",
+        "name": "idx_cleanup_previews_created",
+        "tableName": "cleanup_previews",
+        "sql": "CREATE INDEX idx_cleanup_previews_created ON cleanup_previews(created_at DESC)"
+      },
+      {
+        "type": "index",
+        "name": "idx_download_attempts_status",
+        "tableName": "download_attempts",
+        "sql": "CREATE INDEX idx_download_attempts_status ON download_attempts(status, started_at)"
+      },
+      {
+        "type": "index",
+        "name": "idx_job_events_job_cursor",
+        "tableName": "job_events",
+        "sql": "CREATE INDEX idx_job_events_job_cursor ON job_events(job_id, event_id)"
+      },
+      {
+        "type": "index",
+        "name": "idx_job_inputs_kind",
+        "tableName": "job_inputs",
+        "sql": "CREATE INDEX idx_job_inputs_kind ON job_inputs(media_kind, job_id)"
+      },
+      {
+        "type": "index",
+        "name": "idx_job_inputs_managed_source",
+        "tableName": "job_inputs",
+        "sql": "CREATE INDEX idx_job_inputs_managed_source ON job_inputs(managed_source_id, job_id)"
+      },
+      {
+        "type": "index",
+        "name": "idx_job_outputs_job",
+        "tableName": "job_outputs",
+        "sql": "CREATE INDEX idx_job_outputs_job ON job_outputs(job_id, output_order)"
+      },
+      {
+        "type": "index",
+        "name": "idx_job_outputs_library",
+        "tableName": "job_outputs",
+        "sql": "CREATE INDEX idx_job_outputs_library ON job_outputs(media_kind, download_state, favorite, created_at DESC)"
+      },
+      {
+        "type": "index",
+        "name": "idx_job_tags_tag",
+        "tableName": "job_tags",
+        "sql": "CREATE INDEX idx_job_tags_tag ON job_tags(tag_id, job_id)"
+      },
+      {
+        "type": "index",
+        "name": "idx_jobs_library_search",
+        "tableName": "jobs",
+        "sql": "CREATE INDEX idx_jobs_library_search ON jobs(prompt_text, search_text, created_at DESC)"
+      },
+      {
+        "type": "index",
+        "name": "idx_jobs_lifecycle",
+        "tableName": "jobs",
+        "sql": "CREATE INDEX idx_jobs_lifecycle ON jobs(local_phase, next_poll_at, updated_at)"
+      },
+      {
+        "type": "index",
+        "name": "idx_jobs_model_workflow_date",
+        "tableName": "jobs",
+        "sql": "CREATE INDEX idx_jobs_model_workflow_date ON jobs(public_model_id, workflow, created_at DESC)"
+      },
+      {
+        "type": "index",
+        "name": "idx_jobs_poyo_task",
+        "tableName": "jobs",
+        "sql": "CREATE UNIQUE INDEX idx_jobs_poyo_task ON jobs(poyo_task_id) WHERE poyo_task_id IS NOT NULL"
+      },
+      {
+        "type": "index",
+        "name": "idx_jobs_retry",
+        "tableName": "jobs",
+        "sql": "CREATE INDEX idx_jobs_retry ON jobs(retry_of_job_id)"
+      },
+      {
+        "type": "index",
+        "name": "idx_managed_sources_retention",
+        "tableName": "managed_sources",
+        "sql": "CREATE INDEX idx_managed_sources_retention ON managed_sources(availability, created_at, id)"
+      },
+      {
+        "type": "index",
+        "name": "idx_model_preferences_recent",
+        "tableName": "model_preferences",
+        "sql": "CREATE INDEX idx_model_preferences_recent ON model_preferences(favorite, last_used_at DESC)"
+      },
+      {
+        "type": "index",
+        "name": "idx_presets_model_workflow",
+        "tableName": "presets",
+        "sql": "CREATE INDEX idx_presets_model_workflow ON presets(entry_key, workflow, updated_at DESC)"
+      },
+      {
+        "type": "index",
+        "name": "idx_registry_entries_selector",
+        "tableName": "registry_entries",
+        "sql": "CREATE INDEX idx_registry_entries_selector ON registry_entries(provider, modality, workflow, status)"
+      },
+      {
+        "type": "index",
+        "name": "idx_submission_intents_state",
+        "tableName": "submission_intents",
+        "sql": "CREATE INDEX idx_submission_intents_state ON submission_intents(state, lease_expires_at)"
+      },
+      {
+        "type": "index",
+        "name": "idx_work_claims_expiry",
+        "tableName": "work_claims",
+        "sql": "CREATE INDEX idx_work_claims_expiry ON work_claims(work_type, expires_at)"
+      },
+      {
+        "type": "table",
+        "name": "app_settings",
+        "tableName": "app_settings",
+        "sql": "CREATE TABLE app_settings ( key TEXT PRIMARY KEY, value_version INTEGER NOT NULL CHECK (value_version >= 1), value_json TEXT NOT NULL CHECK (json_valid(value_json)), updated_at TEXT NOT NULL )"
+      },
+      {
+        "type": "table",
+        "name": "balance_snapshots",
+        "tableName": "balance_snapshots",
+        "sql": "CREATE TABLE balance_snapshots ( id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT, credits REAL NOT NULL CHECK (credits >= 0), source TEXT NOT NULL, fetched_at TEXT NOT NULL )"
+      },
+      {
+        "type": "table",
+        "name": "cleanup_actions",
+        "tableName": "cleanup_actions",
+        "sql": "CREATE TABLE cleanup_actions ( id TEXT PRIMARY KEY, policy_id TEXT REFERENCES cleanup_policies(id), action_kind TEXT NOT NULL CHECK (action_kind IN ('local_file', 'local_metadata', 'local_both')), target_id TEXT NOT NULL, preview_version TEXT NOT NULL, state TEXT NOT NULL CHECK (state IN ('previewed', 'scheduled', 'executing', 'complete', 'failed', 'cancelled')), due_at TEXT, safe_result_json TEXT CHECK (safe_result_json IS NULL OR json_valid(safe_result_json)), created_at TEXT NOT NULL, executed_at TEXT )"
+      },
+      {
+        "type": "table",
+        "name": "cleanup_attempts",
+        "tableName": "cleanup_attempts",
+        "sql": "CREATE TABLE cleanup_attempts ( id INTEGER PRIMARY KEY AUTOINCREMENT, action_id TEXT NOT NULL REFERENCES cleanup_actions(id) ON DELETE CASCADE, attempt INTEGER NOT NULL CHECK (attempt >= 1), status TEXT NOT NULL CHECK (status IN ('started', 'complete', 'failed', 'skipped')), safe_result_json TEXT CHECK (safe_result_json IS NULL OR json_valid(safe_result_json)), started_at TEXT NOT NULL, completed_at TEXT, UNIQUE (action_id, attempt) )"
+      },
+      {
+        "type": "table",
+        "name": "cleanup_policies",
+        "tableName": "cleanup_policies",
+        "sql": "CREATE TABLE cleanup_policies ( id TEXT PRIMARY KEY, policy_version INTEGER NOT NULL CHECK (policy_version >= 1), enabled INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)), policy_json TEXT NOT NULL CHECK (json_valid(policy_json)), created_at TEXT NOT NULL, updated_at TEXT NOT NULL )"
+      },
+      {
+        "type": "table",
+        "name": "cleanup_previews",
+        "tableName": "cleanup_previews",
+        "sql": "CREATE TABLE cleanup_previews ( token TEXT PRIMARY KEY, policy_id TEXT NOT NULL REFERENCES cleanup_policies(id), action_kind TEXT NOT NULL CHECK (action_kind IN ('local_file', 'local_metadata', 'local_both')), policy_hash TEXT NOT NULL, candidate_hash TEXT NOT NULL, candidate_count INTEGER NOT NULL CHECK (candidate_count >= 0), total_bytes INTEGER NOT NULL CHECK (total_bytes >= 0), created_at TEXT NOT NULL, applied_at TEXT )"
+      },
+      {
+        "type": "table",
+        "name": "download_attempts",
+        "tableName": "download_attempts",
+        "sql": "CREATE TABLE download_attempts ( id INTEGER PRIMARY KEY AUTOINCREMENT, output_id TEXT NOT NULL REFERENCES job_outputs(id) ON DELETE CASCADE, attempt INTEGER NOT NULL CHECK (attempt >= 1), status TEXT NOT NULL CHECK (status IN ('started', 'verified', 'failed', 'expired')), bytes_received INTEGER NOT NULL DEFAULT 0 CHECK (bytes_received >= 0), safe_error_json TEXT CHECK (safe_error_json IS NULL OR json_valid(safe_error_json)), started_at TEXT NOT NULL, completed_at TEXT, UNIQUE (output_id, attempt) )"
+      },
+      {
+        "type": "table",
+        "name": "job_events",
+        "tableName": "job_events",
+        "sql": "CREATE TABLE job_events ( event_id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE, event_type TEXT NOT NULL, local_phase TEXT NOT NULL, remote_status_raw TEXT, remote_status TEXT NOT NULL, failure_domain TEXT NOT NULL, progress REAL, safe_payload_json TEXT CHECK (safe_payload_json IS NULL OR json_valid(safe_payload_json)), observed_at TEXT NOT NULL )"
+      },
+      {
+        "type": "table",
+        "name": "job_inputs",
+        "tableName": "job_inputs",
+        "sql": "CREATE TABLE job_inputs ( job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE, role TEXT NOT NULL, input_order INTEGER NOT NULL CHECK (input_order >= 0), media_kind TEXT NOT NULL CHECK (media_kind IN ('image', 'video')), local_reference TEXT, source_url TEXT, upload_url TEXT, metadata_json TEXT NOT NULL CHECK (json_valid(metadata_json)), checksum TEXT, availability TEXT NOT NULL DEFAULT 'available', managed_source_id TEXT REFERENCES managed_sources(id) ON DELETE SET NULL, PRIMARY KEY (job_id, role, input_order) )"
+      },
+      {
+        "type": "table",
+        "name": "job_outputs",
+        "tableName": "job_outputs",
+        "sql": "CREATE TABLE job_outputs ( id TEXT PRIMARY KEY, job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE, output_order INTEGER NOT NULL CHECK (output_order >= 0), media_kind TEXT NOT NULL CHECK (media_kind IN ('image', 'video')), remote_url TEXT, remote_expires_at TEXT, remote_metadata_json TEXT CHECK ( remote_metadata_json IS NULL OR json_valid(remote_metadata_json) ), local_path TEXT, content_type TEXT, byte_size INTEGER CHECK (byte_size IS NULL OR byte_size >= 0), checksum TEXT, signature TEXT, aspect_ratio TEXT, download_state TEXT NOT NULL DEFAULT 'pending' CHECK (download_state IN ( 'pending', 'downloading', 'verified', 'failed', 'expired', 'deleted' )), favorite INTEGER NOT NULL DEFAULT 0 CHECK (favorite IN (0, 1)), pinned INTEGER NOT NULL DEFAULT 0 CHECK (pinned IN (0, 1)), created_at TEXT NOT NULL, verified_at TEXT, deleted_at TEXT, pixel_width INTEGER CHECK (pixel_width IS NULL OR pixel_width > 0), pixel_height INTEGER CHECK (pixel_height IS NULL OR pixel_height > 0), UNIQUE (job_id, output_order) )"
+      },
+      {
+        "type": "table",
+        "name": "job_tags",
+        "tableName": "job_tags",
+        "sql": "CREATE TABLE job_tags ( job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE, tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE, PRIMARY KEY (job_id, tag_id) )"
+      },
+      {
+        "type": "table",
+        "name": "jobs",
+        "tableName": "jobs",
+        "sql": "CREATE TABLE jobs ( id TEXT PRIMARY KEY, registry_version TEXT, entry_key TEXT, workflow TEXT NOT NULL, public_model_id TEXT NOT NULL, local_phase TEXT NOT NULL CHECK (local_phase IN ( 'queued', 'validating', 'uploading', 'submission_prepared', 'submitting', 'monitoring', 'downloading', 'complete', 'requires_attention' )), remote_status_raw TEXT, remote_status TEXT NOT NULL DEFAULT 'unknown' CHECK (remote_status IN ( 'unknown', 'not_started', 'running', 'finished', 'failed' )), failure_domain TEXT NOT NULL DEFAULT 'none' CHECK (failure_domain IN ( 'none', 'validation', 'upload', 'submission', 'poll', 'remote_generation', 'download', 'cleanup', 'filesystem', 'database', 'live_update', 'registry' )), attention_code TEXT, poyo_task_id TEXT UNIQUE, progress REAL CHECK (progress IS NULL OR (progress >= 0 AND progress <= 100)), guided_request_json TEXT NOT NULL CHECK (json_valid(guided_request_json)), actual_payload_json TEXT CHECK (actual_payload_json IS NULL OR json_valid(actual_payload_json)), expert_diff_json TEXT CHECK (expert_diff_json IS NULL OR json_valid(expert_diff_json)), estimated_credits REAL CHECK (estimated_credits IS NULL OR estimated_credits >= 0), actual_credits REAL CHECK (actual_credits IS NULL OR actual_credits >= 0), prompt_text TEXT, search_text TEXT, correlation_id TEXT NOT NULL, retry_of_job_id TEXT REFERENCES jobs(id), next_poll_at TEXT, last_polled_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, started_at TEXT, completed_at TEXT, FOREIGN KEY (registry_version, entry_key) REFERENCES registry_entries(registry_version, entry_key) )"
+      },
+      {
+        "type": "table",
+        "name": "managed_sources",
+        "tableName": "managed_sources",
+        "sql": "CREATE TABLE managed_sources ( id TEXT PRIMARY KEY, original_name TEXT NOT NULL, media_kind TEXT NOT NULL CHECK (media_kind IN ('image', 'video')), mime_type TEXT NOT NULL, byte_size INTEGER NOT NULL CHECK (byte_size >= 0), checksum TEXT NOT NULL, signature TEXT NOT NULL, relative_path TEXT NOT NULL UNIQUE, availability TEXT NOT NULL DEFAULT 'available' CHECK ( availability IN ('available', 'missing', 'deleted') ), created_at TEXT NOT NULL, last_verified_at TEXT, missing_at TEXT, deleted_at TEXT )"
+      },
+      {
+        "type": "table",
+        "name": "model_preferences",
+        "tableName": "model_preferences",
+        "sql": "CREATE TABLE model_preferences ( entry_key TEXT PRIMARY KEY, favorite INTEGER NOT NULL DEFAULT 0 CHECK (favorite IN (0, 1)), favorited_at TEXT, last_used_at TEXT )"
+      },
+      {
+        "type": "table",
+        "name": "presets",
+        "tableName": "presets",
+        "sql": "CREATE TABLE presets ( id TEXT PRIMARY KEY, registry_version TEXT NOT NULL, entry_key TEXT NOT NULL, workflow TEXT NOT NULL, name TEXT NOT NULL, description TEXT, values_version INTEGER NOT NULL CHECK (values_version >= 1), values_json TEXT NOT NULL CHECK (json_valid(values_json)), created_at TEXT NOT NULL, updated_at TEXT NOT NULL )"
+      },
+      {
+        "type": "table",
+        "name": "registry_audits",
+        "tableName": "registry_audits",
+        "sql": "CREATE TABLE registry_audits ( audit_id TEXT PRIMARY KEY, old_version TEXT REFERENCES registry_versions(version), new_version TEXT REFERENCES registry_versions(version), result TEXT NOT NULL, report_json TEXT NOT NULL CHECK (json_valid(report_json)), started_at TEXT NOT NULL, completed_at TEXT )"
+      },
+      {
+        "type": "table",
+        "name": "registry_entries",
+        "tableName": "registry_entries",
+        "sql": "CREATE TABLE registry_entries ( registry_version TEXT NOT NULL REFERENCES registry_versions(version) ON DELETE CASCADE, entry_key TEXT NOT NULL, public_model_id TEXT NOT NULL, provider TEXT NOT NULL, modality TEXT NOT NULL CHECK (modality IN ('image', 'video')), workflow TEXT NOT NULL, status TEXT NOT NULL, definition_json TEXT NOT NULL CHECK (json_valid(definition_json)), provenance_json TEXT NOT NULL CHECK (json_valid(provenance_json)), limitations_json TEXT NOT NULL CHECK (json_valid(limitations_json)), PRIMARY KEY (registry_version, entry_key) )"
+      },
+      {
+        "type": "table",
+        "name": "registry_versions",
+        "tableName": "registry_versions",
+        "sql": "CREATE TABLE registry_versions ( version TEXT PRIMARY KEY, source_hash TEXT NOT NULL, manifest_hash TEXT NOT NULL, verified_at TEXT NOT NULL, status TEXT NOT NULL CHECK (status IN ('current', 'stale', 'invalid', 'experimental')) )"
+      },
+      {
+        "type": "table",
+        "name": "schema_migrations",
+        "tableName": "schema_migrations",
+        "sql": "CREATE TABLE schema_migrations ( version INTEGER PRIMARY KEY, name TEXT NOT NULL, checksum TEXT NOT NULL, applied_at TEXT NOT NULL )"
+      },
+      {
+        "type": "table",
+        "name": "secret_metadata",
+        "tableName": "secret_metadata",
+        "sql": "CREATE TABLE secret_metadata ( id INTEGER PRIMARY KEY CHECK (id = 1), active_source TEXT NOT NULL CHECK (active_source IN ('environment', 'local', 'none')), status TEXT NOT NULL CHECK (status IN ('configured', 'missing', 'unavailable', 'error')), store_kind TEXT NOT NULL CHECK (store_kind IN ('environment', 'os', 'file', 'unavailable')), last_connectivity_at TEXT, last_connectivity_status TEXT, updated_at TEXT NOT NULL )"
+      },
+      {
+        "type": "table",
+        "name": "submission_intents",
+        "tableName": "submission_intents",
+        "sql": "CREATE TABLE submission_intents ( job_id TEXT PRIMARY KEY REFERENCES jobs(id) ON DELETE CASCADE, request_fingerprint TEXT NOT NULL UNIQUE, payload_hash TEXT NOT NULL, state TEXT NOT NULL CHECK (state IN ( 'prepared', 'sending', 'acknowledged', 'unknown', 'rejected' )), transmit_claim_token TEXT, transmit_claim_owner TEXT, claimed_at TEXT, lease_expires_at TEXT, transport_evidence_json TEXT CHECK ( transport_evidence_json IS NULL OR json_valid(transport_evidence_json) ), poyo_task_id TEXT, prepared_at TEXT NOT NULL, sent_at TEXT, resolved_at TEXT, updated_at TEXT NOT NULL )"
+      },
+      {
+        "type": "table",
+        "name": "tags",
+        "tableName": "tags",
+        "sql": "CREATE TABLE tags ( id INTEGER PRIMARY KEY AUTOINCREMENT, normalized_name TEXT NOT NULL UNIQUE, display_name TEXT NOT NULL, created_at TEXT NOT NULL )"
+      },
+      {
+        "type": "table",
+        "name": "work_claims",
+        "tableName": "work_claims",
+        "sql": "CREATE TABLE work_claims ( work_type TEXT NOT NULL CHECK (work_type IN ('poll', 'download', 'cleanup')), work_id TEXT NOT NULL, owner TEXT NOT NULL, token TEXT NOT NULL UNIQUE, acquired_at TEXT NOT NULL, expires_at TEXT NOT NULL, attempt INTEGER NOT NULL DEFAULT 1 CHECK (attempt >= 1), PRIMARY KEY (work_type, work_id) )"
+      }
+    ],
+    "tables": [
+      {
+        "name": "app_settings",
+        "columns": [
+          {
+            "cid": 0,
+            "name": "key",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 1,
+            "hidden": 0
+          },
+          {
+            "cid": 1,
+            "name": "value_version",
+            "type": "INTEGER",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 2,
+            "name": "value_json",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 3,
+            "name": "updated_at",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          }
+        ],
+        "foreignKeys": [],
+        "indexes": [
+          {
+            "name": "sqlite_autoindex_app_settings_1",
+            "unique": 1,
+            "origin": "pk",
+            "partial": 0,
+            "columns": [
+              {
+                "sequence": 0,
+                "columnId": 0,
+                "name": "key",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 1,
+                "columnId": -1,
+                "name": null,
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 0
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "balance_snapshots",
+        "columns": [
+          {
+            "cid": 0,
+            "name": "id",
+            "type": "INTEGER",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 1,
+            "hidden": 0
+          },
+          {
+            "cid": 1,
+            "name": "email",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 2,
+            "name": "credits",
+            "type": "REAL",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 3,
+            "name": "source",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 4,
+            "name": "fetched_at",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          }
+        ],
+        "foreignKeys": [],
+        "indexes": [
+          {
+            "name": "idx_balance_snapshots_date",
+            "unique": 0,
+            "origin": "c",
+            "partial": 0,
+            "columns": [
+              {
+                "sequence": 0,
+                "columnId": 4,
+                "name": "fetched_at",
+                "descending": 1,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 1,
+                "columnId": -1,
+                "name": null,
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 0
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "cleanup_actions",
+        "columns": [
+          {
+            "cid": 0,
+            "name": "id",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 1,
+            "hidden": 0
+          },
+          {
+            "cid": 1,
+            "name": "policy_id",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 2,
+            "name": "action_kind",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 3,
+            "name": "target_id",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 4,
+            "name": "preview_version",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 5,
+            "name": "state",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 6,
+            "name": "due_at",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 7,
+            "name": "safe_result_json",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 8,
+            "name": "created_at",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 9,
+            "name": "executed_at",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          }
+        ],
+        "foreignKeys": [
+          {
+            "id": 0,
+            "sequence": 0,
+            "table": "cleanup_policies",
+            "from": "policy_id",
+            "to": "id",
+            "onUpdate": "NO ACTION",
+            "onDelete": "NO ACTION",
+            "match": "NONE"
+          }
+        ],
+        "indexes": [
+          {
+            "name": "idx_cleanup_actions_due",
+            "unique": 0,
+            "origin": "c",
+            "partial": 0,
+            "columns": [
+              {
+                "sequence": 0,
+                "columnId": 5,
+                "name": "state",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 1,
+                "columnId": 6,
+                "name": "due_at",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 2,
+                "columnId": -1,
+                "name": null,
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 0
+              }
+            ]
+          },
+          {
+            "name": "sqlite_autoindex_cleanup_actions_1",
+            "unique": 1,
+            "origin": "pk",
+            "partial": 0,
+            "columns": [
+              {
+                "sequence": 0,
+                "columnId": 0,
+                "name": "id",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 1,
+                "columnId": -1,
+                "name": null,
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 0
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "cleanup_attempts",
+        "columns": [
+          {
+            "cid": 0,
+            "name": "id",
+            "type": "INTEGER",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 1,
+            "hidden": 0
+          },
+          {
+            "cid": 1,
+            "name": "action_id",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 2,
+            "name": "attempt",
+            "type": "INTEGER",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 3,
+            "name": "status",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 4,
+            "name": "safe_result_json",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 5,
+            "name": "started_at",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 6,
+            "name": "completed_at",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          }
+        ],
+        "foreignKeys": [
+          {
+            "id": 0,
+            "sequence": 0,
+            "table": "cleanup_actions",
+            "from": "action_id",
+            "to": "id",
+            "onUpdate": "NO ACTION",
+            "onDelete": "CASCADE",
+            "match": "NONE"
+          }
+        ],
+        "indexes": [
+          {
+            "name": "idx_cleanup_attempts_action",
+            "unique": 0,
+            "origin": "c",
+            "partial": 0,
+            "columns": [
+              {
+                "sequence": 0,
+                "columnId": 1,
+                "name": "action_id",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 1,
+                "columnId": 2,
+                "name": "attempt",
+                "descending": 1,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 2,
+                "columnId": -1,
+                "name": null,
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 0
+              }
+            ]
+          },
+          {
+            "name": "sqlite_autoindex_cleanup_attempts_1",
+            "unique": 1,
+            "origin": "u",
+            "partial": 0,
+            "columns": [
+              {
+                "sequence": 0,
+                "columnId": 1,
+                "name": "action_id",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 1,
+                "columnId": 2,
+                "name": "attempt",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 2,
+                "columnId": -1,
+                "name": null,
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 0
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "cleanup_policies",
+        "columns": [
+          {
+            "cid": 0,
+            "name": "id",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 1,
+            "hidden": 0
+          },
+          {
+            "cid": 1,
+            "name": "policy_version",
+            "type": "INTEGER",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 2,
+            "name": "enabled",
+            "type": "INTEGER",
+            "notNull": 1,
+            "defaultValue": "0",
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 3,
+            "name": "policy_json",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 4,
+            "name": "created_at",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 5,
+            "name": "updated_at",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          }
+        ],
+        "foreignKeys": [],
+        "indexes": [
+          {
+            "name": "sqlite_autoindex_cleanup_policies_1",
+            "unique": 1,
+            "origin": "pk",
+            "partial": 0,
+            "columns": [
+              {
+                "sequence": 0,
+                "columnId": 0,
+                "name": "id",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 1,
+                "columnId": -1,
+                "name": null,
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 0
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "cleanup_previews",
+        "columns": [
+          {
+            "cid": 0,
+            "name": "token",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 1,
+            "hidden": 0
+          },
+          {
+            "cid": 1,
+            "name": "policy_id",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 2,
+            "name": "action_kind",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 3,
+            "name": "policy_hash",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 4,
+            "name": "candidate_hash",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 5,
+            "name": "candidate_count",
+            "type": "INTEGER",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 6,
+            "name": "total_bytes",
+            "type": "INTEGER",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 7,
+            "name": "created_at",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 8,
+            "name": "applied_at",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          }
+        ],
+        "foreignKeys": [
+          {
+            "id": 0,
+            "sequence": 0,
+            "table": "cleanup_policies",
+            "from": "policy_id",
+            "to": "id",
+            "onUpdate": "NO ACTION",
+            "onDelete": "NO ACTION",
+            "match": "NONE"
+          }
+        ],
+        "indexes": [
+          {
+            "name": "idx_cleanup_previews_created",
+            "unique": 0,
+            "origin": "c",
+            "partial": 0,
+            "columns": [
+              {
+                "sequence": 0,
+                "columnId": 7,
+                "name": "created_at",
+                "descending": 1,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 1,
+                "columnId": -1,
+                "name": null,
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 0
+              }
+            ]
+          },
+          {
+            "name": "sqlite_autoindex_cleanup_previews_1",
+            "unique": 1,
+            "origin": "pk",
+            "partial": 0,
+            "columns": [
+              {
+                "sequence": 0,
+                "columnId": 0,
+                "name": "token",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 1,
+                "columnId": -1,
+                "name": null,
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 0
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "download_attempts",
+        "columns": [
+          {
+            "cid": 0,
+            "name": "id",
+            "type": "INTEGER",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 1,
+            "hidden": 0
+          },
+          {
+            "cid": 1,
+            "name": "output_id",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 2,
+            "name": "attempt",
+            "type": "INTEGER",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 3,
+            "name": "status",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 4,
+            "name": "bytes_received",
+            "type": "INTEGER",
+            "notNull": 1,
+            "defaultValue": "0",
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 5,
+            "name": "safe_error_json",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 6,
+            "name": "started_at",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 7,
+            "name": "completed_at",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          }
+        ],
+        "foreignKeys": [
+          {
+            "id": 0,
+            "sequence": 0,
+            "table": "job_outputs",
+            "from": "output_id",
+            "to": "id",
+            "onUpdate": "NO ACTION",
+            "onDelete": "CASCADE",
+            "match": "NONE"
+          }
+        ],
+        "indexes": [
+          {
+            "name": "idx_download_attempts_status",
+            "unique": 0,
+            "origin": "c",
+            "partial": 0,
+            "columns": [
+              {
+                "sequence": 0,
+                "columnId": 3,
+                "name": "status",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 1,
+                "columnId": 6,
+                "name": "started_at",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 2,
+                "columnId": -1,
+                "name": null,
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 0
+              }
+            ]
+          },
+          {
+            "name": "sqlite_autoindex_download_attempts_1",
+            "unique": 1,
+            "origin": "u",
+            "partial": 0,
+            "columns": [
+              {
+                "sequence": 0,
+                "columnId": 1,
+                "name": "output_id",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 1,
+                "columnId": 2,
+                "name": "attempt",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 2,
+                "columnId": -1,
+                "name": null,
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 0
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "job_events",
+        "columns": [
+          {
+            "cid": 0,
+            "name": "event_id",
+            "type": "INTEGER",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 1,
+            "hidden": 0
+          },
+          {
+            "cid": 1,
+            "name": "job_id",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 2,
+            "name": "event_type",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 3,
+            "name": "local_phase",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 4,
+            "name": "remote_status_raw",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 5,
+            "name": "remote_status",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 6,
+            "name": "failure_domain",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 7,
+            "name": "progress",
+            "type": "REAL",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 8,
+            "name": "safe_payload_json",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 9,
+            "name": "observed_at",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          }
+        ],
+        "foreignKeys": [
+          {
+            "id": 0,
+            "sequence": 0,
+            "table": "jobs",
+            "from": "job_id",
+            "to": "id",
+            "onUpdate": "NO ACTION",
+            "onDelete": "CASCADE",
+            "match": "NONE"
+          }
+        ],
+        "indexes": [
+          {
+            "name": "idx_job_events_job_cursor",
+            "unique": 0,
+            "origin": "c",
+            "partial": 0,
+            "columns": [
+              {
+                "sequence": 0,
+                "columnId": 1,
+                "name": "job_id",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 1,
+                "columnId": 0,
+                "name": "event_id",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 2,
+                "columnId": -1,
+                "name": null,
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 0
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "job_inputs",
+        "columns": [
+          {
+            "cid": 0,
+            "name": "job_id",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 1,
+            "hidden": 0
+          },
+          {
+            "cid": 1,
+            "name": "role",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 2,
+            "hidden": 0
+          },
+          {
+            "cid": 2,
+            "name": "input_order",
+            "type": "INTEGER",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 3,
+            "hidden": 0
+          },
+          {
+            "cid": 3,
+            "name": "media_kind",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 4,
+            "name": "local_reference",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 5,
+            "name": "source_url",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 6,
+            "name": "upload_url",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 7,
+            "name": "metadata_json",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 8,
+            "name": "checksum",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 9,
+            "name": "availability",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": "'available'",
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 10,
+            "name": "managed_source_id",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          }
+        ],
+        "foreignKeys": [
+          {
+            "id": 0,
+            "sequence": 0,
+            "table": "managed_sources",
+            "from": "managed_source_id",
+            "to": "id",
+            "onUpdate": "NO ACTION",
+            "onDelete": "SET NULL",
+            "match": "NONE"
+          },
+          {
+            "id": 1,
+            "sequence": 0,
+            "table": "jobs",
+            "from": "job_id",
+            "to": "id",
+            "onUpdate": "NO ACTION",
+            "onDelete": "CASCADE",
+            "match": "NONE"
+          }
+        ],
+        "indexes": [
+          {
+            "name": "idx_job_inputs_kind",
+            "unique": 0,
+            "origin": "c",
+            "partial": 0,
+            "columns": [
+              {
+                "sequence": 0,
+                "columnId": 3,
+                "name": "media_kind",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 1,
+                "columnId": 0,
+                "name": "job_id",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 2,
+                "columnId": -1,
+                "name": null,
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 0
+              }
+            ]
+          },
+          {
+            "name": "idx_job_inputs_managed_source",
+            "unique": 0,
+            "origin": "c",
+            "partial": 0,
+            "columns": [
+              {
+                "sequence": 0,
+                "columnId": 10,
+                "name": "managed_source_id",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 1,
+                "columnId": 0,
+                "name": "job_id",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 2,
+                "columnId": -1,
+                "name": null,
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 0
+              }
+            ]
+          },
+          {
+            "name": "sqlite_autoindex_job_inputs_1",
+            "unique": 1,
+            "origin": "pk",
+            "partial": 0,
+            "columns": [
+              {
+                "sequence": 0,
+                "columnId": 0,
+                "name": "job_id",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 1,
+                "columnId": 1,
+                "name": "role",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 2,
+                "columnId": 2,
+                "name": "input_order",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 3,
+                "columnId": -1,
+                "name": null,
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 0
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "job_outputs",
+        "columns": [
+          {
+            "cid": 0,
+            "name": "id",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 1,
+            "hidden": 0
+          },
+          {
+            "cid": 1,
+            "name": "job_id",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 2,
+            "name": "output_order",
+            "type": "INTEGER",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 3,
+            "name": "media_kind",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 4,
+            "name": "remote_url",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 5,
+            "name": "remote_expires_at",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 6,
+            "name": "remote_metadata_json",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 7,
+            "name": "local_path",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 8,
+            "name": "content_type",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 9,
+            "name": "byte_size",
+            "type": "INTEGER",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 10,
+            "name": "checksum",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 11,
+            "name": "signature",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 12,
+            "name": "aspect_ratio",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 13,
+            "name": "download_state",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": "'pending'",
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 14,
+            "name": "favorite",
+            "type": "INTEGER",
+            "notNull": 1,
+            "defaultValue": "0",
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 15,
+            "name": "pinned",
+            "type": "INTEGER",
+            "notNull": 1,
+            "defaultValue": "0",
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 16,
+            "name": "created_at",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 17,
+            "name": "verified_at",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 18,
+            "name": "deleted_at",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 19,
+            "name": "pixel_width",
+            "type": "INTEGER",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 20,
+            "name": "pixel_height",
+            "type": "INTEGER",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          }
+        ],
+        "foreignKeys": [
+          {
+            "id": 0,
+            "sequence": 0,
+            "table": "jobs",
+            "from": "job_id",
+            "to": "id",
+            "onUpdate": "NO ACTION",
+            "onDelete": "CASCADE",
+            "match": "NONE"
+          }
+        ],
+        "indexes": [
+          {
+            "name": "idx_job_outputs_job",
+            "unique": 0,
+            "origin": "c",
+            "partial": 0,
+            "columns": [
+              {
+                "sequence": 0,
+                "columnId": 1,
+                "name": "job_id",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 1,
+                "columnId": 2,
+                "name": "output_order",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 2,
+                "columnId": -1,
+                "name": null,
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 0
+              }
+            ]
+          },
+          {
+            "name": "idx_job_outputs_library",
+            "unique": 0,
+            "origin": "c",
+            "partial": 0,
+            "columns": [
+              {
+                "sequence": 0,
+                "columnId": 3,
+                "name": "media_kind",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 1,
+                "columnId": 13,
+                "name": "download_state",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 2,
+                "columnId": 14,
+                "name": "favorite",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 3,
+                "columnId": 16,
+                "name": "created_at",
+                "descending": 1,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 4,
+                "columnId": -1,
+                "name": null,
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 0
+              }
+            ]
+          },
+          {
+            "name": "sqlite_autoindex_job_outputs_1",
+            "unique": 1,
+            "origin": "pk",
+            "partial": 0,
+            "columns": [
+              {
+                "sequence": 0,
+                "columnId": 0,
+                "name": "id",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 1,
+                "columnId": -1,
+                "name": null,
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 0
+              }
+            ]
+          },
+          {
+            "name": "sqlite_autoindex_job_outputs_2",
+            "unique": 1,
+            "origin": "u",
+            "partial": 0,
+            "columns": [
+              {
+                "sequence": 0,
+                "columnId": 1,
+                "name": "job_id",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 1,
+                "columnId": 2,
+                "name": "output_order",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 2,
+                "columnId": -1,
+                "name": null,
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 0
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "job_tags",
+        "columns": [
+          {
+            "cid": 0,
+            "name": "job_id",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 1,
+            "hidden": 0
+          },
+          {
+            "cid": 1,
+            "name": "tag_id",
+            "type": "INTEGER",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 2,
+            "hidden": 0
+          }
+        ],
+        "foreignKeys": [
+          {
+            "id": 0,
+            "sequence": 0,
+            "table": "tags",
+            "from": "tag_id",
+            "to": "id",
+            "onUpdate": "NO ACTION",
+            "onDelete": "CASCADE",
+            "match": "NONE"
+          },
+          {
+            "id": 1,
+            "sequence": 0,
+            "table": "jobs",
+            "from": "job_id",
+            "to": "id",
+            "onUpdate": "NO ACTION",
+            "onDelete": "CASCADE",
+            "match": "NONE"
+          }
+        ],
+        "indexes": [
+          {
+            "name": "idx_job_tags_tag",
+            "unique": 0,
+            "origin": "c",
+            "partial": 0,
+            "columns": [
+              {
+                "sequence": 0,
+                "columnId": 1,
+                "name": "tag_id",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 1,
+                "columnId": 0,
+                "name": "job_id",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 2,
+                "columnId": -1,
+                "name": null,
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 0
+              }
+            ]
+          },
+          {
+            "name": "sqlite_autoindex_job_tags_1",
+            "unique": 1,
+            "origin": "pk",
+            "partial": 0,
+            "columns": [
+              {
+                "sequence": 0,
+                "columnId": 0,
+                "name": "job_id",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 1,
+                "columnId": 1,
+                "name": "tag_id",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 2,
+                "columnId": -1,
+                "name": null,
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 0
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "jobs",
+        "columns": [
+          {
+            "cid": 0,
+            "name": "id",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 1,
+            "hidden": 0
+          },
+          {
+            "cid": 1,
+            "name": "registry_version",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 2,
+            "name": "entry_key",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 3,
+            "name": "workflow",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 4,
+            "name": "public_model_id",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 5,
+            "name": "local_phase",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 6,
+            "name": "remote_status_raw",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 7,
+            "name": "remote_status",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": "'unknown'",
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 8,
+            "name": "failure_domain",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": "'none'",
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 9,
+            "name": "attention_code",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 10,
+            "name": "poyo_task_id",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 11,
+            "name": "progress",
+            "type": "REAL",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 12,
+            "name": "guided_request_json",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 13,
+            "name": "actual_payload_json",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 14,
+            "name": "expert_diff_json",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 15,
+            "name": "estimated_credits",
+            "type": "REAL",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 16,
+            "name": "actual_credits",
+            "type": "REAL",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 17,
+            "name": "prompt_text",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 18,
+            "name": "search_text",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 19,
+            "name": "correlation_id",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 20,
+            "name": "retry_of_job_id",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 21,
+            "name": "next_poll_at",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 22,
+            "name": "last_polled_at",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 23,
+            "name": "created_at",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 24,
+            "name": "updated_at",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 25,
+            "name": "started_at",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 26,
+            "name": "completed_at",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          }
+        ],
+        "foreignKeys": [
+          {
+            "id": 0,
+            "sequence": 0,
+            "table": "registry_entries",
+            "from": "registry_version",
+            "to": "registry_version",
+            "onUpdate": "NO ACTION",
+            "onDelete": "NO ACTION",
+            "match": "NONE"
+          },
+          {
+            "id": 0,
+            "sequence": 1,
+            "table": "registry_entries",
+            "from": "entry_key",
+            "to": "entry_key",
+            "onUpdate": "NO ACTION",
+            "onDelete": "NO ACTION",
+            "match": "NONE"
+          },
+          {
+            "id": 1,
+            "sequence": 0,
+            "table": "jobs",
+            "from": "retry_of_job_id",
+            "to": "id",
+            "onUpdate": "NO ACTION",
+            "onDelete": "NO ACTION",
+            "match": "NONE"
+          }
+        ],
+        "indexes": [
+          {
+            "name": "idx_jobs_library_search",
+            "unique": 0,
+            "origin": "c",
+            "partial": 0,
+            "columns": [
+              {
+                "sequence": 0,
+                "columnId": 17,
+                "name": "prompt_text",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 1,
+                "columnId": 18,
+                "name": "search_text",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 2,
+                "columnId": 23,
+                "name": "created_at",
+                "descending": 1,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 3,
+                "columnId": -1,
+                "name": null,
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 0
+              }
+            ]
+          },
+          {
+            "name": "idx_jobs_lifecycle",
+            "unique": 0,
+            "origin": "c",
+            "partial": 0,
+            "columns": [
+              {
+                "sequence": 0,
+                "columnId": 5,
+                "name": "local_phase",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 1,
+                "columnId": 21,
+                "name": "next_poll_at",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 2,
+                "columnId": 24,
+                "name": "updated_at",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 3,
+                "columnId": -1,
+                "name": null,
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 0
+              }
+            ]
+          },
+          {
+            "name": "idx_jobs_model_workflow_date",
+            "unique": 0,
+            "origin": "c",
+            "partial": 0,
+            "columns": [
+              {
+                "sequence": 0,
+                "columnId": 4,
+                "name": "public_model_id",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 1,
+                "columnId": 3,
+                "name": "workflow",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 2,
+                "columnId": 23,
+                "name": "created_at",
+                "descending": 1,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 3,
+                "columnId": -1,
+                "name": null,
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 0
+              }
+            ]
+          },
+          {
+            "name": "idx_jobs_poyo_task",
+            "unique": 1,
+            "origin": "c",
+            "partial": 1,
+            "columns": [
+              {
+                "sequence": 0,
+                "columnId": 10,
+                "name": "poyo_task_id",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 1,
+                "columnId": -1,
+                "name": null,
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 0
+              }
+            ]
+          },
+          {
+            "name": "idx_jobs_retry",
+            "unique": 0,
+            "origin": "c",
+            "partial": 0,
+            "columns": [
+              {
+                "sequence": 0,
+                "columnId": 20,
+                "name": "retry_of_job_id",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 1,
+                "columnId": -1,
+                "name": null,
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 0
+              }
+            ]
+          },
+          {
+            "name": "sqlite_autoindex_jobs_1",
+            "unique": 1,
+            "origin": "pk",
+            "partial": 0,
+            "columns": [
+              {
+                "sequence": 0,
+                "columnId": 0,
+                "name": "id",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 1,
+                "columnId": -1,
+                "name": null,
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 0
+              }
+            ]
+          },
+          {
+            "name": "sqlite_autoindex_jobs_2",
+            "unique": 1,
+            "origin": "u",
+            "partial": 0,
+            "columns": [
+              {
+                "sequence": 0,
+                "columnId": 10,
+                "name": "poyo_task_id",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 1,
+                "columnId": -1,
+                "name": null,
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 0
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "managed_sources",
+        "columns": [
+          {
+            "cid": 0,
+            "name": "id",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 1,
+            "hidden": 0
+          },
+          {
+            "cid": 1,
+            "name": "original_name",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 2,
+            "name": "media_kind",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 3,
+            "name": "mime_type",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 4,
+            "name": "byte_size",
+            "type": "INTEGER",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 5,
+            "name": "checksum",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 6,
+            "name": "signature",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 7,
+            "name": "relative_path",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 8,
+            "name": "availability",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": "'available'",
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 9,
+            "name": "created_at",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 10,
+            "name": "last_verified_at",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 11,
+            "name": "missing_at",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 12,
+            "name": "deleted_at",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          }
+        ],
+        "foreignKeys": [],
+        "indexes": [
+          {
+            "name": "idx_managed_sources_retention",
+            "unique": 0,
+            "origin": "c",
+            "partial": 0,
+            "columns": [
+              {
+                "sequence": 0,
+                "columnId": 8,
+                "name": "availability",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 1,
+                "columnId": 9,
+                "name": "created_at",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 2,
+                "columnId": 0,
+                "name": "id",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 3,
+                "columnId": -1,
+                "name": null,
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 0
+              }
+            ]
+          },
+          {
+            "name": "sqlite_autoindex_managed_sources_1",
+            "unique": 1,
+            "origin": "pk",
+            "partial": 0,
+            "columns": [
+              {
+                "sequence": 0,
+                "columnId": 0,
+                "name": "id",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 1,
+                "columnId": -1,
+                "name": null,
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 0
+              }
+            ]
+          },
+          {
+            "name": "sqlite_autoindex_managed_sources_2",
+            "unique": 1,
+            "origin": "u",
+            "partial": 0,
+            "columns": [
+              {
+                "sequence": 0,
+                "columnId": 7,
+                "name": "relative_path",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 1,
+                "columnId": -1,
+                "name": null,
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 0
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "model_preferences",
+        "columns": [
+          {
+            "cid": 0,
+            "name": "entry_key",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 1,
+            "hidden": 0
+          },
+          {
+            "cid": 1,
+            "name": "favorite",
+            "type": "INTEGER",
+            "notNull": 1,
+            "defaultValue": "0",
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 2,
+            "name": "favorited_at",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 3,
+            "name": "last_used_at",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          }
+        ],
+        "foreignKeys": [],
+        "indexes": [
+          {
+            "name": "idx_model_preferences_recent",
+            "unique": 0,
+            "origin": "c",
+            "partial": 0,
+            "columns": [
+              {
+                "sequence": 0,
+                "columnId": 1,
+                "name": "favorite",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 1,
+                "columnId": 3,
+                "name": "last_used_at",
+                "descending": 1,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 2,
+                "columnId": -1,
+                "name": null,
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 0
+              }
+            ]
+          },
+          {
+            "name": "sqlite_autoindex_model_preferences_1",
+            "unique": 1,
+            "origin": "pk",
+            "partial": 0,
+            "columns": [
+              {
+                "sequence": 0,
+                "columnId": 0,
+                "name": "entry_key",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 1,
+                "columnId": -1,
+                "name": null,
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 0
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "presets",
+        "columns": [
+          {
+            "cid": 0,
+            "name": "id",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 1,
+            "hidden": 0
+          },
+          {
+            "cid": 1,
+            "name": "registry_version",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 2,
+            "name": "entry_key",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 3,
+            "name": "workflow",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 4,
+            "name": "name",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 5,
+            "name": "description",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 6,
+            "name": "values_version",
+            "type": "INTEGER",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 7,
+            "name": "values_json",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 8,
+            "name": "created_at",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 9,
+            "name": "updated_at",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          }
+        ],
+        "foreignKeys": [],
+        "indexes": [
+          {
+            "name": "idx_presets_model_workflow",
+            "unique": 0,
+            "origin": "c",
+            "partial": 0,
+            "columns": [
+              {
+                "sequence": 0,
+                "columnId": 2,
+                "name": "entry_key",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 1,
+                "columnId": 3,
+                "name": "workflow",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 2,
+                "columnId": 9,
+                "name": "updated_at",
+                "descending": 1,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 3,
+                "columnId": -1,
+                "name": null,
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 0
+              }
+            ]
+          },
+          {
+            "name": "sqlite_autoindex_presets_1",
+            "unique": 1,
+            "origin": "pk",
+            "partial": 0,
+            "columns": [
+              {
+                "sequence": 0,
+                "columnId": 0,
+                "name": "id",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 1,
+                "columnId": -1,
+                "name": null,
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 0
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "registry_audits",
+        "columns": [
+          {
+            "cid": 0,
+            "name": "audit_id",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 1,
+            "hidden": 0
+          },
+          {
+            "cid": 1,
+            "name": "old_version",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 2,
+            "name": "new_version",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 3,
+            "name": "result",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 4,
+            "name": "report_json",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 5,
+            "name": "started_at",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 6,
+            "name": "completed_at",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          }
+        ],
+        "foreignKeys": [
+          {
+            "id": 0,
+            "sequence": 0,
+            "table": "registry_versions",
+            "from": "new_version",
+            "to": "version",
+            "onUpdate": "NO ACTION",
+            "onDelete": "NO ACTION",
+            "match": "NONE"
+          },
+          {
+            "id": 1,
+            "sequence": 0,
+            "table": "registry_versions",
+            "from": "old_version",
+            "to": "version",
+            "onUpdate": "NO ACTION",
+            "onDelete": "NO ACTION",
+            "match": "NONE"
+          }
+        ],
+        "indexes": [
+          {
+            "name": "sqlite_autoindex_registry_audits_1",
+            "unique": 1,
+            "origin": "pk",
+            "partial": 0,
+            "columns": [
+              {
+                "sequence": 0,
+                "columnId": 0,
+                "name": "audit_id",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 1,
+                "columnId": -1,
+                "name": null,
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 0
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "registry_entries",
+        "columns": [
+          {
+            "cid": 0,
+            "name": "registry_version",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 1,
+            "hidden": 0
+          },
+          {
+            "cid": 1,
+            "name": "entry_key",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 2,
+            "hidden": 0
+          },
+          {
+            "cid": 2,
+            "name": "public_model_id",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 3,
+            "name": "provider",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 4,
+            "name": "modality",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 5,
+            "name": "workflow",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 6,
+            "name": "status",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 7,
+            "name": "definition_json",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 8,
+            "name": "provenance_json",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 9,
+            "name": "limitations_json",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          }
+        ],
+        "foreignKeys": [
+          {
+            "id": 0,
+            "sequence": 0,
+            "table": "registry_versions",
+            "from": "registry_version",
+            "to": "version",
+            "onUpdate": "NO ACTION",
+            "onDelete": "CASCADE",
+            "match": "NONE"
+          }
+        ],
+        "indexes": [
+          {
+            "name": "idx_registry_entries_selector",
+            "unique": 0,
+            "origin": "c",
+            "partial": 0,
+            "columns": [
+              {
+                "sequence": 0,
+                "columnId": 3,
+                "name": "provider",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 1,
+                "columnId": 4,
+                "name": "modality",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 2,
+                "columnId": 5,
+                "name": "workflow",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 3,
+                "columnId": 6,
+                "name": "status",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 4,
+                "columnId": -1,
+                "name": null,
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 0
+              }
+            ]
+          },
+          {
+            "name": "sqlite_autoindex_registry_entries_1",
+            "unique": 1,
+            "origin": "pk",
+            "partial": 0,
+            "columns": [
+              {
+                "sequence": 0,
+                "columnId": 0,
+                "name": "registry_version",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 1,
+                "columnId": 1,
+                "name": "entry_key",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 2,
+                "columnId": -1,
+                "name": null,
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 0
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "registry_versions",
+        "columns": [
+          {
+            "cid": 0,
+            "name": "version",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 1,
+            "hidden": 0
+          },
+          {
+            "cid": 1,
+            "name": "source_hash",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 2,
+            "name": "manifest_hash",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 3,
+            "name": "verified_at",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 4,
+            "name": "status",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          }
+        ],
+        "foreignKeys": [],
+        "indexes": [
+          {
+            "name": "sqlite_autoindex_registry_versions_1",
+            "unique": 1,
+            "origin": "pk",
+            "partial": 0,
+            "columns": [
+              {
+                "sequence": 0,
+                "columnId": 0,
+                "name": "version",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 1,
+                "columnId": -1,
+                "name": null,
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 0
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "schema_migrations",
+        "columns": [
+          {
+            "cid": 0,
+            "name": "version",
+            "type": "INTEGER",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 1,
+            "hidden": 0
+          },
+          {
+            "cid": 1,
+            "name": "name",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 2,
+            "name": "checksum",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 3,
+            "name": "applied_at",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          }
+        ],
+        "foreignKeys": [],
+        "indexes": []
+      },
+      {
+        "name": "secret_metadata",
+        "columns": [
+          {
+            "cid": 0,
+            "name": "id",
+            "type": "INTEGER",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 1,
+            "hidden": 0
+          },
+          {
+            "cid": 1,
+            "name": "active_source",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 2,
+            "name": "status",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 3,
+            "name": "store_kind",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 4,
+            "name": "last_connectivity_at",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 5,
+            "name": "last_connectivity_status",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 6,
+            "name": "updated_at",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          }
+        ],
+        "foreignKeys": [],
+        "indexes": []
+      },
+      {
+        "name": "submission_intents",
+        "columns": [
+          {
+            "cid": 0,
+            "name": "job_id",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 1,
+            "hidden": 0
+          },
+          {
+            "cid": 1,
+            "name": "request_fingerprint",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 2,
+            "name": "payload_hash",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 3,
+            "name": "state",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 4,
+            "name": "transmit_claim_token",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 5,
+            "name": "transmit_claim_owner",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 6,
+            "name": "claimed_at",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 7,
+            "name": "lease_expires_at",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 8,
+            "name": "transport_evidence_json",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 9,
+            "name": "poyo_task_id",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 10,
+            "name": "prepared_at",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 11,
+            "name": "sent_at",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 12,
+            "name": "resolved_at",
+            "type": "TEXT",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 13,
+            "name": "updated_at",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          }
+        ],
+        "foreignKeys": [
+          {
+            "id": 0,
+            "sequence": 0,
+            "table": "jobs",
+            "from": "job_id",
+            "to": "id",
+            "onUpdate": "NO ACTION",
+            "onDelete": "CASCADE",
+            "match": "NONE"
+          }
+        ],
+        "indexes": [
+          {
+            "name": "idx_submission_intents_state",
+            "unique": 0,
+            "origin": "c",
+            "partial": 0,
+            "columns": [
+              {
+                "sequence": 0,
+                "columnId": 3,
+                "name": "state",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 1,
+                "columnId": 7,
+                "name": "lease_expires_at",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 2,
+                "columnId": -1,
+                "name": null,
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 0
+              }
+            ]
+          },
+          {
+            "name": "sqlite_autoindex_submission_intents_1",
+            "unique": 1,
+            "origin": "pk",
+            "partial": 0,
+            "columns": [
+              {
+                "sequence": 0,
+                "columnId": 0,
+                "name": "job_id",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 1,
+                "columnId": -1,
+                "name": null,
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 0
+              }
+            ]
+          },
+          {
+            "name": "sqlite_autoindex_submission_intents_2",
+            "unique": 1,
+            "origin": "u",
+            "partial": 0,
+            "columns": [
+              {
+                "sequence": 0,
+                "columnId": 1,
+                "name": "request_fingerprint",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 1,
+                "columnId": -1,
+                "name": null,
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 0
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "tags",
+        "columns": [
+          {
+            "cid": 0,
+            "name": "id",
+            "type": "INTEGER",
+            "notNull": 0,
+            "defaultValue": null,
+            "primaryKeyOrder": 1,
+            "hidden": 0
+          },
+          {
+            "cid": 1,
+            "name": "normalized_name",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 2,
+            "name": "display_name",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 3,
+            "name": "created_at",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          }
+        ],
+        "foreignKeys": [],
+        "indexes": [
+          {
+            "name": "sqlite_autoindex_tags_1",
+            "unique": 1,
+            "origin": "u",
+            "partial": 0,
+            "columns": [
+              {
+                "sequence": 0,
+                "columnId": 1,
+                "name": "normalized_name",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 1,
+                "columnId": -1,
+                "name": null,
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 0
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "work_claims",
+        "columns": [
+          {
+            "cid": 0,
+            "name": "work_type",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 1,
+            "hidden": 0
+          },
+          {
+            "cid": 1,
+            "name": "work_id",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 2,
+            "hidden": 0
+          },
+          {
+            "cid": 2,
+            "name": "owner",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 3,
+            "name": "token",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 4,
+            "name": "acquired_at",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 5,
+            "name": "expires_at",
+            "type": "TEXT",
+            "notNull": 1,
+            "defaultValue": null,
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 6,
+            "name": "attempt",
+            "type": "INTEGER",
+            "notNull": 1,
+            "defaultValue": "1",
+            "primaryKeyOrder": 0,
+            "hidden": 0
+          }
+        ],
+        "foreignKeys": [],
+        "indexes": [
+          {
+            "name": "idx_work_claims_expiry",
+            "unique": 0,
+            "origin": "c",
+            "partial": 0,
+            "columns": [
+              {
+                "sequence": 0,
+                "columnId": 0,
+                "name": "work_type",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 1,
+                "columnId": 5,
+                "name": "expires_at",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 2,
+                "columnId": -1,
+                "name": null,
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 0
+              }
+            ]
+          },
+          {
+            "name": "sqlite_autoindex_work_claims_1",
+            "unique": 1,
+            "origin": "u",
+            "partial": 0,
+            "columns": [
+              {
+                "sequence": 0,
+                "columnId": 3,
+                "name": "token",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 1,
+                "columnId": -1,
+                "name": null,
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 0
+              }
+            ]
+          },
+          {
+            "name": "sqlite_autoindex_work_claims_2",
+            "unique": 1,
+            "origin": "pk",
+            "partial": 0,
+            "columns": [
+              {
+                "sequence": 0,
+                "columnId": 0,
+                "name": "work_type",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 1,
+                "columnId": 1,
+                "name": "work_id",
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 1
+              },
+              {
+                "sequence": 2,
+                "columnId": -1,
+                "name": null,
+                "descending": 0,
+                "collation": "BINARY",
+                "key": 0
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "safetyPragmas": {
+      "foreignKeys": 1,
+      "journalMode": "wal",
+      "synchronous": 1,
+      "busyTimeout": 5000
+    }
+  }
+}

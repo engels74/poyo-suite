@@ -1,3 +1,7 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+
 const host = '127.0.0.1';
 const startupTimeoutMs = 15_000;
 const requestTimeoutMs = 1_000;
@@ -72,13 +76,20 @@ if (!(await entrypoint.exists())) {
 
 const port = reserveLoopbackPort();
 const url = `http://${host}:${port}/`;
+const origin = url.slice(0, -1);
+const smokeDirectory = await mkdtemp(join(tmpdir(), 'poyo-production-smoke-'));
 const server = Bun.spawn({
   cmd: [process.execPath, './build/index.js'],
   env: {
     ...Bun.env,
     HOST: host,
-    ORIGIN: url.slice(0, -1),
-    PORT: String(port)
+    ORIGIN: origin,
+    PORT: String(port),
+    POYO_API_KEY: '',
+    PLS_APP_DATA_DIR: join(smokeDirectory, 'data'),
+    PLS_DATABASE_PATH: '',
+    PLS_MEDIA_DIR: '',
+    PLS_LOG_DIR: ''
   },
   stdout: 'pipe',
   stderr: 'pipe'
@@ -113,13 +124,33 @@ try {
     });
   }
 
+  const welcomeBody = await response.text();
+  if (
+    new URL(response.url).pathname !== '/welcome' ||
+    !welcomeBody.includes('Poyo Local Studio') ||
+    !welcomeBody.includes('Welcome to Poyo Local Studio')
+  ) {
+    throw new Error('Fresh production startup did not enter onboarding.');
+  }
+
+  const onboardingResponse = await fetch(new URL('/api/onboarding', url), {
+    method: 'PUT',
+    headers: {
+      'content-type': 'application/json',
+      origin,
+      'sec-fetch-site': 'same-origin'
+    },
+    body: JSON.stringify({ dismiss: true }),
+    signal: AbortSignal.timeout(requestTimeoutMs)
+  });
+  if (!onboardingResponse.ok) {
+    throw new Error(`Production onboarding responded with HTTP ${onboardingResponse.status}.`);
+  }
+
   for (const [pathname, marker] of routeChecks) {
-    const routeResponse =
-      pathname === '/'
-        ? response
-        : await fetch(new URL(pathname, url), {
-            signal: AbortSignal.timeout(requestTimeoutMs)
-          });
+    const routeResponse = await fetch(new URL(pathname, url), {
+      signal: AbortSignal.timeout(requestTimeoutMs)
+    });
 
     if (!routeResponse.ok) {
       throw new Error(`Production route ${pathname} responded with HTTP ${routeResponse.status}.`);
@@ -133,12 +164,21 @@ try {
 
   inspectListener(server.pid, port);
   console.log(
-    `Production smoke passed: ${routeChecks.length} routes responded on the loopback listener ${url}.`
+    `Production smoke passed: onboarding and ${routeChecks.length} routes responded on the loopback listener ${url}.`
   );
 } catch (error) {
   failure = error;
 } finally {
-  await stopProcess(server);
+  try {
+    await stopProcess(server);
+  } catch (error) {
+    failure ??= error;
+  }
+  try {
+    await rm(smokeDirectory, { recursive: true, force: true });
+  } catch (error) {
+    failure ??= error;
+  }
 }
 
 const [serverStdout, serverStderr] = await Promise.all([stdout, stderr]);

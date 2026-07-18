@@ -36,6 +36,8 @@ const browserStageBoundMs = 15_000;
 const productStageBoundMs = 5_000;
 const cleanupStageBoundMs = 5_000;
 const screenshotStageBoundMs = 2_000;
+const processSnapshotAttempts = 8;
+const processSnapshotRetryDelayMs = 100;
 
 type StageRunner = <T>(
   name: string,
@@ -51,6 +53,7 @@ interface BrowserOwner {
   launchAttempted: boolean;
   pid: number | null;
   ownedPids: number[];
+  processDiscoveryErrors: unknown[];
 }
 
 interface BrowserProcessControl {
@@ -63,19 +66,20 @@ interface BrowserOwnerDependencies extends BrowserProcessControl {
   launch: () => Promise<Browser>;
 }
 
+interface ProcessSnapshotCommandResult {
+  exitCode: number;
+  stdout: Uint8Array;
+  stderr: Uint8Array;
+}
+
+type ProcessSnapshotSpawn = (command: string[]) => ProcessSnapshotCommandResult;
+
 function stageRunner(tracker: StageTracker): StageRunner {
   return (name, boundMs, operation, dispose) =>
     runNamedStage(tracker, name, boundMs, operation, dispose ? { dispose } : {});
 }
 
-function chromiumProcessSnapshot(): Set<number> {
-  const result = Bun.spawnSync({
-    cmd: ['ps', '-axo', 'pid=,command='],
-    stdout: 'pipe',
-    stderr: 'pipe'
-  });
-  if (result.exitCode !== 0) throw new Error('Unable to snapshot Chromium processes.');
-  const output = new TextDecoder().decode(result.stdout);
+function chromiumPids(output: string): Set<number> {
   const pids = new Set<number>();
   for (const line of output.split('\n')) {
     if (!/ms-playwright|playwright_chromiumdev_profile/.test(line)) continue;
@@ -83,6 +87,57 @@ function chromiumProcessSnapshot(): Set<number> {
     if (Number.isSafeInteger(pid)) pids.add(pid);
   }
   return pids;
+}
+
+const spawnProcessSnapshot: ProcessSnapshotSpawn = (command) => {
+  const result = Bun.spawnSync({ cmd: command, stdout: 'pipe', stderr: 'pipe' });
+  return { exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr };
+};
+
+function chromiumProcessSnapshot(spawn: ProcessSnapshotSpawn = spawnProcessSnapshot): Set<number> {
+  const decoder = new TextDecoder();
+  const diagnostics: Array<Record<string, unknown>> = [];
+  const ps = ['ps', '-axo', 'pid=,command='];
+  for (let attempt = 1; attempt <= processSnapshotAttempts; attempt += 1) {
+    try {
+      const result = spawn(ps);
+      if (result.exitCode === 0) {
+        const pids = chromiumPids(decoder.decode(result.stdout));
+        if (pids.size > 0) return pids;
+        diagnostics.push({ command: ps.join(' '), attempt, exitCode: 0, matches: 0 });
+        break;
+      }
+      diagnostics.push({
+        command: ps.join(' '),
+        attempt,
+        exitCode: result.exitCode,
+        stderr: decoder.decode(result.stderr).trim()
+      });
+    } catch (error) {
+      diagnostics.push({ command: ps.join(' '), attempt, spawnError: String(error) });
+    }
+    if (attempt < processSnapshotAttempts)
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, processSnapshotRetryDelayMs);
+  }
+
+  const pgrep = ['pgrep', '-fl', 'ms-playwright|playwright_chromiumdev_profile'];
+  try {
+    const result = spawn(pgrep);
+    const stdout = decoder.decode(result.stdout);
+    const stderr = decoder.decode(result.stderr).trim();
+    if (result.exitCode === 0) return chromiumPids(stdout);
+    if (result.exitCode === 1 && stdout.trim() === '' && stderr === '') return new Set();
+    diagnostics.push({
+      command: pgrep.join(' '),
+      attempt: 1,
+      exitCode: result.exitCode,
+      stderr
+    });
+  } catch (error) {
+    diagnostics.push({ command: pgrep.join(' '), attempt: 1, spawnError: String(error) });
+  }
+
+  throw new Error(`Unable to snapshot Chromium processes: ${JSON.stringify(diagnostics)}`);
 }
 
 function processIsAlive(pid: number): boolean {
@@ -100,17 +155,42 @@ const browserProcessControl: BrowserProcessControl = {
   kill: (pid) => process.kill(pid, 'SIGKILL')
 };
 
+async function browserReportedPids(browser: Browser): Promise<Set<number>> {
+  if (typeof browser.newBrowserCDPSession !== 'function') return new Set();
+  const session = await browser.newBrowserCDPSession();
+  try {
+    const result = (await session.send('SystemInfo.getProcessInfo')) as {
+      processInfo?: Array<{ id?: unknown }>;
+    };
+    return new Set(
+      (result.processInfo ?? [])
+        .map((process) => process.id)
+        .filter(
+          (pid): pid is number => Number.isSafeInteger(pid) && typeof pid === 'number' && pid > 0
+        )
+    );
+  } finally {
+    await session.detach();
+  }
+}
+
+function addOwnedPids(owner: Partial<BrowserOwner>, pids: Iterable<number>): void {
+  const ownedPids = new Set(owner.ownedPids ?? []);
+  for (const pid of pids) ownedPids.add(pid);
+  owner.ownedPids = [...ownedPids].sort((left, right) => left - right);
+  owner.pid = owner.ownedPids[0] ?? null;
+}
+
 function refreshBrowserOwnership(
   owner: Partial<BrowserOwner>,
   baselinePids: Set<number>,
   snapshot: () => Set<number>
 ): void {
-  const ownedPids = new Set(owner.ownedPids ?? []);
+  const discovered: number[] = [];
   for (const pid of snapshot()) {
-    if (!baselinePids.has(pid)) ownedPids.add(pid);
+    if (!baselinePids.has(pid)) discovered.push(pid);
   }
-  owner.ownedPids = [...ownedPids].sort((left, right) => left - right);
-  owner.pid = owner.ownedPids[0] ?? null;
+  addOwnedPids(owner, discovered);
 }
 
 function browserCleanupSteps(
@@ -194,7 +274,7 @@ async function startBrowserOwner(
     launch: () => chromium.launch({ headless: true, timeout: browserStageBoundMs }),
     ...overrides
   };
-  const partial: Partial<BrowserOwner> = {};
+  const partial: Partial<BrowserOwner> = { processDiscoveryErrors: [] };
   const baselinePids = dependencies.snapshot();
   try {
     // Bun 1.3.14 opens launchServer's TCP endpoint but cannot complete its WebSocket upgrade.
@@ -202,6 +282,11 @@ async function startBrowserOwner(
     partial.launchAttempted = true;
     const browser = await dependencies.launch();
     partial.browser = browser;
+    try {
+      addOwnedPids(partial, await browserReportedPids(browser));
+    } catch (error) {
+      partial.processDiscoveryErrors?.push(error);
+    }
     refreshBrowserOwnership(partial, baselinePids, dependencies.snapshot);
     const context = await stage('Playwright browser context create', productStageBoundMs, () =>
       browser.newContext({
@@ -230,6 +315,7 @@ async function startBrowserOwner(
       launchAttempted: partial.launchAttempted ?? false,
       browserPid: partial.pid ?? null,
       browserPids: partial.ownedPids ?? [],
+      processDiscoveryErrors: partial.processDiscoveryErrors,
       ownershipRefreshError
     };
     await composeCleanupFailure(
@@ -980,6 +1066,70 @@ serial('HARNESS-01 controlled failure diagnostics are causal and self-cleaning',
   expect(cleanupOnlyAggregate.diagnostics.cleanup[0]?.name).toBe('synthetic-cleanup-failure');
   expect(cleanupOnlyAggregate.diagnostics.cleanup[0]?.status).toBe('rejected');
   expect(cleanupOnlyAggregate.diagnostics.cleanup[0]?.reason).toBe(sentinelCleanupError);
+
+  const encode = (value: string) => new TextEncoder().encode(value);
+  let transientAttempts = 0;
+  const transientSnapshot = chromiumProcessSnapshot((_command) => {
+    transientAttempts += 1;
+    if (transientAttempts < 5) {
+      return {
+        exitCode: 11,
+        stdout: encode(''),
+        stderr: encode('resource temporarily unavailable')
+      };
+    }
+    return {
+      exitCode: 0,
+      stdout: encode('  43123 /tmp/ms-playwright/chromium --headless\n'),
+      stderr: encode('')
+    };
+  });
+  expect([...transientSnapshot]).toEqual([43123]);
+  expect(transientAttempts).toBe(5);
+
+  let fallbackAttempts = 0;
+  const fallbackSnapshot = chromiumProcessSnapshot((command) => {
+    fallbackAttempts += 1;
+    if (command[0] === 'ps') {
+      return { exitCode: 11, stdout: encode(''), stderr: encode('fork exhausted') };
+    }
+    return {
+      exitCode: 0,
+      stdout: encode('43124 /tmp/playwright_chromiumdev_profile/Default\n'),
+      stderr: encode('')
+    };
+  });
+  expect([...fallbackSnapshot]).toEqual([43124]);
+  expect(fallbackAttempts).toBe(processSnapshotAttempts + 1);
+
+  let emptyPsAttempts = 0;
+  const emptyPsFallback = chromiumProcessSnapshot((command) => {
+    emptyPsAttempts += 1;
+    return command[0] === 'ps'
+      ? { exitCode: 0, stdout: encode('  99 /usr/bin/unrelated\n'), stderr: encode('') }
+      : {
+          exitCode: 0,
+          stdout: encode('43125 /tmp/playwright_chromiumdev_profile/Default\n'),
+          stderr: encode('')
+        };
+  });
+  expect([...emptyPsFallback]).toEqual([43125]);
+  expect(emptyPsAttempts).toBe(2);
+
+  let snapshotFailure: unknown;
+  try {
+    chromiumProcessSnapshot((command) => ({
+      exitCode: command[0] === 'ps' ? 11 : 2,
+      stdout: encode(''),
+      stderr: encode(command[0] === 'ps' ? 'fork exhausted' : 'pgrep unavailable')
+    }));
+  } catch (error) {
+    snapshotFailure = error;
+  }
+  expect(snapshotFailure).toBeInstanceOf(Error);
+  expect((snapshotFailure as Error).message).toContain('exitCode');
+  expect((snapshotFailure as Error).message).toContain('fork exhausted');
+  expect((snapshotFailure as Error).message).toContain('pgrep unavailable');
 
   const launchPid = 41_000;
   const launchAlive = new Set([launchPid]);
