@@ -385,9 +385,14 @@ async function showInspectorSection(
   const tab = inspector.getByRole('tab', {
     name: new RegExp(`^${label}(?:, needs attention)?$`)
   });
+  const panelId = await tab.getAttribute('aria-controls');
+  if (!panelId) throw new Error(`Inspector tab ${label} does not control a panel.`);
+  const panel = inspector.locator(`#${panelId}`);
   await tab.click();
-  const panel = inspector.getByRole('tabpanel');
-  await panel.waitFor();
+  await waitUntil(
+    async () => (await tab.getAttribute('aria-selected')) === 'true' && (await panel.isVisible()),
+    `Inspector section ${label} did not become selected.`
+  );
   return panel;
 }
 
@@ -1971,11 +1976,14 @@ serial('E2E-01..15 production studios, recovery, library, settings and accessibi
     expect(await page.getByText('Flux Schnell', { exact: true }).count()).toBeGreaterThan(0);
     expect(await page.getByText(/Grok Imagine Video/).count()).toBeGreaterThan(0);
     await page.getByRole('link', { name: 'Completed' }).click();
-    expect(await page.getByText('6 tracked jobs').count()).toBe(1);
+    await page.waitForURL(
+      (url) => url.pathname === '/jobs' && url.searchParams.get('status') === 'completed'
+    );
+    await page.getByText('7 tracked jobs').waitFor();
 
     await page.goto(`${harness.url}/library`);
     await page.getByRole('heading', { name: 'Generation groups' }).waitFor();
-    expect(await page.getByText('6 grouped generations').count()).toBe(1);
+    await page.getByText('7 grouped generations').waitFor();
     await page.getByRole('link', { name: 'List view' }).click();
     await page.waitForURL(/view=list/);
     expect(await page.getByRole('link', { name: 'List view' }).getAttribute('aria-current')).toBe(
