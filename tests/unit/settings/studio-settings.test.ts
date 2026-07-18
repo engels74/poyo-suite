@@ -206,19 +206,41 @@ describe('outputLocationDto', () => {
 
 describe('onboarding state', () => {
   test('a brand-new install with no key or history is incomplete', () => {
-    const state = computeOnboardingState(null, { apiKeyConfigured: false, hasHistory: false });
+    const state = computeOnboardingState(null, {
+      apiKeyConfigured: false,
+      connectionVerified: false,
+      hasHistory: false
+    });
     expect(state.completed).toBe(false);
     expect(state.inferred).toBe(false);
   });
 
-  test('an existing install with a configured key is inferred complete', () => {
-    const state = computeOnboardingState(null, { apiKeyConfigured: true, hasHistory: false });
+  test('a configured but untested key cannot bypass onboarding', () => {
+    const state = computeOnboardingState(null, {
+      apiKeyConfigured: true,
+      connectionVerified: false,
+      hasHistory: false
+    });
+    expect(state.completed).toBe(false);
+    expect(state.inferred).toBe(false);
+  });
+
+  test('an existing install with a verified configured key is inferred complete', () => {
+    const state = computeOnboardingState(null, {
+      apiKeyConfigured: true,
+      connectionVerified: true,
+      hasHistory: false
+    });
     expect(state.completed).toBe(true);
     expect(state.inferred).toBe(true);
   });
 
   test('an existing install with prior jobs/media is inferred complete', () => {
-    const state = computeOnboardingState(null, { apiKeyConfigured: false, hasHistory: true });
+    const state = computeOnboardingState(null, {
+      apiKeyConfigured: false,
+      connectionVerified: false,
+      hasHistory: true
+    });
     expect(state.completed).toBe(true);
     expect(state.inferred).toBe(true);
   });
@@ -231,7 +253,7 @@ describe('onboarding state', () => {
         dismissedAt: null,
         steps: { location: true, connection: true, theme: true, defaults: true }
       },
-      { apiKeyConfigured: false, hasHistory: false }
+      { apiKeyConfigured: false, connectionVerified: false, hasHistory: false }
     );
     expect(state.completed).toBe(true);
     expect(state.inferred).toBe(false);
@@ -263,6 +285,7 @@ describe('onboarding state', () => {
     expect(dismissed.dismissedAt).not.toBeNull();
     const state = computeOnboardingState(readOnboarding(settings), {
       apiKeyConfigured: false,
+      connectionVerified: false,
       hasHistory: false
     });
     expect(state.completed).toBe(true);

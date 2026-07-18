@@ -4,7 +4,7 @@ import { computeOnboardingState, readOnboarding } from './studio-settings';
 
 /**
  * Resolve onboarding completion, combining the stored marker with install context so existing
- * installs (API key configured, or any prior jobs/outputs) are never forced through the flow.
+ * installs with history remain compatible while an otherwise-fresh key must be verified.
  */
 export async function loadOnboardingState(platform: PlatformServices): Promise<OnboardingStateDto> {
   const apiKeyStatus = await platform.apiKey.status();
@@ -16,6 +16,7 @@ export async function loadOnboardingState(platform: PlatformServices): Promise<O
       .get()?.count ?? 0;
   return computeOnboardingState(readOnboarding(platform.settings), {
     apiKeyConfigured: apiKeyStatus.status === 'configured',
+    connectionVerified: await platform.apiKey.connectivityVerified(),
     hasHistory: history > 0
   });
 }

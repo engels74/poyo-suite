@@ -24,6 +24,7 @@ export const load: PageServerLoad = async () => {
       candidateRoots: [rootCandidates.project.root, rootCandidates.platform.root],
       environment: platform.environment
     }),
-    onboarding: await loadOnboardingState(platform)
+    onboarding: await loadOnboardingState(platform),
+    connectivity: platform.apiKey.connectivityStatus()
   };
 };

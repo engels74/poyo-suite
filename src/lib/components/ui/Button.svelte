@@ -14,6 +14,7 @@ interface Props {
   ariaDescribedby?: string;
   class?: string;
   onclick?: (event: MouseEvent) => void;
+  element?: HTMLButtonElement | undefined;
 }
 
 let {
@@ -25,7 +26,8 @@ let {
   ariaLabel,
   ariaDescribedby,
   class: className = '',
-  onclick
+  onclick,
+  element = $bindable()
 }: Props = $props();
 
 const variants: Record<Variant, string> = {
@@ -49,6 +51,7 @@ let classes = $derived(
 </script>
 
 <button
+  bind:this={element}
   {type}
   {disabled}
   aria-label={ariaLabel}
