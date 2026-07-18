@@ -29,6 +29,9 @@ let pending = $state<string | null>(null);
 let feedback = $state('');
 let tags = $state(untrack(() => job.tags.join(', ')));
 let deleteChoices = $state<Record<string, LocalDeleteChoice>>({});
+let promptExpanded = $state(false);
+let promptCopyStatus = $state('');
+let promptCanCollapse = $derived((job.prompt?.length ?? 0) > 220);
 const initialComparison = untrack(() => job.outputs.slice(0, 2).map((output) => output.outputId));
 let comparisonLeftId = $state(initialComparison[0] ?? '');
 let comparisonRightId = $state(initialComparison[1] ?? initialComparison[0] ?? '');
@@ -166,6 +169,16 @@ function nativeOutputAction(outputId: string, kind: 'open-native' | 'reveal'): v
   });
 }
 
+async function copyPrompt(): Promise<void> {
+  if (!job.prompt) return;
+  try {
+    await navigator.clipboard.writeText(job.prompt);
+    promptCopyStatus = 'Prompt copied.';
+  } catch {
+    promptCopyStatus = 'The browser did not allow clipboard access.';
+  }
+}
+
 function removeOutput(outputId: string): void {
   const choice = deleteChoices[outputId] ?? 'file';
   const consequence =
@@ -298,7 +311,19 @@ function removeOutput(outputId: string): void {
     <aside class="space-y-6">
       <section class="border-b border-border pb-5"><p class="eyebrow-label">Summary</p><dl class="mt-3 grid grid-cols-2 gap-4 text-xs"><div><dt class="text-muted-foreground">Created</dt><dd class="mt-1 font-medium">{dateTimeLabel(job.createdAt)}</dd></div><div><dt class="text-muted-foreground">Elapsed</dt><dd class="mt-1 font-medium">{elapsedLabel(job.startedAt ?? job.createdAt, job.completedAt)}</dd></div><div><dt class="text-muted-foreground">Credits</dt><dd class="mt-1 font-medium">{job.actualCredits ?? job.estimatedCredits ?? 'Unknown'}</dd></div><div><dt class="text-muted-foreground">Last check</dt><dd class="mt-1 font-medium">{job.lastPolledAt ? dateTimeLabel(job.lastPolledAt) : 'Never'}</dd></div></dl></section>
       <section class="border-b border-border pb-5"><p class="eyebrow-label">Organize</p><div class="mt-3 flex flex-wrap gap-2"><button onclick={() => toggle('favorite', !job.outputs.some((output) => output.favorite))} disabled={pending !== null} class="focus-ring inline-flex min-h-8 items-center gap-2 rounded border border-border px-3 text-xs font-semibold"><AppIcon name="heart" size={14} /> {job.outputs.some((output) => output.favorite) ? 'Unfavorite' : 'Favorite'}</button><button onclick={() => toggle('pin', !job.outputs.some((output) => output.pinned))} disabled={pending !== null} class="focus-ring min-h-8 rounded border border-border px-3 text-xs font-semibold">{job.outputs.some((output) => output.pinned) ? 'Unpin' : 'Pin'}</button></div><label class="mt-4 block text-xs font-semibold" for="job-tags">Tags, comma separated</label><div class="mt-2 flex gap-2"><input id="job-tags" bind:value={tags} class="focus-ring min-w-0 flex-1 rounded border border-input bg-background px-3 text-sm" /><button onclick={saveTags} disabled={pending !== null} class="focus-ring rounded border border-border px-3 text-xs font-semibold">Save</button></div></section>
-      <section class="border-b border-border pb-5"><p class="eyebrow-label">Prompt</p><p class="mt-3 whitespace-pre-wrap text-sm leading-6">{job.promptExcerpt ?? 'No prompt stored.'}</p></section>
+      <section class="border-b border-border pb-5">
+        <div class="flex items-center justify-between gap-2">
+          <p class="eyebrow-label">Prompt</p>
+          {#if job.prompt}
+            <button type="button" onclick={() => void copyPrompt()} class="focus-ring grid size-7 shrink-0 place-items-center rounded border border-border text-muted-foreground hover:bg-muted hover:text-foreground" aria-label="Copy full prompt" title="Copy full prompt"><AppIcon name={promptCopyStatus === 'Prompt copied.' ? 'success' : 'copy'} size={13} /></button>
+          {/if}
+        </div>
+        <p id="job-prompt" class={`mt-3 break-all whitespace-pre-wrap text-sm leading-6 ${promptCanCollapse && !promptExpanded ? 'line-clamp-4' : ''}`}>{job.prompt ?? 'No prompt stored.'}</p>
+        {#if promptCanCollapse}
+          <button type="button" class="focus-ring mt-2 rounded text-xs font-semibold text-muted-foreground hover:text-foreground" aria-controls="job-prompt" aria-expanded={promptExpanded} onclick={() => (promptExpanded = !promptExpanded)}>{promptExpanded ? 'Show less' : 'Show full prompt'}</button>
+        {/if}
+        <p class="sr-only" role="status" aria-live="polite">{promptCopyStatus}</p>
+      </section>
       {#if job.inputs.length}<section class="border-b border-border pb-5"><p class="eyebrow-label">Inputs</p><ul class="mt-3 space-y-3">{#each job.inputs as input}<li class="text-xs"><p class="font-semibold">{input.role} · {input.mediaKind}</p><p class="mt-1 break-all text-muted-foreground">{input.sourceLabel} · {input.availability}</p></li>{/each}</ul></section>{/if}
       <details class="border-b border-border pb-5"><summary class="cursor-pointer text-xs font-semibold">Submitted configuration</summary><pre class="mt-3 max-h-80 overflow-auto rounded bg-muted p-3 text-[0.6875rem] leading-5">{JSON.stringify(job.guidedRequest, null, 2)}</pre></details>
       <details class="border-b border-border pb-5"><summary class="cursor-pointer text-xs font-semibold">Normalized Poyo payload</summary><pre class="mt-3 max-h-80 overflow-auto rounded bg-muted p-3 text-[0.6875rem] leading-5">{JSON.stringify(job.normalizedPayload, null, 2)}</pre></details>

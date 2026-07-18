@@ -84,14 +84,15 @@ $effect(() => {
   {/if}
 
   {#if src && viewable}
-    <Dialog.Root bind:open>
-      <Dialog.Trigger
-        class="focus-ring absolute top-2 right-2 inline-flex min-h-8 items-center rounded bg-background/90 px-2.5 text-xs font-semibold text-foreground shadow-[var(--shadow-sm)] backdrop-blur hover:bg-background"
-        aria-label={`Open full-screen media viewer for ${alt}`}
-      >
-        View
-      </Dialog.Trigger>
-      <Dialog.Portal>
+    <div class="absolute top-2 right-2 flex items-center gap-1.5">
+      <Dialog.Root bind:open>
+        <Dialog.Trigger
+          class="focus-ring inline-flex min-h-8 items-center rounded bg-background/90 px-2.5 text-xs font-semibold text-foreground shadow-[var(--shadow-sm)] backdrop-blur hover:bg-background"
+          aria-label={`Open full-screen media viewer for ${alt}`}
+        >
+          View
+        </Dialog.Trigger>
+        <Dialog.Portal>
         <Dialog.Overlay class="fixed inset-0 z-50 bg-black/85" />
         <Dialog.Content
           class="fixed inset-0 z-50 bg-stage text-stage-foreground"
@@ -177,7 +178,11 @@ $effect(() => {
             </footer>
           </div>
         </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+        </Dialog.Portal>
+      </Dialog.Root>
+      {#if mediaKind === 'image'}
+        <a href={src} target="_blank" rel="noreferrer" class="focus-ring grid size-8 shrink-0 place-items-center rounded bg-background/90 text-base leading-none text-foreground shadow-[var(--shadow-sm)] backdrop-blur hover:bg-background" aria-label={`Open ${alt} in a new tab`} title="Open image in a new tab"><span aria-hidden="true">↗</span></a>
+      {/if}
+    </div>
   {/if}
 </div>
