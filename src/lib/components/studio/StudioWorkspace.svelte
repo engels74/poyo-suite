@@ -1654,7 +1654,7 @@ onMount(() => {
             aria-expanded={showPresetForm}
             aria-controls={`${data.modality}-${surface}-preset-form`}
             onclick={() => (showPresetForm = !showPresetForm)}
-          >Save preset</button>
+          >Save as preset</button>
         </div>
       </div>
       {#if showPresetForm}
@@ -2230,14 +2230,24 @@ onMount(() => {
     <section class="studio-command-dock mt-3" aria-label="Generation commands">
       <div class="min-w-0">
         <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-          <Badge tone={previewIssues.length ? 'warning' : preview ? 'success' : 'neutral'}>
-            {previewState === 'validating'
-              ? 'Validating'
-              : previewIssues.length
-                ? 'Needs attention'
-                : preview
-                  ? 'Ready to generate'
-                  : 'Complete setup'}
+          <Badge
+            tone={!hasApiKey || submissionLocked || previewIssues.length
+              ? 'warning'
+              : preview
+                ? 'success'
+                : 'neutral'}
+          >
+            {!hasApiKey
+              ? 'API key required'
+              : submissionLocked
+                ? 'Action locked'
+                : previewState === 'validating'
+                  ? 'Validating'
+                  : previewIssues.length
+                    ? 'Needs attention'
+                    : preview
+                      ? 'Ready to generate'
+                      : 'Complete setup'}
           </Badge>
           <span class="text-muted-foreground">
             {completedCredits !== null

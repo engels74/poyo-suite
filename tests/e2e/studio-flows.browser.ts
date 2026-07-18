@@ -809,7 +809,7 @@ async function assertRestoredProOrigin(
 
   await stage(`${options.savedName} preset form`, productStageBoundMs, async () => {
     await inspector
-      .getByRole('button', { name: 'Save preset', exact: true })
+      .getByRole('button', { name: 'Save as preset', exact: true })
       .click({ timeout: productStageBoundMs });
     await inspector
       .getByLabel('Preset name')
@@ -1003,12 +1003,11 @@ async function assertSupportingPresetCount(
   const savedName = 'Supporting count resaved';
   await stage('supporting preset save', productStageBoundMs, async () => {
     await inspector
-      .getByRole('button', { name: 'Save preset', exact: true })
+      .getByRole('button', { name: 'Save as preset', exact: true })
       .click({ timeout: productStageBoundMs });
     await inspector.getByLabel('Preset name').fill(savedName, { timeout: productStageBoundMs });
     await inspector
       .getByRole('button', { name: 'Save preset', exact: true })
-      .last()
       .click({ timeout: productStageBoundMs });
     await inspector
       .getByText(`Saved preset “${savedName}”.`)
@@ -1519,6 +1518,14 @@ serial(
       );
       await generate.click();
       await commands.getByText(/response did not confirm the paid job/).waitFor();
+      const lockedBadge = commands
+        .locator('span.rounded-full')
+        .filter({ hasText: 'Action locked' });
+      await lockedBadge.waitFor();
+      expect(await lockedBadge.innerText()).toBe('Action locked');
+      expect((await lockedBadge.getAttribute('class'))?.split(' ')).toContain('text-warning');
+      expect(await commands.getByText('Ready to generate', { exact: true }).count()).toBe(0);
+      expect(await generate.isDisabled()).toBe(true);
       const abandonDirect = commands.getByRole('button', {
         name: 'Acknowledge risk and start a new action'
       });
@@ -1614,9 +1621,22 @@ serial('STUDIO-UX setup tabs and command guards stay usable across surfaces', as
 
     const promptPanel = await showInspectorSection(inspector, 'Prompt');
     const prompt = promptPanel.getByRole('textbox', { name: /^Prompt/ });
-    await prompt.fill('A value that survives setup section navigation');
-    await waitForValidRequest(page);
     const commands = generationCommands(page);
+    await prompt.fill('A value that survives setup section navigation');
+    await page
+      .getByText(
+        'The guided request is valid. Review the exact normalized payload or generate when ready.',
+        { exact: true }
+      )
+      .waitFor();
+    const keyRequiredBadge = commands
+      .locator('span.rounded-full')
+      .filter({ hasText: 'API key required' });
+    await keyRequiredBadge.waitFor();
+    expect(await keyRequiredBadge.innerText()).toBe('API key required');
+    expect((await keyRequiredBadge.getAttribute('class'))?.split(' ')).toContain('text-warning');
+    expect(await commands.getByText('Ready to generate', { exact: true }).count()).toBe(0);
+    expect(await commands.getByRole('button', { name: 'Generate image' }).isDisabled()).toBe(true);
 
     const outputPanel = await showInspectorSection(inspector, 'Output');
     await selectRadioValue(outputPanel, 'custom');
@@ -1639,7 +1659,12 @@ serial('STUDIO-UX setup tabs and command guards stay usable across surfaces', as
       async () => (await outputTab.count()) === 0,
       'A valid custom size did not clear the Output tab issue marker.'
     );
-    await waitForValidRequest(page);
+    await page
+      .getByText(
+        'The guided request is valid. Review the exact normalized payload or generate when ready.',
+        { exact: true }
+      )
+      .waitFor();
 
     await showInspectorSection(inspector, 'Output');
     await showInspectorSection(inspector, 'Prompt');
@@ -1730,10 +1755,15 @@ serial('E2E-01..15 production studios, recovery, library, settings and accessibi
     expect(
       await inspector.locator('input[type="radio"][value="flux-schnell:text-to-image"]').isChecked()
     ).toBe(true);
-    await inspector.getByRole('button', { name: 'Save preset', exact: true }).click();
+    await inspector.getByRole('button', { name: 'Save as preset', exact: true }).click();
     await inspector.getByLabel('Preset name').fill('Northern observatory');
     await inspector.getByLabel('Description').fill('Synthetic browser-suite preset');
-    await inspector.getByRole('button', { name: 'Save preset', exact: true }).last().click();
+    expect(
+      await inspector.getByRole('button', { name: 'Save as preset', exact: true }).count()
+    ).toBe(1);
+    const savePreset = inspector.getByRole('button', { name: 'Save preset', exact: true });
+    expect(await savePreset.count()).toBe(1);
+    await savePreset.click();
     await inspector.getByText('Saved preset “Northern observatory”.').waitFor();
 
     const imageGenerate = generationCommands(page).getByRole('button', {
