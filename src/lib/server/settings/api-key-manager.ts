@@ -176,6 +176,12 @@ export class ApiKeyManager {
   private readonly state: StateAuthority;
   private transitionConflict: CredentialConflict | null = null;
   private queue = Promise.resolve();
+  private connectivityBinding: {
+    source: ApiKeySource;
+    key: string | null;
+    checkedAt: string;
+    status: 'ok' | 'failed';
+  } | null = null;
 
   constructor(private readonly options: ApiKeyManagerOptions) {
     this.now = options.now ?? (() => new Date());
@@ -224,6 +230,44 @@ export class ApiKeyManager {
         storeKind,
         lastConnectivityAt: previous?.lastConnectivityAt ?? null,
         lastConnectivityStatus: previous?.lastConnectivityStatus ?? null
+      },
+      this.now()
+    );
+  }
+
+  private recordConnectivityUnlocked(status: 'ok' | 'failed', resolved: ResolvedApiKey): void {
+    const previous = this.options.metadataRepository.get();
+    if (!previous) return;
+    const checkedAt = this.now().toISOString();
+    this.options.metadataRepository.save(
+      {
+        activeSource: previous.activeSource,
+        status: previous.status,
+        storeKind: previous.storeKind,
+        lastConnectivityAt: checkedAt,
+        lastConnectivityStatus: status
+      },
+      this.now()
+    );
+    this.connectivityBinding = {
+      source: resolved.status.source,
+      key: resolved.key,
+      checkedAt,
+      status
+    };
+  }
+
+  private invalidateConnectivityUnlocked(): void {
+    this.connectivityBinding = null;
+    const previous = this.options.metadataRepository.get();
+    if (!previous) return;
+    this.options.metadataRepository.save(
+      {
+        activeSource: previous.activeSource,
+        status: previous.status,
+        storeKind: previous.storeKind,
+        lastConnectivityAt: null,
+        lastConnectivityStatus: null
       },
       this.now()
     );
@@ -610,27 +654,42 @@ export class ApiKeyManager {
     return this.serialized(() => this.statusUnlocked());
   }
 
-  recordConnectivity(status: 'ok' | 'failed'): void {
-    const previous = this.options.metadataRepository.get();
-    if (!previous) return;
-    this.options.metadataRepository.save(
-      {
-        activeSource: previous.activeSource,
-        status: previous.status,
-        storeKind: previous.storeKind,
-        lastConnectivityAt: this.now().toISOString(),
-        lastConnectivityStatus: status
-      },
-      this.now()
-    );
+  async verifyConnectivity<T>(probe: (resolved: ResolvedApiKey) => Promise<T>): Promise<T> {
+    const verify = () =>
+      this.serialized(async () => {
+        const resolved = await this.resolveUnlocked();
+        try {
+          const result = await probe(resolved);
+          this.recordConnectivityUnlocked('ok', resolved);
+          return result;
+        } catch (error) {
+          this.recordConnectivityUnlocked('failed', resolved);
+          throw error;
+        }
+      });
+    return this.options.mutationGate
+      ? this.options.mutationGate.withWriterPermit('credential.connectivity', verify)
+      : verify();
   }
 
   connectivityStatus(): { checkedAt: string | null; status: string | null } {
-    const metadata = this.options.metadataRepository.get();
     return {
-      checkedAt: metadata?.lastConnectivityAt ?? null,
-      status: metadata?.lastConnectivityStatus ?? null
+      checkedAt: this.connectivityBinding?.checkedAt ?? null,
+      status: this.connectivityBinding?.status ?? null
     };
+  }
+
+  async connectivityVerified(): Promise<boolean> {
+    return this.serialized(async () => {
+      const binding = this.connectivityBinding;
+      if (binding?.status !== 'ok') return false;
+      const resolved = await this.resolveUnlocked();
+      const keyMatches =
+        binding.key === null
+          ? resolved.key === null
+          : resolved.key !== null && secretsEqual(binding.key, resolved.key);
+      return binding.source === resolved.status.source && keyMatches;
+    });
   }
 
   async setLocal(secret: string): Promise<ApiKeyStatusDto> {
@@ -648,7 +707,9 @@ export class ApiKeyManager {
       const store = this.store(state.selectedBackend);
       await store.set(value);
       await this.verifyStored(store, value);
-      return (await this.resolveUnlocked()).status;
+      const status = (await this.resolveUnlocked()).status;
+      this.invalidateConnectivityUnlocked();
+      return status;
     });
   }
 
@@ -674,7 +735,9 @@ export class ApiKeyManager {
           'unavailable'
         );
       }
-      return (await this.resolveUnlocked()).status;
+      const status = (await this.resolveUnlocked()).status;
+      this.invalidateConnectivityUnlocked();
+      return status;
     });
   }
 
@@ -792,7 +855,12 @@ export class ApiKeyManager {
   }
 
   async switchBackend(input: SwitchCredentialBackendInput): Promise<ApiKeyStatusDto> {
-    return this.serialized(() => this.switchBackendUnlocked(input, true));
+    return this.serialized(async () => {
+      const selectedBackend = this.state.get().selectedBackend;
+      const status = await this.switchBackendUnlocked(input, true);
+      if (status.selectedBackend !== selectedBackend) this.invalidateConnectivityUnlocked();
+      return status;
+    });
   }
 
   async resolveTransitionConflict(action: CredentialConflictAction): Promise<ApiKeyStatusDto> {
@@ -849,7 +917,9 @@ export class ApiKeyManager {
 
       if (action === 'resume-transition') {
         await this.recoverPreAuthority(transition);
-        return this.statusUnlocked();
+        const status = await this.statusUnlocked();
+        this.invalidateConnectivityUnlocked();
+        return status;
       }
 
       if (action === 'retry-cleanup') {
@@ -877,10 +947,12 @@ export class ApiKeyManager {
       }
 
       this.clearTransition(transition.sourceBackend);
-      return this.switchBackendUnlocked(
+      const status = await this.switchBackendUnlocked(
         { backend: transition.targetBackend, replaceExisting: true },
         false
       );
+      this.invalidateConnectivityUnlocked();
+      return status;
     });
   }
 }

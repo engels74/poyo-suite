@@ -40,6 +40,7 @@ describe('credential backend opt-in', () => {
     const status = await manager.status();
     const onboarding = computeOnboardingState(null, {
       apiKeyConfigured: status.status === 'configured',
+      connectionVerified: false,
       hasHistory: false
     });
 

@@ -84,6 +84,95 @@ function gateway(overrides: Partial<JobPoyoGateway> = {}): JobPoyoGateway {
 }
 
 describe('durable coordinator and media lifecycle', () => {
+  test('JOB-01 serializes paid submissions FIFO and continues after an unknown outcome', async () => {
+    const fixture = await createJobFixture();
+    cleanups.push(fixture.cleanup);
+    const first = createTestJob(fixture.repository, 'fifo-first');
+    const second = createTestJob(fixture.repository, 'fifo-second');
+    let releaseFirst = (): void => undefined;
+    const firstBlocked = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let firstStarted = (): void => undefined;
+    const firstEntered = new Promise<void>((resolve) => {
+      firstStarted = resolve;
+    });
+    let secondStarted = (): void => undefined;
+    const secondEntered = new Promise<void>((resolve) => {
+      secondStarted = resolve;
+    });
+    let releaseFirstBalance = (): void => undefined;
+    const firstBalanceBlocked = new Promise<void>((resolve) => {
+      releaseFirstBalance = resolve;
+    });
+    let balanceCalls = 0;
+    let concurrent = 0;
+    let maxConcurrent = 0;
+    const order: string[] = [];
+    const coordinator = new JobCoordinator({
+      repository: fixture.repository,
+      poyo: gateway({
+        submit: async (request) => {
+          const prompt = String(request.input.prompt);
+          order.push(prompt);
+          concurrent += 1;
+          maxConcurrent = Math.max(maxConcurrent, concurrent);
+          try {
+            if (prompt.includes('fifo-first')) {
+              firstStarted();
+              await firstBlocked;
+              throw new PoyoError({
+                category: 'network',
+                technicalCode: 'fifo_socket_drop',
+                message: 'uncertain',
+                retryable: true,
+                operation: 'submit'
+              });
+            }
+            secondStarted();
+            return {
+              taskId: 'task-fifo-second',
+              statusRaw: 'not_started',
+              status: 'not_started',
+              createdTime: 'now'
+            };
+          } finally {
+            concurrent -= 1;
+          }
+        },
+        getBalance: async () => {
+          balanceCalls += 1;
+          if (balanceCalls === 1) await firstBalanceBlocked;
+          return { email: 'studio@example.test', creditsAmount: 100, fetchedAt: 'now' };
+        }
+      }),
+      downloader: new OutputDownloader({ repository: fixture.repository, paths: fixture.paths }),
+      workerId: 'fifo-worker'
+    });
+
+    const firstSubmit = coordinator.submit(first.id);
+    const secondSubmit = coordinator.submit(second.id);
+    await firstEntered;
+    expect(fixture.repository.get(second.id)?.localPhase).toBe('submission_prepared');
+    expect(order).toEqual(['calm coast fifo-first']);
+    releaseFirst();
+    await secondEntered;
+    expect(order).toEqual(['calm coast fifo-first', 'calm coast fifo-second']);
+    releaseFirstBalance();
+    await Promise.all([firstSubmit, secondSubmit]);
+
+    expect(maxConcurrent).toBe(1);
+    expect(order).toEqual(['calm coast fifo-first', 'calm coast fifo-second']);
+    expect(fixture.repository.get(first.id)).toMatchObject({
+      localPhase: 'requires_attention',
+      attentionCode: 'submission_unknown'
+    });
+    expect(fixture.repository.get(second.id)).toMatchObject({
+      localPhase: 'monitoring',
+      poyoTaskId: 'task-fifo-second'
+    });
+  });
+
   test('JOB-02 two coordinators emit one paid submit and restart recovery resumes monitoring', async () => {
     const fixture = await createJobFixture();
     cleanups.push(fixture.cleanup);

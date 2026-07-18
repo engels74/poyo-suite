@@ -1,5 +1,5 @@
 <script lang="ts">
-import { untrack } from 'svelte';
+import { tick, untrack } from 'svelte';
 import { goto } from '$app/navigation';
 import AppIcon from '$lib/components/ui/AppIcon.svelte';
 import Badge from '$lib/components/ui/Badge.svelte';
@@ -54,11 +54,18 @@ let rootChoice = $state<'project' | 'platform'>(
 let apiKeyInput = $state('');
 let credentialChoice = $state<'file' | 'os'>(initial.settings.apiKey.selectedBackend);
 let replaceExistingCredential = $state(false);
-let connectivityLabel = $state('');
+type ConnectivityState = 'not-tested' | 'testing' | 'success' | 'failure';
+let connectivityState = $state<ConnectivityState>(
+  initial.settings.apiKey.status === 'configured' && initial.connectivity.status === 'ok'
+    ? 'success'
+    : 'not-tested'
+);
+let connectivityAccount = $state<string | null>(null);
 
 let themeChoice = $state<ThemePreference>(untrack(() => initial.settings.theme.defaultMode));
 
 let heading = $state<HTMLHeadingElement | null>(null);
+let connectivityButton = $state<HTMLButtonElement | undefined>();
 let keyState = $derived(apiKeyUiState(settings.apiKey));
 let credentialState = $derived(credentialBackendUiState(settings.apiKey));
 let rootState = $derived(storageRootUiState(storageRoot));
@@ -66,6 +73,18 @@ let selectedRootChoice = $derived(
   storageRoot.choices.find((choice) => choice.kind === rootChoice) ?? storageRoot.choices[0]
 );
 let stepIndex = $derived(steps.indexOf(step));
+let hasPendingCredentialChange = $derived(
+  apiKeyInput.trim().length > 0 || credentialChoice !== settings.apiKey.selectedBackend
+);
+let connectivityLabel = $derived(
+  connectivityState === 'testing'
+    ? 'Testing connection…'
+    : connectivityState === 'success'
+      ? `Connected${connectivityAccount ? ` · ${connectivityAccount}` : ''}`
+      : connectivityState === 'failure'
+        ? 'Connection failed. Check the key and try again.'
+        : 'Not tested'
+);
 
 $effect(() => {
   step;
@@ -92,7 +111,7 @@ async function request<T>(path: string, method: string, body: Record<string, unk
   return payload;
 }
 
-async function run(callback: () => Promise<void>): Promise<void> {
+async function run(callback: () => Promise<void>, onSettled?: () => void): Promise<void> {
   busy = true;
   message = '';
   errorMessage = '';
@@ -102,6 +121,10 @@ async function run(callback: () => Promise<void>): Promise<void> {
     errorMessage = error instanceof Error ? error.message : 'The local operation failed.';
   } finally {
     busy = false;
+    if (onSettled) {
+      await tick();
+      onSettled();
+    }
   }
 }
 
@@ -119,6 +142,11 @@ function next(): void {
 function back(): void {
   const target = steps[Math.max(stepIndex - 1, 0)];
   if (target) goToStep(target);
+}
+
+function invalidateConnectivity(): void {
+  connectivityState = 'not-tested';
+  connectivityAccount = null;
 }
 
 async function markStep(patch: Partial<OnboardingStateDto['steps']>): Promise<void> {
@@ -150,33 +178,37 @@ function saveApiKey(event: SubmitEvent): void {
   if (!settings.apiKey.localMutationAvailable) return;
   const switching = credentialChoice !== settings.apiKey.selectedBackend;
   if (!switching && !apiKeyInput.trim()) return;
-  void run(async () => {
-    try {
-      const result = switching
-        ? await request<{ apiKey: SettingsDto['apiKey'] }>(
-            '/api/settings/credential-backend',
-            'POST',
-            {
-              backend: credentialChoice,
-              ...(apiKeyInput.trim() ? { apiKey: apiKeyInput } : {}),
-              replaceExisting: replaceExistingCredential
-            }
-          )
-        : await request<{ apiKey: SettingsDto['apiKey'] }>('/api/settings/api-key', 'PUT', {
-            apiKey: apiKeyInput
-          });
-      settings = { ...settings, apiKey: result.apiKey };
-      credentialChoice = result.apiKey.selectedBackend;
-      replaceExistingCredential = false;
-      message = switching
-        ? result.apiKey.transition
-          ? `Key moved to ${credentialBackendLabel(result.apiKey.selectedBackend)}. The target is authoritative; the previous copy is retained pending cleanup.`
-          : `Key moved to ${credentialBackendLabel(result.apiKey.selectedBackend)} and verified before the previous copy was removed.`
-        : 'Key stored by the local server only. Its value never returns to this page.';
-    } finally {
-      apiKeyInput = '';
-    }
-  });
+  void run(
+    async () => {
+      try {
+        const result = switching
+          ? await request<{ apiKey: SettingsDto['apiKey'] }>(
+              '/api/settings/credential-backend',
+              'POST',
+              {
+                backend: credentialChoice,
+                ...(apiKeyInput.trim() ? { apiKey: apiKeyInput } : {}),
+                replaceExisting: replaceExistingCredential
+              }
+            )
+          : await request<{ apiKey: SettingsDto['apiKey'] }>('/api/settings/api-key', 'PUT', {
+              apiKey: apiKeyInput
+            });
+        settings = { ...settings, apiKey: result.apiKey };
+        credentialChoice = result.apiKey.selectedBackend;
+        replaceExistingCredential = false;
+        message = 'Key stored by the local server only. Its value never returns through this page.';
+        if (switching && result.apiKey.transition) {
+          message += ` ${credentialBackendLabel(result.apiKey.selectedBackend)} is authoritative; the previous copy is retained pending cleanup.`;
+        }
+        apiKeyInput = '';
+        await probeConnectivity();
+      } finally {
+        apiKeyInput = '';
+      }
+    },
+    () => connectivityButton?.focus()
+  );
 }
 
 function resolveCredentialConflict(
@@ -206,17 +238,26 @@ function resolveCredentialConflict(
   });
 }
 
-function testConnectivity(): void {
-  void run(async () => {
+async function probeConnectivity(): Promise<void> {
+  connectivityState = 'testing';
+  connectivityAccount = null;
+  try {
     const result = await request<{ connectivity: { status: string; account: string | null } }>(
       '/api/settings/api-key/connectivity',
       'POST',
       {}
     );
-    connectivityLabel =
-      result.connectivity.status === 'ok'
-        ? `Connected${result.connectivity.account ? ` · ${result.connectivity.account}` : ''}`
-        : 'Connection failed';
+    connectivityState = result.connectivity.status === 'ok' ? 'success' : 'failure';
+    connectivityAccount = result.connectivity.account;
+  } catch (error) {
+    connectivityState = 'failure';
+    throw error;
+  }
+}
+
+function testConnectivity(): void {
+  void run(async () => {
+    await probeConnectivity();
   });
 }
 
@@ -409,7 +450,7 @@ const stepTitles: Record<Step, string> = {
     {:else if step === 'apiKey'}
       <div class="mt-3 flex flex-wrap items-center gap-2">
         <Badge tone={settings.apiKey.status === 'configured' ? 'success' : 'warning'}>{keyState.label}</Badge>
-        {#if connectivityLabel}<span class="text-xs text-muted-foreground">{connectivityLabel}</span>{/if}
+        <span class="text-xs text-muted-foreground" role="status" aria-live="polite">{connectivityLabel}</span>
       </div>
       <p class="mt-3 text-sm leading-6 text-muted-foreground">{keyState.detail}</p>
       <dl class="mt-4 grid gap-3 text-xs sm:grid-cols-2">
@@ -445,11 +486,11 @@ const stepTitles: Record<Step, string> = {
           <legend class="text-xs font-semibold">Store the API key in</legend>
           <div class="mt-2 grid gap-2 sm:grid-cols-2">
             <label class="focus-within:ring-2 focus-within:ring-ring flex cursor-pointer items-start gap-3 rounded border border-border p-3">
-              <input class="mt-0.5 size-4" type="radio" name="credential-backend" value="file" bind:group={credentialChoice} />
+              <input class="mt-0.5 size-4" type="radio" name="credential-backend" value="file" bind:group={credentialChoice} onchange={invalidateConnectivity} />
               <span><strong class="text-sm">Permission-protected file (default)</strong><span class="mt-1 block text-xs leading-5 text-muted-foreground">Stored inside the selected Studio data root with private permissions.</span></span>
             </label>
             <label class="focus-within:ring-2 focus-within:ring-ring flex cursor-pointer items-start gap-3 rounded border border-border p-3 {settings.apiKey.backendAvailability.os === 'unavailable' ? 'cursor-not-allowed opacity-60' : ''}">
-              <input class="mt-0.5 size-4" type="radio" name="credential-backend" value="os" bind:group={credentialChoice} disabled={settings.apiKey.backendAvailability.os === 'unavailable'} />
+              <input class="mt-0.5 size-4" type="radio" name="credential-backend" value="os" bind:group={credentialChoice} disabled={settings.apiKey.backendAvailability.os === 'unavailable'} onchange={invalidateConnectivity} />
               <span><strong class="text-sm">Operating-system store</strong><span class="mt-1 block text-xs leading-5 text-muted-foreground">macOS Keychain when supported. Availability is checked only after this explicit choice.</span></span>
             </label>
           </div>
@@ -457,15 +498,20 @@ const stepTitles: Record<Step, string> = {
         <form onsubmit={saveApiKey} class="mt-5">
           <label for="onboard-key" class="text-xs font-semibold">Poyo API key</label>
           <p class="mt-1 text-xs leading-5 text-muted-foreground">
-            {settings.apiKey.status === 'configured' && credentialChoice !== settings.apiKey.selectedBackend
-              ? 'Leave blank to move the currently configured key.'
-              : 'The value is submitted once and never returned to this page.'}
+            Key stored by the local server only. Its value never returns through this page.
+            {#if settings.apiKey.status === 'configured' && credentialChoice !== settings.apiKey.selectedBackend}
+              Leave blank to move the currently configured key.
+            {/if}
           </p>
           <div class="mt-1.5 flex flex-col gap-2 sm:flex-row">
             <input
               id="onboard-key"
               type="password"
-              bind:value={apiKeyInput}
+              value={apiKeyInput}
+              oninput={(event) => {
+                apiKeyInput = event.currentTarget.value;
+                invalidateConnectivity();
+              }}
               autocomplete="off"
               spellcheck="false"
               placeholder="Stored securely; never shown again"
@@ -489,8 +535,16 @@ const stepTitles: Record<Step, string> = {
         </form>
       {/if}
       {#if keyState.canTest || settings.apiKey.status === 'configured'}
-        <Button variant="outline" class="mt-4" onclick={testConnectivity} disabled={busy}>
-          <AppIcon name="wifi" size={15} /> Test connection
+        <Button
+          bind:element={connectivityButton}
+          variant="outline"
+          class="mt-4"
+          onclick={testConnectivity}
+          disabled={busy || hasPendingCredentialChange}
+        >
+          <AppIcon name="wifi" size={15} /> {connectivityState === 'not-tested'
+            ? 'Test connection'
+            : 'Test again'}
         </Button>
       {/if}
     {:else if step === 'theme'}
@@ -553,8 +607,11 @@ const stepTitles: Record<Step, string> = {
             : 'Move data and require restart'}
         </Button>
       {:else if step === 'apiKey'}
-        <Button variant="ghost" onclick={completeApiKeyStep} disabled={busy}>Skip for now</Button>
-        <Button variant="primary" onclick={completeApiKeyStep} disabled={busy}>Continue</Button>
+        <Button
+          variant="primary"
+          onclick={completeApiKeyStep}
+          disabled={busy || connectivityState !== 'success' || hasPendingCredentialChange}
+        >Continue</Button>
       {:else if step === 'theme'}
         <Button variant="primary" onclick={saveTheme} disabled={busy}>Save and continue</Button>
       {:else if step === 'done'}

@@ -159,13 +159,14 @@ export function readOnboarding(settings: SettingsRepository): OnboardingRecord |
 
 export interface OnboardingContext {
   apiKeyConfigured: boolean;
+  connectionVerified: boolean;
   hasHistory: boolean;
 }
 
 /**
  * Combine the stored onboarding record with install context. Existing installs (an API key is
- * already configured, or media/jobs already exist) are treated as complete even without a
- * recorded marker, so upgraders are never trapped in the flow.
+ * already configured and verified, or media/jobs already exist) are treated as complete even
+ * without a recorded marker, so upgraders are never trapped in the flow.
  */
 export function computeOnboardingState(
   stored: OnboardingRecord | null,
@@ -178,7 +179,8 @@ export function computeOnboardingState(
     steps: DEFAULT_STEPS
   };
   const explicit = Boolean(record.completedAt) || Boolean(record.dismissedAt);
-  const inferred = !stored && (context.apiKeyConfigured || context.hasHistory);
+  const inferred =
+    !stored && (context.hasHistory || (context.apiKeyConfigured && context.connectionVerified));
   return {
     completed: explicit || inferred,
     completedAt: record.completedAt,

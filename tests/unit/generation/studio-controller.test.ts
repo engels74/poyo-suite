@@ -1,13 +1,16 @@
 import { describe, expect, test } from 'bun:test';
 import {
   createJobRequest,
+  createStudioSubmissionSnapshot,
   filterRetiredExpertOverrides,
   initialGuidedValues,
   mediaAccept,
   nextMonotonicEventId,
+  paidSubmissionOutcome,
   parseExpertOverrides,
   pendingActionRecoveryDelay,
   presetValues,
+  readPaidSubmissionResponse,
   sizeModes,
   valuesWithRoleInputs,
   visibleFields
@@ -211,6 +214,85 @@ describe('registry-driven studio controller', () => {
         metadataProbe: 'measured'
       }
     });
+  });
+
+  test('STUDIO-07 captures an immutable paid-action snapshot before asynchronous validation', () => {
+    const entry = imageEntry('flux-dev:image-edit');
+    const guided = { prompt: 'first prompt' };
+    const override = { key: 'future_parameter', value: { strength: 1 } };
+    const overrides = [override];
+    const reference = {
+      id: 'reference',
+      role: 'reference',
+      source: 'remote' as const,
+      url: 'https://assets.test/first.png',
+      name: 'first.png',
+      mediaKind: 'image' as const
+    };
+    const roleInputs = {
+      reference: [reference]
+    };
+    const snapshot = createStudioSubmissionSnapshot(
+      '019b0000-0000-7000-8000-000000000003',
+      entry,
+      guided,
+      overrides,
+      roleInputs
+    );
+    guided.prompt = 'second prompt';
+    override.value = { strength: 2 };
+    reference.url = 'https://assets.test/second.png';
+    expect(snapshot.request.values).toEqual({ prompt: 'first prompt' });
+    expect(snapshot.request.inputs[0]?.url).toBe('https://assets.test/first.png');
+    expect(snapshot.preview.values).toMatchObject({
+      prompt: 'first prompt',
+      imageUrls: ['https://assets.test/first.png']
+    });
+    expect(snapshot.preview.expertOverrides).toEqual([
+      { key: 'future_parameter', value: { strength: 1 } }
+    ]);
+  });
+
+  test('JOB-01 distinguishes definitive rejection from an ambiguous paid response', () => {
+    expect(paidSubmissionOutcome(false, false)).toBe('rejected');
+    expect(paidSubmissionOutcome(false, true)).toBe('rejected');
+    expect(paidSubmissionOutcome(true, false)).toBe('ambiguous');
+    expect(paidSubmissionOutcome(true, true)).toBe('confirmed');
+  });
+
+  test('JOB-01 classifies non-JSON rejection and malformed success before UI state mapping', async () => {
+    expect(await readPaidSubmissionResponse(new Response('rejected', { status: 400 }))).toEqual({
+      outcome: 'rejected',
+      result: {}
+    });
+    expect(
+      await readPaidSubmissionResponse(new Response('accepted but malformed', { status: 202 }))
+    ).toEqual({ outcome: 'ambiguous', result: {} });
+    expect(
+      await readPaidSubmissionResponse(
+        new Response('null', { status: 400, headers: { 'content-type': 'application/json' } })
+      )
+    ).toEqual({ outcome: 'rejected', result: {} });
+    expect(
+      await readPaidSubmissionResponse(
+        new Response('null', { status: 202, headers: { 'content-type': 'application/json' } })
+      )
+    ).toEqual({ outcome: 'ambiguous', result: {} });
+    expect(await readPaidSubmissionResponse(Response.json({ job: null }, { status: 202 }))).toEqual(
+      { outcome: 'ambiguous', result: { job: null } }
+    );
+    expect(
+      await readPaidSubmissionResponse(Response.json({ job: 'invalid' }, { status: 202 }))
+    ).toEqual({ outcome: 'ambiguous', result: { job: 'invalid' } });
+    expect(await readPaidSubmissionResponse(Response.json({ job: {} }, { status: 202 }))).toEqual({
+      outcome: 'ambiguous',
+      result: { job: {} }
+    });
+    expect(
+      await readPaidSubmissionResponse(
+        Response.json({ job: { id: 'confirmed-job' } }, { status: 202 })
+      )
+    ).toEqual({ outcome: 'confirmed', result: { job: { id: 'confirmed-job' } } });
   });
 
   test('SSE-03 accepts only strictly monotonic durable event IDs', () => {

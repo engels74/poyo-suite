@@ -41,6 +41,7 @@ export class JobCoordinator {
   private readonly pollDelayMs;
   private readonly staleAfterMs;
   private readonly automaticDownloads;
+  private submissionTail: Promise<void> = Promise.resolve();
   constructor(private readonly options: JobCoordinatorOptions) {
     this.workerId = options.workerId ?? crypto.randomUUID();
     this.now = options.now ?? (() => new Date());
@@ -96,20 +97,39 @@ export class JobCoordinator {
       this.options.repository.recordBalance(balance.email, balance.creditsAmount, source);
     } catch {}
   }
+  private async withSubmissionSlot<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.submissionTail;
+    let release = (): void => undefined;
+    this.submissionTail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous.catch(() => undefined);
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
+  }
   async submit(jobId: string): Promise<JobRecord> {
+    const result = await this.withSubmissionSlot(() => this.submitAtQueueHead(jobId));
+    if (result.balanceSource) await this.refreshBalance(result.balanceSource);
+    return result.job;
+  }
+  private async submitAtQueueHead(
+    jobId: string
+  ): Promise<{ job: JobRecord; balanceSource: string | null }> {
     const claim = this.options.repository.claimSubmission(
       jobId,
       this.workerId,
       this.submissionLeaseMs
     );
-    if (!claim) return this.requireJob(jobId);
+    if (!claim) return { job: this.requireJob(jobId), balanceSource: null };
     if (!this.options.repository.markSubmissionTransmitted(jobId, claim.token))
-      return this.requireJob(jobId);
+      return { job: this.requireJob(jobId), balanceSource: null };
     try {
       const result = await this.options.poyo.submit(claim.payload);
       this.options.repository.acknowledgeSubmission(jobId, claim.token, result);
-      await this.refreshBalance('after_submission');
-      return this.requireJob(jobId);
+      return { job: this.requireJob(jobId), balanceSource: 'after_submission' };
     } catch (error) {
       if (
         error instanceof PoyoError &&
@@ -122,8 +142,7 @@ export class JobCoordinator {
           claim.token,
           error instanceof PoyoError ? error.technicalCode : 'transport_unknown'
         );
-      await this.refreshBalance('submission_error');
-      return this.requireJob(jobId);
+      return { job: this.requireJob(jobId), balanceSource: 'submission_error' };
     }
   }
   async poll(jobId: string, manual = false): Promise<JobRecord> {

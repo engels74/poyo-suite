@@ -28,6 +28,52 @@ export interface StudioCreateJobRequest {
   }>;
 }
 
+export interface StudioSubmissionSnapshot {
+  request: StudioCreateJobRequest;
+  preview: {
+    entryKey: string;
+    values: GuidedImageRequest | GuidedVideoRequest;
+    expertOverrides: ExpertOverride[];
+  };
+}
+
+export type PaidSubmissionOutcome = 'confirmed' | 'rejected' | 'ambiguous';
+
+export function paidSubmissionOutcome(
+  responseOk: boolean,
+  hasConfirmedJob: boolean
+): PaidSubmissionOutcome {
+  if (!responseOk) return 'rejected';
+  return hasConfirmedJob ? 'confirmed' : 'ambiguous';
+}
+
+function hasConfirmedJob(value: unknown): boolean {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  return 'id' in value && typeof value.id === 'string' && value.id.trim().length > 0;
+}
+
+export async function readPaidSubmissionResponse<TJob>(
+  response: Pick<Response, 'json' | 'ok'>
+): Promise<{
+  outcome: PaidSubmissionOutcome;
+  result: { job?: TJob; error?: { message?: string } };
+}> {
+  let result: { job?: TJob; error?: { message?: string } } = {};
+  try {
+    const payload: unknown = await response.json();
+    if (payload !== null && typeof payload === 'object' && !Array.isArray(payload)) {
+      result = payload as typeof result;
+    }
+  } catch {
+    // HTTP status remains authoritative for a non-JSON rejection. A malformed successful response
+    // stays ambiguous because the paid action may already have been accepted.
+  }
+  return {
+    outcome: paidSubmissionOutcome(response.ok, hasConfirmedJob(result.job)),
+    result
+  };
+}
+
 const retainedSourceOrigin = 'https://retained-source.invalid';
 
 export function retainedSourceUrl(localSourceId: string): string {
@@ -241,6 +287,23 @@ export function createJobRequest(
           ...(input.metadataProbe === undefined ? {} : { metadataProbe: input.metadataProbe })
         }
       }))
+  };
+}
+
+export function createStudioSubmissionSnapshot(
+  actionId: string,
+  entry: StudioEntry,
+  guided: Record<string, unknown>,
+  expertOverrides: ExpertOverride[],
+  roleInputs: Record<string, StudioRoleInput[]> = {}
+): StudioSubmissionSnapshot {
+  return {
+    request: createJobRequest(actionId, entry, guided, expertOverrides, roleInputs),
+    preview: {
+      entryKey: entry.key,
+      values: cloneJson(valuesWithRoleInputs(entry, guided, roleInputs)),
+      expertOverrides: cloneJson(expertOverrides)
+    }
   };
 }
 

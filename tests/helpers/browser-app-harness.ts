@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite';
 import { cp, mkdir, rm, stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { ensureAppPaths, resolveAppPathCandidates } from '../../src/lib/server/platform/app-paths';
 import { openDatabase } from '../../src/lib/server/platform/database';
 import {
@@ -290,6 +290,8 @@ export interface BrowserAppHarness {
 export interface BrowserAppHarnessOptions {
   /** Run from a private project copy without app-root or API-key environment overrides. */
   freshOnboarding?: boolean;
+  /** Explicitly seed onboarding completion for fixtures that are not exercising first-run setup. */
+  completedOnboarding?: boolean;
   /** Keep narrower DB/media/log resources environment-managed and outside the selected root. */
   externalResources?: boolean;
   /** Seed a retained credential transition while using a file-backed fake OS store. */
@@ -400,6 +402,32 @@ export async function startBrowserAppHarness(
         logs: join(temporary.path, 'external', 'logs')
       }
     : null;
+  if (options.completedOnboarding ?? !options.freshOnboarding) {
+    if (options.freshOnboarding) {
+      const seededPaths = resolveAppPathCandidates({
+        environment: isolatedEnvironment,
+        projectRoot: deploymentRoot
+      }).project;
+      await ensureAppPaths(seededPaths);
+      await writeRootMarker(
+        seededPaths.root,
+        promoteInitialProjectMarker(createInitialProjectMarker())
+      );
+    }
+    const seededDatabasePath = externalPaths?.database ?? databasePath;
+    await mkdir(dirname(seededDatabasePath), { recursive: true });
+    const seededDatabase = await openDatabase(seededDatabasePath);
+    try {
+      updateOnboarding(new SettingsRepository(seededDatabase), { complete: true });
+    } finally {
+      seededDatabase.exec('PRAGMA wal_checkpoint(TRUNCATE); PRAGMA journal_mode=DELETE;');
+      seededDatabase.close();
+    }
+    await Promise.all([
+      rm(`${seededDatabasePath}-wal`, { force: true }),
+      rm(`${seededDatabasePath}-shm`, { force: true })
+    ]);
+  }
   let preloadPath: string | null = null;
   if (options.credentialConflict || options.persistedExternalOutputs) {
     if (!options.freshOnboarding) {

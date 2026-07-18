@@ -99,7 +99,9 @@ describe('API key configuration', () => {
         onboardingAvailable: true
       });
       expect((await setup.manager.resolve()).key).toBe('sk-test_local_canary_123456');
-      setup.manager.recordConnectivity('ok');
+      await setup.manager.verifyConnectivity(async (resolved) => {
+        expect(resolved.key).toBe('sk-test_local_canary_123456');
+      });
       expect(setup.manager.connectivityStatus()).toEqual({
         checkedAt: '2026-07-15T12:00:00.000Z',
         status: 'ok'
@@ -108,7 +110,85 @@ describe('API key configuration', () => {
         source: 'none',
         status: 'missing'
       });
+      expect(setup.manager.connectivityStatus()).toEqual({ checkedAt: null, status: null });
       expect((await setup.manager.resolve()).key).toBeNull();
+    } finally {
+      setup.database.close();
+    }
+  });
+
+  test('serializes connectivity against key mutation and invalidates the completed result', async () => {
+    const setup = await manager({});
+    try {
+      const firstKey = 'sk-test_first_connectivity_canary_123456';
+      const secondKey = 'sk-test_second_connectivity_canary_123456';
+      await setup.manager.setLocal(firstKey);
+
+      let releaseProbe!: () => void;
+      const probeRelease = new Promise<void>((resolve) => {
+        releaseProbe = resolve;
+      });
+      let markProbeStarted!: () => void;
+      const probeStarted = new Promise<void>((resolve) => {
+        markProbeStarted = resolve;
+      });
+      const verification = setup.manager.verifyConnectivity(async (resolved) => {
+        expect(resolved.key).toBe(firstKey);
+        markProbeStarted();
+        await probeRelease;
+      });
+      await probeStarted;
+
+      const mutation = setup.manager.setLocal(secondKey);
+      await Bun.sleep(5);
+      expect(setup.store.value).toBe(firstKey);
+      releaseProbe();
+      await Promise.all([verification, mutation]);
+
+      expect((await setup.manager.resolve()).key).toBe(secondKey);
+      expect(setup.manager.connectivityStatus()).toEqual({ checkedAt: null, status: null });
+    } finally {
+      setup.database.close();
+    }
+  });
+
+  test('records a failed probe without exposing or discarding the configured key', async () => {
+    const setup = await manager({});
+    try {
+      const key = 'sk-test_failed_connectivity_canary_123456';
+      await setup.manager.setLocal(key);
+      await expect(
+        setup.manager.verifyConnectivity(async (resolved) => {
+          expect(resolved.key).toBe(key);
+          throw new Error('synthetic connectivity failure');
+        })
+      ).rejects.toThrow('synthetic connectivity failure');
+      expect(setup.manager.connectivityStatus()).toEqual({
+        checkedAt: '2026-07-15T12:00:00.000Z',
+        status: 'failed'
+      });
+      expect((await setup.manager.resolve()).key).toBe(key);
+    } finally {
+      setup.database.close();
+    }
+  });
+
+  test('does not reuse persisted connectivity for a restarted or changed credential', async () => {
+    const setup = await manager({});
+    try {
+      await setup.manager.setLocal('sk-test_restart_local_canary_123456');
+      await setup.manager.verifyConnectivity(async () => undefined);
+      expect(await setup.manager.connectivityVerified()).toBe(true);
+
+      const restarted = new ApiKeyManager({
+        environment: { POYO_API_KEY: 'sk-test_restart_environment_canary_123456' },
+        secretStore: setup.store,
+        metadataRepository: new SecretMetadataRepository(setup.database),
+        now: () => new Date('2026-07-15T12:01:00.000Z')
+      });
+      expect(restarted.connectivityStatus()).toEqual({ checkedAt: null, status: null });
+      expect((await restarted.status()).source).toBe('environment');
+      expect(await restarted.connectivityVerified()).toBe(false);
     } finally {
       setup.database.close();
     }

@@ -44,10 +44,10 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
-test('fresh onboarding and settings expose explicit local storage choices without Poyo calls', async () => {
+test('fresh onboarding verifies the stored key, fails closed, and invalidates edited credentials', async () => {
   const harness = await startBrowserAppHarness({ freshOnboarding: true });
   const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const page = await context.newPage();
   const issues = trackBrowserIssues(page);
   try {
@@ -81,15 +81,89 @@ test('fresh onboarding and settings expose explicit local storage choices withou
     expect(issues.pageErrors).toEqual([]);
     expect(harness.mock.requests).toHaveLength(0);
 
-    const onboardingStatus = await page.evaluate(async () => {
-      const response = await fetch('/api/onboarding', {
-        method: 'PUT',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ complete: true })
-      });
-      return response.status;
+    const blockedOnboardingStatuses = await page.evaluate(async () => {
+      const updates = [{ complete: true }, { dismiss: true }, { steps: { connection: true } }];
+      return Promise.all(
+        updates.map(async (body) => {
+          const response = await fetch('/api/onboarding', {
+            method: 'PUT',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(body)
+          });
+          return response.status;
+        })
+      );
     });
-    expect(onboardingStatus).toBe(200);
+    expect(blockedOnboardingStatuses).toEqual([409, 409, 409]);
+
+    let connectivityAttempts = 0;
+    let releaseAutomaticProbe = (): void => undefined;
+    const automaticProbeBlocked = new Promise<void>((resolve) => {
+      releaseAutomaticProbe = resolve;
+    });
+    let automaticProbeStarted = (): void => undefined;
+    const automaticProbeEntered = new Promise<void>((resolve) => {
+      automaticProbeStarted = resolve;
+    });
+    await page.route('**/api/settings/api-key/connectivity', async (route) => {
+      if (connectivityAttempts++ === 0) {
+        automaticProbeStarted();
+        await automaticProbeBlocked;
+        await route.fulfill({
+          status: 401,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: { message: 'The test credential was rejected.' } })
+        });
+        return;
+      }
+      await route.continue();
+    });
+
+    expect(await page.getByRole('button', { name: 'Continue' }).isDisabled()).toBe(true);
+    await page.getByLabel('Poyo API key').fill(harness.syntheticKey);
+    const storeKey = page.getByRole('button', { name: 'Store key' });
+    await storeKey.click();
+    await automaticProbeEntered;
+    await page.getByText('Testing connection…', { exact: true }).waitFor();
+    expect(connectivityAttempts).toBe(1);
+    expect(await storeKey.isDisabled()).toBe(true);
+    expect(await page.getByRole('button', { name: 'Test again' }).isDisabled()).toBe(true);
+    expect(await page.getByRole('button', { name: 'Continue' }).isDisabled()).toBe(true);
+    await Bun.sleep(50);
+    expect(connectivityAttempts).toBe(1);
+    releaseAutomaticProbe();
+    await page.getByText('Connection failed. Check the key and try again.').waitFor();
+    const testAgain = page.getByRole('button', { name: 'Test again' });
+    await page.waitForFunction(() => document.activeElement?.textContent?.trim() === 'Test again');
+    expect(await testAgain.evaluate((element) => element === document.activeElement)).toBe(true);
+    expect(
+      await page
+        .getByText(
+          'Key stored by the local server only. Its value never returns through this page.',
+          { exact: true }
+        )
+        .count()
+    ).toBeGreaterThan(0);
+    expect(await page.getByRole('button', { name: 'Continue' }).isDisabled()).toBe(true);
+
+    await page.getByRole('button', { name: 'Test again' }).click();
+    await page.getByText('Connected · browser-suite@example.test').waitFor();
+    expect(await page.getByRole('button', { name: 'Continue' }).isEnabled()).toBe(true);
+
+    await page.getByLabel('Poyo API key').fill(`${harness.syntheticKey}-edited`);
+    await page.getByText('Not tested', { exact: true }).waitFor();
+    expect(await page.getByRole('button', { name: 'Continue' }).isDisabled()).toBe(true);
+    expect(await page.getByRole('button', { name: 'Test connection' }).isDisabled()).toBe(true);
+    await page.getByLabel('Poyo API key').fill('');
+    await page.getByRole('button', { name: 'Test connection' }).click();
+    await page.getByText('Connected · browser-suite@example.test').waitFor();
+    await page.getByRole('button', { name: 'Continue' }).click();
+    await page.getByRole('heading', { name: 'Choose your appearance' }).waitFor();
+    await page.getByRole('button', { name: 'Save and continue' }).click();
+    await page.getByRole('heading', { name: 'You are ready to create' }).waitFor();
+    await page.getByRole('button', { name: 'Enter the studio' }).click();
+    await page.waitForURL((url) => url.pathname === '/');
+
     await page.goto(`${harness.url}/settings`);
     await page.getByRole('heading', { name: 'Studio operations' }).waitFor();
     await page.getByRole('heading', { name: 'Storage and downloads' }).scrollIntoViewIfNeeded();
@@ -99,7 +173,10 @@ test('fresh onboarding and settings expose explicit local storage choices withou
     );
     expect(await seriousAccessibilityViolations(page)).toEqual([]);
     expect(issues.pageErrors).toEqual([]);
-    expect(harness.mock.requests).toHaveLength(0);
+    expect(harness.mock.requests.map((request) => request.pathname)).toEqual([
+      '/api/user/balance',
+      '/api/user/balance'
+    ]);
   } finally {
     await context.close();
     await browser.close();
@@ -372,7 +449,8 @@ test('external current and historical output folders qualify every root-move cla
 test('completed onboarding can observe a cold frozen relocation without filesystem mutation', async () => {
   const harness = await startBrowserAppHarness({
     freshOnboarding: true,
-    externalResources: true
+    externalResources: true,
+    completedOnboarding: true
   });
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
@@ -383,12 +461,6 @@ test('completed onboarding can observe a cold frozen relocation without filesyst
       origin: harness.url,
       'sec-fetch-site': 'same-origin'
     };
-    const onboarding = await fetch(`${harness.url}/api/onboarding`, {
-      method: 'PUT',
-      headers: sameOriginHeaders,
-      body: JSON.stringify({ complete: true })
-    });
-    expect(onboarding.status).toBe(200);
     expect(await pathExists(join(harness.appData, 'secrets'))).toBe(false);
 
     const response = await fetch(`${harness.url}/api/settings/storage-root`, {

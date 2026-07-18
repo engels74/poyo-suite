@@ -19,22 +19,34 @@ import {
   validateLocalFileSelection
 } from '$lib/features/generation/media-preflight';
 import {
-  createJobRequest,
+  createStudioSubmissionSnapshot,
   filterRetiredExpertOverrides,
   initialGuidedValues,
   initialRoleInputs,
   mediaAccept,
   nextMonotonicEventId,
+  readPaidSubmissionResponse,
   parseExpertOverrides,
   pendingActionRecoveryDelay,
   presetValues,
   roleLabel,
   type SizeMode,
+  type StudioSubmissionSnapshot,
   sizeModes,
   valuesWithRoleInputs,
   visibleFields,
   workflowLabel
 } from '$lib/features/generation/studio-controller';
+import {
+  applyStudioJobEvent,
+  compareStudioJobRecency,
+  mergeKnownStudioSnapshot,
+  nextStudioResultCandidate,
+  upsertStudioSessionJob,
+  type StudioJobEventUpdate,
+  type StudioResultCandidateStates,
+  type StudioSessionJobs
+} from '$lib/features/generation/studio-session';
 import {
   automaticFieldChoice,
   automaticSizingIssues,
@@ -142,6 +154,8 @@ let submissionUnknown = $state(false);
 let recoveryConcluded = $state(false);
 let recoveryExhausted = $state(false);
 let activeJob = $state<StudioJobDto | null>(null);
+let sessionJobs = $state<StudioSessionJobs>({});
+let resultJob = $state<StudioJobDto | null>(null);
 let connection = $state<'connecting' | 'connected' | 'reconnecting'>('connecting');
 let balance = $state(initialData.balance);
 let balanceRefreshing = $state(false);
@@ -170,9 +184,9 @@ let draftPersistSuspended = $state(false);
 let restoredMessage = $state('');
 let outputs = $state<StudioOutputDto[] | null>(null);
 let outputsError = $state('');
-let loadingOutputs = $state(false);
 let selectedOutput = $state(0);
-let fetchedOutputsFor = '';
+let outputCandidateStates = $state<StudioResultCandidateStates>({});
+let loadingOutputs = $derived(Object.values(outputCandidateStates).includes('loading'));
 let completedCredits = $state<number | null>(null);
 let nowMs = $state(0);
 let batch = $state<StudioBatch>({
@@ -323,7 +337,6 @@ function switchEntry(next: StudioEntry): void {
   expertText = '';
   preview = null;
   previewIssues = [];
-  activeJob = null;
   editingBatchItemId = null;
   dirty = false;
   previewRevision += 1;
@@ -379,6 +392,75 @@ async function requestPreview(): Promise<NormalizedPreview | null> {
   }
 }
 
+function captureSubmissionSnapshot(actionId: string): StudioSubmissionSnapshot | null {
+  const sizingIssues = automaticSizingIssues(selectedEntry, roleInputs, activeAutomaticFields);
+  if (sizingIssues.length) {
+    preview = null;
+    previewState = 'invalid';
+    previewIssues = sizingIssues;
+    return null;
+  }
+  try {
+    return createStudioSubmissionSnapshot(
+      actionId,
+      selectedEntry,
+      resolvedGuided,
+      parseExpertOverrides(expertText),
+      roleInputs
+    );
+  } catch (error) {
+    preview = null;
+    previewState = 'invalid';
+    previewIssues = [error instanceof Error ? error.message : 'Expert overrides are invalid.'];
+    return null;
+  }
+}
+
+async function validateSubmissionSnapshot(
+  snapshot: StudioSubmissionSnapshot,
+  revision: number
+): Promise<boolean> {
+  if (revision === previewRevision) {
+    previewState = 'validating';
+    previewIssues = [];
+  }
+  try {
+    const response = await fetch('/api/requests/preview', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(snapshot.preview)
+    });
+    const result = (await response.json()) as
+      | NormalizedPreview
+      | { error: { code: string; message?: string; issues?: string[] } };
+    if (!response.ok || 'error' in result) {
+      if (revision === previewRevision) {
+        preview = null;
+        previewState = 'invalid';
+        previewIssues =
+          'error' in result
+            ? (result.error.issues ?? [result.error.message ?? 'The request is not valid.'])
+            : ['The request is not valid.'];
+      }
+      return false;
+    }
+    if (revision === previewRevision) {
+      preview = result;
+      previewState = 'valid';
+    }
+    return true;
+  } catch (error) {
+    if (revision === previewRevision) {
+      preview = null;
+      previewState = 'invalid';
+      previewIssues = [
+        error instanceof Error ? error.message : 'The request preview is unavailable.'
+      ];
+    }
+    return false;
+  }
+}
+
 $effect(() => {
   previewRevision;
   entryKey;
@@ -415,89 +497,69 @@ $effect(() => {
   });
 });
 
-async function loadOutputs(jobId: string): Promise<void> {
-  loadingOutputs = true;
-  outputsError = '';
-  // Clear the previous job's media before fetching so switching between completed jobs never
-  // renders stale outputs under the new job's header during the in-flight request.
-  outputs = null;
-  selectedOutput = 0;
-  completedCredits = null;
+function acceptSessionJob(job: StudioJobDto): StudioJobDto {
+  const previous = sessionJobs[job.id];
+  sessionJobs = upsertStudioSessionJob(sessionJobs, job);
+  const accepted = sessionJobs[job.id] ?? job;
+  retryTransientOutputAfterJobUpdate(job.id, previous, accepted);
+  return accepted;
+}
+
+function retryTransientOutputAfterJobUpdate(
+  jobId: string,
+  previous: StudioJobDto | undefined,
+  updated: StudioJobDto | undefined
+): void {
+  if (
+    outputCandidateStates[jobId] !== 'transient' ||
+    !updated ||
+    previous?.updatedAt === updated.updatedAt
+  )
+    return;
+  const nextStates = { ...outputCandidateStates };
+  delete nextStates[jobId];
+  outputCandidateStates = nextStates;
+}
+
+async function loadResultCandidate(job: StudioJobDto): Promise<void> {
+  outputCandidateStates = { ...outputCandidateStates, [job.id]: 'loading' };
+  if (!resultJob) outputsError = '';
   try {
-    const response = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/outputs`);
+    const response = await fetch(`/api/jobs/${encodeURIComponent(job.id)}/outputs`);
     const result = (await response.json()) as {
       outputs?: StudioOutputDto[];
       actualCredits?: number | null;
     };
-    // A newer job may have become active while this request was in flight; a late response for a
-    // superseded job must not paint its media (or error) under the current job's header. Clear the
-    // once-per-job marker so returning to this job re-fetches instead of staying stuck on a blank
-    // result stage.
-    if (activeJob?.id !== jobId) {
-      if (fetchedOutputsFor === jobId) fetchedOutputsFor = '';
+    if (!response.ok || !result.outputs?.some((output) => output.mediaUrl)) {
+      outputCandidateStates = {
+        ...outputCandidateStates,
+        [job.id]: response.ok ? 'empty' : 'transient'
+      };
+      if (!resultJob)
+        outputsError = 'The generated media could not be loaded. Open the job to review it.';
       return;
     }
-    // The charge is known from the job record regardless of whether the files are still viewable,
-    // so surface it even when the media itself can't be loaded.
-    if (response.ok) completedCredits = result.actualCredits ?? null;
-    // Treat "no viewable output" (e.g. files deleted or moved after completion) as an error rather
-    // than a blank success, so the result stage shows guidance instead of an empty preview.
-    if (response.ok && result.outputs?.some((output) => output.mediaUrl)) {
+    outputCandidateStates = { ...outputCandidateStates, [job.id]: 'viewable' };
+    const accepted = sessionJobs[job.id] ?? job;
+    if (!resultJob || compareStudioJobRecency(accepted, resultJob) > 0) {
+      resultJob = accepted;
       outputs = result.outputs;
       selectedOutput = 0;
-    } else {
-      outputsError = 'The generated media could not be loaded. Open the job to review it.';
-      // A non-2xx response is a (possibly transient) server error, not a terminal "files gone"
-      // result, so clear the once-per-job marker to leave a retry path open for the next activeJob
-      // refresh. A 2xx with no viewable output is terminal (deleted/moved files), so keep the marker
-      // to avoid refetching a permanently empty result.
-      if (!response.ok && fetchedOutputsFor === jobId) fetchedOutputsFor = '';
+      completedCredits = result.actualCredits ?? accepted.actualCredits ?? null;
+      outputsError = '';
+      if (hasApiKey) void refreshBalanceSnapshot();
     }
   } catch {
-    if (activeJob?.id === jobId)
+    outputCandidateStates = { ...outputCandidateStates, [job.id]: 'transient' };
+    if (!resultJob)
       outputsError = 'The generated media could not be loaded. Open the job to review it.';
-    // Clear the once-per-job marker on any fetch/parse failure so a later activeJob refresh (e.g. an
-    // SSE reconnect snapshot re-emitting this job) can retry a transient failure instead of leaving
-    // the result stage stuck. Terminal "no viewable output" (response ok, files gone) keeps the
-    // marker so it does not refetch a permanently empty result.
-    if (fetchedOutputsFor === jobId) fetchedOutputsFor = '';
-  } finally {
-    // Release the spinner unless a *different* settled job is now loading its own outputs: that
-    // newer in-flight load owns loadingOutputs. In every other case (this job still active, no
-    // active job, or a superseding in-progress/failed job) clear it so a superseded fetch can't
-    // strand a stale "Loading the generated media…" state.
-    const supersededByLoadingJob =
-      activeJob?.id !== jobId &&
-      activeJob?.localPhase === 'complete' &&
-      activeJob?.remoteStatus !== 'failed';
-    if (!supersededByLoadingJob) loadingOutputs = false;
   }
 }
 
-// Load verified outputs into the result stage once a job completes. A plain (non-reactive)
-// guard fetches exactly once per job and avoids an effect loop.
 $effect(() => {
-  const job = activeJob;
-  if (!job) {
-    outputs = null;
-    outputsError = '';
-    completedCredits = null;
-    loadingOutputs = false;
-    fetchedOutputsFor = '';
-    return;
-  }
-  const settled = job.localPhase === 'complete' && job.remoteStatus !== 'failed';
-  if (settled && fetchedOutputsFor !== job.id) {
-    fetchedOutputsFor = job.id;
-    void loadOutputs(job.id);
-    // Refresh the balance after a paid job settles; the actual charge is now known upstream.
-    if (hasApiKey) void refreshBalanceSnapshot();
-  } else if (!settled) {
-    // The active job is not a settled/successful generation (a new in-progress job, or a failed
-    // one): clear the previous completed job's charge so its "Charged X credits" line does not
-    // linger under the new job. A settled job whose outputs we've already loaded keeps its charge.
-    completedCredits = null;
-  }
+  const candidate = nextStudioResultCandidate(sessionJobs, outputCandidateStates);
+  if (!candidate) return;
+  void loadResultCandidate(candidate);
 });
 
 function addRoleInput(role: string, input: StudioRoleInput): void {
@@ -721,51 +783,52 @@ async function refreshBalanceSnapshot(): Promise<void> {
 
 async function submit(): Promise<void> {
   if (submitting || submissionLocked || !hasApiKey) return;
-  submitting = true;
-  if (!(await requestPreview())) {
-    submitting = false;
-    return;
-  }
-  let overrides: ExpertOverride[];
-  try {
-    overrides = parseExpertOverrides(expertText);
-  } catch (error) {
-    previewIssues = [error instanceof Error ? error.message : 'Expert overrides are invalid.'];
-    submitting = false;
-    return;
-  }
   const action: PendingAction = {
     actionId: crypto.randomUUID(),
     entryKey,
     createdAt: Date.now()
   };
+  const revision = previewRevision;
+  const snapshot = captureSubmissionSnapshot(action.actionId);
+  if (!snapshot) return;
+  submitting = true;
+  if (!(await validateSubmissionSnapshot(snapshot, revision))) {
+    submitting = false;
+    return;
+  }
   storePendingAction(action);
   try {
     const response = await fetch('/api/jobs', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(
-        createJobRequest(action.actionId, selectedEntry, resolvedGuided, overrides, roleInputs)
-      )
+      body: JSON.stringify(snapshot.request)
     });
-    const result = (await response.json()) as { job?: StudioJobDto; error?: { message?: string } };
-    if (!response.ok || !result.job) {
+    const { outcome, result } = await readPaidSubmissionResponse<StudioJobDto>(response);
+    if (outcome === 'rejected') {
+      clearPendingAction(action.actionId);
+      submissionUnknown = false;
+      submissionLocked = false;
+      previewIssues = [result.error?.message ?? 'The local server rejected the request.'];
+      return;
+    }
+    if (outcome === 'ambiguous' || !result.job) {
       submissionUnknown = true;
       submissionLocked = true;
       previewIssues = [
-        `${result.error?.message ?? 'The local server did not confirm the job.'} The paid action remains locked until reconciliation.`
+        'The local server response did not confirm the paid job. The action remains locked until reconciliation.'
       ];
       void reconcilePendingAction();
       return;
     }
     clearPendingAction(action.actionId);
-    activeJob = result.job;
-    submissionLocked = true;
-    dirty = false;
+    activeJob = acceptSessionJob(result.job);
+    submissionUnknown = false;
+    submissionLocked = false;
+    if (revision === previewRevision) dirty = false;
     void fetch('/api/model-preferences', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ entryKey, used: true })
+      body: JSON.stringify({ entryKey: snapshot.request.entryKey, used: true })
     });
   } catch {
     submissionUnknown = true;
@@ -792,7 +855,6 @@ function persistBatchNow(): void {
 }
 
 async function addCurrentToBatch(): Promise<void> {
-  if (!(await requestPreview())) return;
   const incompatible = batch.items.find((item) => item.request.entryKey !== entryKey);
   if (incompatible) {
     previewIssues = [
@@ -804,26 +866,25 @@ async function addCurrentToBatch(): Promise<void> {
     previewIssues = ['A local batch supports at most 20 independently recoverable items.'];
     return;
   }
-  let overrides: ExpertOverride[];
-  try {
-    overrides = parseExpertOverrides(expertText);
-  } catch (error) {
-    previewIssues = [error instanceof Error ? error.message : 'Expert overrides are invalid.'];
-    return;
-  }
-
   const existing = editingBatchItemId
     ? batch.items.find((item) => item.id === editingBatchItemId)
     : undefined;
   const now = new Date().toISOString();
   const actionId = existing?.request.actionId ?? crypto.randomUUID();
+  const revision = previewRevision;
+  const snapshot = captureSubmissionSnapshot(actionId);
+  if (!snapshot) return;
+  const batchSnapshot = {
+    displayName: selectedEntry.displayName,
+    sizeMode,
+    automaticFields: [...automaticFieldKeys()],
+    request: snapshot.request
+  };
+  if (!(await validateSubmissionSnapshot(snapshot, revision))) return;
   const item = createBatchItem(
     {
       modality: data.modality,
-      displayName: selectedEntry.displayName,
-      sizeMode,
-      automaticFields: automaticFieldKeys(),
-      request: createJobRequest(actionId, selectedEntry, resolvedGuided, overrides, roleInputs)
+      ...batchSnapshot
     },
     {
       itemId: existing?.id ?? crypto.randomUUID(),
@@ -870,7 +931,6 @@ function editBatchItem(item: StudioBatchItem): void {
         2
       )
     : '';
-  activeJob = null;
   editingBatchItemId = item.id;
   dirty = true;
   restoredMessage = 'Editing a batch item. Save it back to the batch when ready.';
@@ -911,9 +971,10 @@ async function loadBatchOutputs(itemId: string, jobId: string): Promise<void> {
 
 function applyJobToBatchItem(item: StudioBatchItem, job: StudioJobDto): void {
   const latest = batch.items.find((candidate) => candidate.id === item.id) ?? item;
-  const next = applyBatchJob(latest, job);
+  const accepted = acceptSessionJob(job);
+  const next = applyBatchJob(latest, accepted);
   replaceBatchItem(next);
-  if (next.state === 'complete') void loadBatchOutputs(next.id, job.id);
+  if (next.state === 'complete') void loadBatchOutputs(next.id, accepted.id);
 }
 
 async function reconcileBatchItem(item: StudioBatchItem): Promise<boolean> {
@@ -955,27 +1016,27 @@ async function submitBatchItem(itemId: string): Promise<void> {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(item.request)
     });
-    const result = (await response.json()) as { job?: StudioJobDto; error?: { message?: string } };
+    const { outcome, result } = await readPaidSubmissionResponse<StudioJobDto>(response);
     const latest = batch.items.find((candidate) => candidate.id === itemId) ?? item;
-    if (!response.ok || !result.job) {
-      if (await reconcileBatchItem(latest)) return;
-      if (response.ok) {
-        const unknown = {
-          ...latest,
-          state: 'unknown' as const,
-          error:
-            'The local server response did not confirm the paid job. This action is locked until it can be reconciled.'
-        };
-        replaceBatchItem(unknown);
-        persistBatchNow();
-        return;
-      }
+    if (outcome === 'rejected') {
       replaceBatchItem({
         ...latest,
         state: 'failed',
         error:
           result.error?.message ?? 'The local server rejected this item before a job was confirmed.'
       });
+      return;
+    }
+    if (outcome === 'ambiguous' || !result.job) {
+      if (await reconcileBatchItem(latest)) return;
+      const unknown = {
+        ...latest,
+        state: 'unknown' as const,
+        error:
+          'The local server response did not confirm the paid job. This action is locked until it can be reconciled.'
+      };
+      replaceBatchItem(unknown);
+      persistBatchNow();
       return;
     }
     applyJobToBatchItem(latest, result.job);
@@ -1085,21 +1146,9 @@ async function retryBatchItem(item: StudioBatchItem): Promise<void> {
         )
       }
     );
-    const result = (await response.json()) as { job?: StudioJobDto; error?: { message?: string } };
+    const { outcome, result } = await readPaidSubmissionResponse<StudioJobDto>(response);
     const latest = batch.items.find((candidate) => candidate.id === item.id) ?? retry;
-    if (!response.ok || !result.job) {
-      if (await reconcileBatchItem(latest)) return;
-      if (response.ok) {
-        const unknown = {
-          ...latest,
-          state: 'unknown' as const,
-          error:
-            'The local server response did not confirm the paid retry. Another retry is locked until this action is reconciled.'
-        };
-        replaceBatchItem(unknown);
-        persistBatchNow();
-        return;
-      }
+    if (outcome === 'rejected') {
       replaceBatchItem({
         ...latest,
         state: 'failed',
@@ -1107,6 +1156,18 @@ async function retryBatchItem(item: StudioBatchItem): Promise<void> {
         outputs: item.outputs,
         error: result.error?.message ?? 'The local server rejected this paid retry.'
       });
+      return;
+    }
+    if (outcome === 'ambiguous' || !result.job) {
+      if (await reconcileBatchItem(latest)) return;
+      const unknown = {
+        ...latest,
+        state: 'unknown' as const,
+        error:
+          'The local server response did not confirm the paid retry. Another retry is locked until this action is reconciled.'
+      };
+      replaceBatchItem(unknown);
+      persistBatchNow();
       return;
     }
     applyJobToBatchItem(latest, result.job);
@@ -1153,7 +1214,6 @@ function resetDraft(): void {
   expertText = '';
   preview = null;
   previewIssues = [];
-  activeJob = null;
   editingBatchItemId = null;
   submissionUnknown = false;
   submissionLocked = false;
@@ -1164,6 +1224,14 @@ function resetDraft(): void {
   // A deliberate reset returns to the normal studio entry point, so allow auto-save to resume.
   draftPersistSuspended = false;
   previewRevision += 1;
+}
+
+function dismissResultPreview(): void {
+  resultJob = null;
+  outputs = null;
+  outputsError = '';
+  completedCredits = null;
+  selectedOutput = 0;
 }
 
 async function savePreset(): Promise<void> {
@@ -1218,14 +1286,7 @@ function startResize(event: PointerEvent): void {
 }
 
 function updateFromJobEvent(event: MessageEvent<string>): void {
-  const update = JSON.parse(event.data) as {
-    jobId: string;
-    localPhase: string;
-    remoteStatus: string;
-    failureDomain: string;
-    progress: number | null;
-    observedAt: string;
-  };
+  const update = JSON.parse(event.data) as StudioJobEventUpdate;
   const batchItem = batch.items.find((item) => item.job?.id === update.jobId);
   if (batchItem?.job) {
     applyJobToBatchItem(batchItem, {
@@ -1237,16 +1298,11 @@ function updateFromJobEvent(event: MessageEvent<string>): void {
       updatedAt: update.observedAt
     });
   }
-  if (!activeJob) return;
-  if (update.jobId !== activeJob.id) return;
-  activeJob = {
-    ...activeJob,
-    localPhase: update.localPhase,
-    remoteStatus: update.remoteStatus,
-    failureDomain: update.failureDomain,
-    progress: update.progress,
-    updatedAt: update.observedAt
-  };
+  const previousJob = sessionJobs[update.jobId];
+  sessionJobs = applyStudioJobEvent(sessionJobs, update);
+  const updatedJob = sessionJobs[update.jobId];
+  retryTransientOutputAfterJobUpdate(update.jobId, previousJob, updatedJob);
+  if (activeJob?.id === update.jobId && updatedJob) activeJob = updatedJob;
 }
 
 function acceptDurableEvent(event: MessageEvent<string>): boolean {
@@ -1286,12 +1342,12 @@ async function reconcilePendingAction(): Promise<void> {
       onlyNotFound = false;
       const result = (await response.json()) as { job?: StudioJobDto };
       if (!response.ok || !result.job) continue;
-      activeJob = result.job;
+      activeJob = acceptSessionJob(result.job);
       entryKey = pending.entryKey;
       submissionUnknown = false;
       recoveryConcluded = false;
       recoveryExhausted = false;
-      submissionLocked = true;
+      submissionLocked = false;
       previewIssues = [];
       clearPendingAction(pending.actionId);
       return;
@@ -1404,16 +1460,12 @@ onMount(() => {
       const matchingBatchJob = snapshot.jobs.find((job) => job.id === item.job?.id);
       if (matchingBatchJob) applyJobToBatchItem(item, matchingBatchJob);
     }
-    const batchJobIds = new Set(batch.items.map((item) => item.job?.id).filter(Boolean));
-    const matching = activeJob
-      ? snapshot.jobs.find((job) => job.id === activeJob?.id)
-      : snapshot.jobs.find(
-          (job) =>
-            job.publicModelId === selectedEntry.publicModelId &&
-            !batchJobIds.has(job.id) &&
-            !['complete'].includes(job.localPhase)
-        );
-    if (matching) activeJob = matching;
+    const previousJobs = sessionJobs;
+    sessionJobs = mergeKnownStudioSnapshot(sessionJobs, snapshot.jobs);
+    for (const job of snapshot.jobs)
+      retryTransientOutputAfterJobUpdate(job.id, previousJobs[job.id], sessionJobs[job.id]);
+    const matching = activeJob ? snapshot.jobs.find((job) => job.id === activeJob?.id) : undefined;
+    if (matching) activeJob = sessionJobs[matching.id] ?? activeJob;
   });
   events.addEventListener('job', (event) => {
     const message = event as MessageEvent<string>;
@@ -1841,7 +1893,7 @@ function showMobileSection(section: MobileStep, mobile: boolean): boolean {
         </Button>
       </div>
       <p id={`${data.modality}-generate-status`} class="sr-only">
-        {!hasApiKey ? 'Configure a Poyo API key before generating.' : submissionLocked ? 'This request has already been submitted.' : preview ? 'Ready to generate.' : 'Request validation is incomplete.'}
+        {!hasApiKey ? 'Configure a Poyo API key before generating.' : submissionLocked ? 'The previous paid action has an unresolved outcome.' : preview ? 'Ready to generate.' : 'Request validation is incomplete.'}
       </p>
     </div>
   </div>
@@ -1860,7 +1912,7 @@ function showMobileSection(section: MobileStep, mobile: boolean): boolean {
           {submissionUnknown ? 'Outcome unknown' : activeJob ? activeJob.localPhase.replaceAll('_', ' ') : preview ? 'Ready' : 'Compose'}
         </Badge>
         <span class="truncate text-muted-foreground">
-          {activeJob ? `${activeJob.remoteStatus.replaceAll('_', ' ')} · ${selectedEntry.displayName}` : workflowLabel(selectedEntry.workflow)}
+          {activeJob ? `${activeJob.remoteStatus.replaceAll('_', ' ')} · ${activeJob.publicModelId}` : workflowLabel(selectedEntry.workflow)}
         </span>
       </div>
       <div class="flex items-center gap-2">
@@ -1873,7 +1925,7 @@ function showMobileSection(section: MobileStep, mobile: boolean): boolean {
     </div>
 
     <div class="media-stage grid place-items-center px-5 py-10 text-center">
-      {#if activeJob && activeJob.localPhase === 'complete' && activeJob.remoteStatus !== 'failed' && outputs?.some((output) => output.mediaUrl)}
+      {#if resultJob && outputs?.some((output) => output.mediaUrl)}
         {@const shown = outputs.filter((output) => output.mediaUrl)}
         {@const current = shown[Math.min(selectedOutput, shown.length - 1)]}
         {#if current && current.mediaUrl}
@@ -1883,7 +1935,7 @@ function showMobileSection(section: MobileStep, mobile: boolean): boolean {
               <!-- svelte-ignore a11y_media_has_caption -->
               <video src={current.mediaUrl} controls class="max-h-[68vh] max-w-full rounded-[var(--radius)] shadow-[var(--shadow-sm)]"></video>
             {:else}
-              <img src={current.mediaUrl} alt={`Generated ${data.modality} for ${activeJob.publicModelId}`} class="max-h-[68vh] w-auto max-w-full rounded-[var(--radius)] object-contain shadow-[var(--shadow-sm)]" />
+              <img src={current.mediaUrl} alt={`Generated ${data.modality} for ${resultJob.publicModelId}`} class="max-h-[68vh] w-auto max-w-full rounded-[var(--radius)] object-contain shadow-[var(--shadow-sm)]" />
             {/if}
             {#if shown.length > 1}
               <div class="flex flex-wrap justify-center gap-2" aria-label="Generated outputs">
@@ -1900,10 +1952,10 @@ function showMobileSection(section: MobileStep, mobile: boolean): boolean {
               </div>
             {/if}
             <div class="flex flex-wrap items-center justify-center gap-2">
-              <LinkButton href={`/jobs?selected=${activeJob.id}`} variant="outline" class="border-stage-border bg-stage-elevated text-stage-foreground hover:bg-stage-border">View job</LinkButton>
+              <LinkButton href={`/jobs?selected=${resultJob.id}`} variant="outline" class="border-stage-border bg-stage-elevated text-stage-foreground hover:bg-stage-border">View job</LinkButton>
               <a href={current.mediaUrl} target="_blank" rel="noopener" class="focus-ring inline-flex min-h-9 items-center gap-2 rounded-[var(--radius)] border border-stage-border bg-stage-elevated px-3.5 text-sm font-semibold text-stage-foreground hover:bg-stage-border">Open</a>
               <a href={current.mediaUrl} download={current.fileName ?? ''} class="focus-ring inline-flex min-h-9 items-center gap-2 rounded-[var(--radius)] border border-stage-border bg-stage-elevated px-3.5 text-sm font-semibold text-stage-foreground hover:bg-stage-border">Download</a>
-              <Button variant="ghost" class="text-stage-muted hover:bg-stage-elevated hover:text-stage-foreground" onclick={() => (activeJob = null)}>Remix</Button>
+              <Button variant="ghost" class="text-stage-muted hover:bg-stage-elevated hover:text-stage-foreground" onclick={dismissResultPreview}>Remix</Button>
             </div>
           </div>
         {/if}

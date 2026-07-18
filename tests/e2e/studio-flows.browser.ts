@@ -372,6 +372,41 @@ async function selectRadioValue(scope: Locator, value: string): Promise<void> {
   );
 }
 
+async function assertModelPickerUserPath(page: Page): Promise<void> {
+  const showSetup = page.getByRole('button', { name: 'Show setup' });
+  if ((await showSetup.count()) > 0 && (await showSetup.isVisible())) await showSetup.click();
+  const editSetup = page.getByRole('button', { name: 'Edit setup' });
+  if ((await editSetup.count()) > 0 && (await editSetup.isVisible())) await editSetup.click();
+  const picker = page.locator('fieldset:visible').filter({ hasText: 'Audited model' }).first();
+  await picker.waitFor();
+  const details = picker.locator('details');
+  const summary = details.locator('summary');
+  expect(await details.getAttribute('open')).toBeNull();
+  await summary.focus();
+  await page.keyboard.press('Enter');
+  expect(await details.getAttribute('open')).not.toBeNull();
+  expect(await picker.locator('section h3').count()).toBeGreaterThan(0);
+  const selected = picker.locator('input[type="radio"]:checked');
+  const selectedBefore = await selected.getAttribute('value');
+  const alternate = picker.locator('input[type="radio"]:not(:checked)').first();
+  await alternate.focus();
+  expect(await alternate.evaluate((element) => element === document.activeElement)).toBe(true);
+  await page.keyboard.press('Space');
+  if ((await details.getAttribute('open')) !== null) {
+    const retry = picker.locator('input[type="radio"]:not(:checked)').first();
+    await retry.focus();
+    await page.keyboard.press('Space');
+  }
+  await waitUntil(
+    async () => (await details.getAttribute('open')) === null,
+    'The model picker did not close after keyboard selection.'
+  );
+  expect(await picker.locator('input[type="radio"]:checked').getAttribute('value')).not.toBe(
+    selectedBefore
+  );
+  expect(await summary.evaluate((element) => element === document.activeElement)).toBe(true);
+}
+
 function pngCrc(bytes: Uint8Array): number {
   let crc = 0xffffffff;
   for (const byte of bytes) {
@@ -1387,6 +1422,94 @@ serial('HARNESS-01 controlled failure diagnostics are causal and self-cleaning',
   ]);
 });
 
+serial(
+  'JOB-17 direct and batch response boundaries fail closed without false retries',
+  async () => {
+    const harness = await startBrowserAppHarness();
+    const browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+    const page = await context.newPage();
+    try {
+      await page.goto(`${harness.url}/studio/image`);
+      await chooseImageTextWorkflow(page);
+      const inspector = page.locator('#parameter-inspector');
+      const generate = inspector.getByRole('button', { name: 'Generate image' });
+
+      await page.route(
+        '**/api/jobs',
+        (route) => route.fulfill({ status: 400, contentType: 'text/plain', body: 'rejected' }),
+        { times: 1 }
+      );
+      await generate.click();
+      await inspector.getByText('The local server rejected the request.').waitFor();
+      expect(await generate.isEnabled()).toBe(true);
+
+      await page.route(
+        '**/api/jobs',
+        (route) =>
+          route.fulfill({ status: 202, contentType: 'text/plain', body: 'accepted but malformed' }),
+        { times: 1 }
+      );
+      await generate.click();
+      await inspector.getByText(/response did not confirm the paid job/).waitFor();
+      const abandonDirect = inspector.getByRole('button', {
+        name: 'Acknowledge risk and start a new action'
+      });
+      await abandonDirect.waitFor({ timeout: 10_000 });
+      page.once('dialog', (dialog) => dialog.accept());
+      await abandonDirect.click();
+
+      const addBatchItem = async (prompt: string) => {
+        await inspector.getByRole('textbox', { name: /^Prompt/ }).fill(prompt);
+        await inspector.getByText('Request validated locally.').waitFor();
+        await inspector.getByRole('button', { name: 'Add to batch' }).click();
+        await inspector.getByText('Added item 1 to the local batch.').waitFor();
+        await inspector.getByRole('button', { name: 'Review batch (1)' }).click();
+        return page.getByRole('dialog', { name: 'Image batch' });
+      };
+      const removeBatchItem = async (dialog: Locator) => {
+        await dialog.getByRole('button', { name: 'Remove' }).click();
+        await page.keyboard.press('Escape');
+      };
+
+      let dialog = await addBatchItem('Definitive batch rejection');
+      await page.route(
+        '**/api/jobs',
+        (route) => route.fulfill({ status: 503, contentType: 'text/plain', body: 'unavailable' }),
+        { times: 1 }
+      );
+      await dialog.getByRole('button', { name: 'Submit 1 separate billed job' }).click();
+      await dialog.getByText('failed', { exact: true }).waitFor();
+      expect(await dialog.getByText('unknown', { exact: true }).count()).toBe(0);
+      await removeBatchItem(dialog);
+
+      dialog = await addBatchItem('Malformed successful batch response');
+      await page.route(
+        '**/api/jobs',
+        (route) => route.fulfill({ status: 202, contentType: 'text/plain', body: 'malformed' }),
+        { times: 1 }
+      );
+      await dialog.getByRole('button', { name: 'Submit 1 separate billed job' }).click();
+      await dialog.getByText('unknown', { exact: true }).waitFor();
+      page.once('dialog', (confirmation) => confirmation.accept());
+      await dialog.getByRole('button', { name: 'Abandon action' }).click();
+      await removeBatchItem(dialog);
+
+      dialog = await addBatchItem('Lost batch response');
+      await page.route('**/api/jobs', (route) => route.abort('failed'), { times: 1 });
+      await dialog.getByRole('button', { name: 'Submit 1 separate billed job' }).click();
+      await dialog.getByText('unknown', { exact: true }).waitFor();
+      page.once('dialog', (confirmation) => confirmation.accept());
+      await dialog.getByRole('button', { name: 'Abandon action' }).click();
+      await removeBatchItem(dialog);
+    } finally {
+      await context.close();
+      await browser.close();
+      await harness.cleanup();
+    }
+  }
+);
+
 serial('E2E-01..15 production studios, recovery, library, settings and accessibility', async () => {
   const tracker: StageTracker = {};
   const stage = stageRunner(tracker);
@@ -1423,6 +1546,7 @@ serial('E2E-01..15 production studios, recovery, library, settings and accessibi
     expect(await page.locator('html').getAttribute('data-theme')).toBe('dark');
 
     await page.goto(`${harness.url}/studio/image`);
+    await assertModelPickerUserPath(page);
     await assertSeedreamProSizeControls(
       page,
       () =>
@@ -1528,9 +1652,95 @@ serial('E2E-01..15 production studios, recovery, library, settings and accessibi
       database.close();
     }
 
+    const imageSubmitCountAfterEdit = harness.mock.requests.filter(
+      (request) => request.pathname === '/api/generate/submit'
+    ).length;
+    const repeatedGenerate = restoredImageInspector.getByRole('button', {
+      name: 'Generate image'
+    });
+    expect(await repeatedGenerate.isEnabled()).toBe(true);
+    harness.mock.queueOutcome('held');
+    await restoredImageInspector
+      .getByRole('textbox', { name: /^Prompt/ })
+      .fill('Earlier held generation finishes last');
+    await restoredImageInspector.getByText('Request validated locally.').waitFor();
+    await repeatedGenerate.click();
+    await waitUntil(
+      () =>
+        harness.mock.requests.filter((request) => request.pathname === '/api/generate/submit')
+          .length ===
+        imageSubmitCountAfterEdit + 1,
+      'The first repeated generation was not submitted.'
+    );
+    await page.getByRole('heading', { name: 'Generated image result' }).waitFor();
+    expect(await repeatedGenerate.isEnabled()).toBe(true);
+
+    harness.mock.queueOutcome('success');
+    await restoredImageInspector
+      .getByRole('textbox', { name: /^Prompt/ })
+      .fill('Later generation finishes first');
+    await restoredImageInspector.getByText('Request validated locally.').waitFor();
+    await repeatedGenerate.click();
+    await waitUntil(
+      () =>
+        harness.mock.requests.filter((request) => request.pathname === '/api/generate/submit')
+          .length ===
+        imageSubmitCountAfterEdit + 2,
+      'The second repeated generation was not submitted.'
+    );
+
+    const jobForPrompt = (prompt: string) => {
+      const jobs = new Database(harness.databasePath, { readonly: true });
+      try {
+        return jobs
+          .query<{ id: string; local_phase: string }, [string]>(
+            "SELECT id,local_phase FROM jobs WHERE json_extract(guided_request_json,'$.prompt')=? ORDER BY created_at DESC LIMIT 1"
+          )
+          .get(prompt);
+      } finally {
+        jobs.close();
+      }
+    };
+    await waitUntil(
+      () => jobForPrompt('Later generation finishes first')?.local_phase === 'complete',
+      'The later generation did not complete first.',
+      15_000
+    );
+    const laterJobId = jobForPrompt('Later generation finishes first')?.id;
+    if (!laterJobId) throw new Error('The later completed generation was not persisted.');
+    await waitUntil(
+      async () =>
+        (
+          await page.getByRole('link', { name: 'View job', exact: true }).getAttribute('href')
+        )?.includes(laterJobId) ?? false,
+      'The latest successful preview did not promote the later generation.'
+    );
+
+    harness.mock.releaseHeldTasks();
+    await waitUntil(
+      () => jobForPrompt('Earlier held generation finishes last')?.local_phase === 'complete',
+      'The held generation did not complete after release.',
+      15_000
+    );
+    const earlierJobId = jobForPrompt('Earlier held generation finishes last')?.id;
+    if (!earlierJobId) throw new Error('The held completed generation was not persisted.');
+    await waitUntil(
+      async () =>
+        (
+          await page.getByRole('link', { name: 'View job', exact: true }).getAttribute('href')
+        )?.includes(earlierJobId) ?? false,
+      'The result preview did not follow actual completion order.'
+    );
+
     harness.mock.queueOutcome('held');
     await page.goto(`${harness.url}/studio/video`);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await assertModelPickerUserPath(page);
+    expect(await pageHasNoHorizontalOverflow(page)).toBe(true);
+    await page.keyboard.press('Escape');
+    await page.setViewportSize({ width: 1440, height: 900 });
     const videoInspector = page.locator('#parameter-inspector');
+    await selectRadioValue(videoInspector, 'grok-imagine:text-to-video');
     await videoInspector
       .getByRole('textbox', { name: /^Prompt/ })
       .fill('A slow cinematic orbit around a glass sculpture at sunrise');
@@ -1547,10 +1757,10 @@ serial('E2E-01..15 production studios, recovery, library, settings and accessibi
     await page.getByRole('heading', { name: 'Generated video result' }).waitFor({
       timeout: 15_000
     });
-    expect(harness.mock.tasks.size).toBe(3);
+    expect(harness.mock.tasks.size).toBe(imageSubmitCountAfterEdit + 3);
     expect(
       harness.mock.requests.filter((request) => request.pathname === '/api/generate/submit')
-    ).toHaveLength(3);
+    ).toHaveLength(imageSubmitCountAfterEdit + 3);
 
     await page.goto(`${harness.url}/studio/image`);
     await createMultiOutputImage(page);
@@ -1560,11 +1770,11 @@ serial('E2E-01..15 production studios, recovery, library, settings and accessibi
     expect(await page.getByText('Flux Schnell', { exact: true }).count()).toBeGreaterThan(0);
     expect(await page.getByText(/Grok Imagine Video/).count()).toBeGreaterThan(0);
     await page.getByRole('link', { name: 'Completed' }).click();
-    expect(await page.getByText('4 tracked jobs').count()).toBe(1);
+    expect(await page.getByText('6 tracked jobs').count()).toBe(1);
 
     await page.goto(`${harness.url}/library`);
     await page.getByRole('heading', { name: 'Generation groups' }).waitFor();
-    expect(await page.getByText('4 grouped generations').count()).toBe(1);
+    expect(await page.getByText('6 grouped generations').count()).toBe(1);
     await page.getByRole('link', { name: 'List view' }).click();
     await page.waitForURL(/view=list/);
     expect(await page.getByRole('link', { name: 'List view' }).getAttribute('aria-current')).toBe(
