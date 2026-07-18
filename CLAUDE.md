@@ -11,7 +11,6 @@ normal automated tests use mocked or loopback Poyo responses.
 | Purpose | Command |
 | --- | --- |
 | Reproducible install | `bun install --frozen-lockfile` |
-| Create local environment file | `cp .env.example .env && chmod 600 .env` |
 | Loopback development server | `bun run dev` |
 | Production build / local start | `bun run build` then `bun run start` |
 | Format check / write | `bun run format:check` / `bun run format` |
@@ -42,14 +41,14 @@ enabled. Prefer the mock servers in `tests/helpers/` unless a live paid probe is
   normalization, and pure generation/library/settings logic. The static architecture test forbids
   value imports from `src/lib/server/**` into this layer, Svelte components, or client hooks.
 - `src/lib/server/**` owns SQLite, paths, credentials, filesystem operations, Poyo transport, jobs,
-  cleanup, diagnostics, and native OS actions.
+  cleanup, diagnostics, and verified browser media delivery.
 - `getPlatformServices()` in `src/lib/server/platform/runtime.ts` is the process-wide platform
   singleton. It selects the storage root, opens and migrates SQLite, seeds registry rows, configures
   settings, credentials, and redacted JSONL logging, and exposes effective media paths.
 - `getJobRuntime()` in `src/lib/server/jobs/runtime.ts` is the process-wide job singleton. It owns the
   `JobRepository`, `JobCoordinator`, verified output downloader, and background worker.
 - `src/hooks.server.ts` starts the job and cleanup workers and wraps mutating requests in the
-  maintenance writer gate. Root relocation can therefore drain and freeze writes safely.
+  maintenance writer gate. Exclusive local maintenance such as log clearing drains writers first.
 
 Generation crosses several layers:
 
@@ -82,7 +81,7 @@ Generation crosses several layers:
 ### Add or change an API-backed feature
 
 1. Put browser-safe contracts and validation in `src/lib/features/`; put database, filesystem,
-   credentials, upstream calls, and native actions in `src/lib/server/`.
+   credentials, upstream calls, and verified local media handling in `src/lib/server/`.
 2. Keep routes orchestration-only. Use the canonical runtime singleton, `readSameOriginJson()` for
    JSON mutations, the guarded multipart path in `src/lib/server/media/source-intake.ts` for uploads,
    a safe DTO, and the matching domain error mapper.
@@ -120,11 +119,10 @@ Generation crosses several layers:
 - Reuse `src/lib/components/ui/**` and UnoCSS theme tokens/shortcuts. `uno.css` is imported once from
   `src/hooks.client.ts`; do not introduce Tailwind or another adapter/runtime alongside the enforced
   Bun + adapter-bun + presetWind4 stack.
-- The default application root is `./data`. `PLS_APP_DATA_DIR` overrides the selected root;
-  `PLS_DATABASE_PATH`, `PLS_MEDIA_DIR`, and `PLS_LOG_DIR` remain authoritative for their narrower
-  locations. A UI root move copies and verifies managed data, freezes writes, and becomes active only
-  after restart. Do not attempt live path swapping.
-- `POYO_API_KEY` overrides locally selected credential stores. Keys must stay out of page data,
+- The default application root is `./data`. `PLS_APP_DATA_DIR` is the only storage override; the
+  database, media, uploads, thumbnails, logs, secrets, and temporary files remain beneath it. Paths
+  are server configuration and must never be exposed through browser DTOs.
+- `POYO_API_KEY` overrides the single local credential file. Keys must stay out of page data,
   browser storage, SQLite, diagnostic exports, and structured logs; use `ApiKeyManager` and existing
   redaction/safe-error paths.
 - Studio drafts may persist only bounded, validated, serializable metadata. Preserve the contract in
@@ -134,7 +132,7 @@ Generation crosses several layers:
 
 ## Testing and Validation
 
-- Unit tests mirror feature/server domains. Integration tests cover SQLite, root relocation, jobs,
+- Unit tests mirror feature/server domains. Integration tests cover SQLite, the data root, jobs,
   credentials, and the Poyo client; reliability tests use a child worker for restart recovery.
 - Browser E2E/security tests run the production build in an isolated temporary deployment and data
   root against `tests/helpers/studio-mock-poyo-server.ts`; reuse the harness instead of weakening the
