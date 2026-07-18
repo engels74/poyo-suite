@@ -1,156 +1,150 @@
-# CLAUDE.md
+# Repository Guidelines
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+## Scope and Instruction Precedence
 
-## Project overview
+- Run commands from the repository root with Bun 1.3.14, pinned by `.bun-version`,
+  `package.json#packageManager`, and `engines`.
+- Prefer executable configuration and tests over prose when they disagree. Before UI or styling
+  work, also read `.augment/rules/poyo-studio-tech-stack.md` for the enforced Svelte 5 runes,
+  SvelteKit 2, UnoCSS presetWind4, and Bits UI conventions.
 
-Poyo Local Studio is a single-package (no workspaces) SvelteKit 2 + Svelte 5 application running on
-Bun. It generates images and video through the Poyo.ai API and stores everything locally in SQLite
-plus a platform application-data directory. Bun is the only supported runtime and package manager,
-pinned to `1.3.14` in `.bun-version`, `package.json#packageManager`, and `engines`. Run every
-command from the repository root.
+## Project Map and Boundaries
 
-## Commands
+- `src/routes/**` owns SvelteKit pages, server loads, and HTTP endpoints. Keep routes thin: parse the
+  request, call shared/domain services, and return safe DTOs.
+- `src/lib/features/**` owns browser-safe contracts, registry definitions, normalization, and pure
+  studio/library logic shared by client and server. It must not value-import `src/lib/server/**`.
+- `src/lib/server/**` owns SQLite, filesystem access, credentials, Poyo transport, jobs, cleanup,
+  diagnostics, and native actions. Reuse `getPlatformServices()` and `getJobRuntime()` rather than
+  creating competing application runtimes.
+- `migrations/**` contains ordered `bun:sqlite` migrations; platform schema versions live in
+  `src/lib/server/platform/version.ts`.
+- `src/lib/features/registry/evidence/**` is committed evidence: source and workflow fixtures are
+  refreshed by scripts, while conditional vectors and conflict decisions remain reviewed inputs.
+- `tests/{unit,integration,reliability,performance,security,e2e,live}` separates scope. Reuse the
+  temporary directories, mock Poyo servers, job fixtures, and browser harnesses in `tests/helpers`.
+- `.svelte-kit/`, `build/`, `data/`, and `test-results/` are generated or local runtime output. Edit
+  source/configuration and regenerate them; do not patch their contents.
 
-| Task | Command |
-|---|---|
-| Install | `bun install --frozen-lockfile` |
-| Dev server (127.0.0.1:5173) | `bun run dev` |
-| Build / run production (127.0.0.1:3000) | `bun run build` then `bun run start` |
-| Lint | `bun run lint` |
-| Format check / write | `bun run format:check` / `bun run format` |
-| Type check | `bun run check` (runs `svelte-kit sync` first) |
-| Tests | `bun test` |
-| One test file | `bun test tests/integration/database/migrations.test.ts` |
-| One test by name | `bun test <test-file> -t "checksum"` |
-| Registry validation | `bun run validate:registry` |
-| All pre-commit gates | `prek run --all-files` |
+## Build, Test, and Development Commands
 
-Setup also needs `cp .env.example .env`, `chmod 600 .env`, and a `POYO_API_KEY` for any Poyo
-connectivity. Install/build/lint/type-check and the default test suite need no key and spend no
-credits.
+| Purpose | Command |
+| --- | --- |
+| Reproducible install | `bun install --frozen-lockfile` |
+| Local development on loopback | `bun run dev` |
+| Format write / check | `bun run format` / `bun run format:check` |
+| Biome lint | `bun run lint` |
+| SvelteKit sync and type check | `bun run check` |
+| One test file | `bun test tests/unit/jobs/routes.test.ts` |
+| Normal non-browser suite | `bun run test` |
+| Playwright product flows | `bun run test:e2e` |
+| Static plus browser security | `bun run test:security` |
+| Serialized restart / performance suites | `bun run test:restart` / `bun run test:performance` |
+| Registry evidence validation | `bun run validate:registry` |
+| Production build / smoke test | `bun run build` / `bun run test:production-smoke` |
+| All configured pre-commit gates | `prek run --all-files` |
 
-Test-file suffixes decide what runs. Bun only auto-discovers `*.test.ts`, so the `.browser.ts` and
-`.live.ts` suites are invisible to `bun test` and must be launched explicitly:
+`test:e2e` and `test:security` build first, then run their `.browser.ts` files serially through
+`scripts/test-browser.ts`. Bun discovers `.test.ts`; `.browser.ts` and `.live.ts` require explicit
+scripts. `bun run test:live` can spend credits when its fail-closed gates are enabled, so use mocks
+unless a task explicitly authorizes a paid live probe.
 
-- `bun run test:e2e` / `bun run test:security` — build first, then run the Playwright browser suites
-  via `scripts/test-browser.ts`.
-- `bun run test:restart` / `bun run test:performance` — serialized (`--max-concurrency 1`).
-- `bun run test:live` — real Poyo calls that spend credits. Skipped by default; do not run casually.
+## Common Change Workflows
 
-## Architecture
+### Add or change a page/API feature
 
-Execution starts at `src/hooks.server.ts`, whose `init()` starts the background job worker and
-cleanup worker. Two memoized async singletons own all runtime state; call them rather than
-constructing repositories or clients yourself:
+1. Put browser-safe DTOs and validation in `src/lib/features/<domain>/`; put persistence,
+   filesystem, credentials, and upstream calls in `src/lib/server/<domain>/`.
+2. Load shared runtime state through `getPlatformServices()` or `getJobRuntime()` and keep the
+   route handler orchestration-only.
+3. For mutating JSON endpoints, call `readSameOriginJson()` with a route-appropriate byte limit;
+   for uploads, use the guarded multipart path in `src/lib/server/media/source-intake.ts`. Do not
+   call `request.json()` directly because origin, fetch-site, content-type, and size checks are
+   centralized.
+4. Map errors to safe responses using the decision table below. Never serialize a raw exception,
+   local path, API key, or normalized paid-request payload.
+5. Add domain unit/integration tests; add a `.browser.ts` scenario when navigation, hydration,
+   accessibility, or a complete user flow changes. Run the targeted test, then the applicable
+   normal/browser/security suites.
 
-- `getPlatformServices()` in `src/lib/server/platform/runtime.ts` — resolves app paths, opens and
-  migrates SQLite, seeds the model registry, and exposes `database`, `settings`, `apiKey`, `logger`.
-- `getJobRuntime()` in `src/lib/server/jobs/runtime.ts` — `repository`, `coordinator`, `worker` for
-  the submit → poll-with-backoff → verified-download lifecycle.
-
-Directory ownership:
-
-- `src/lib/server/**` — server-only: `platform` (paths, database, request security), `poyo` (API
-  client), `jobs`, `media`, `library`, `cleanup`, `settings` (secret store), `diagnostics`.
-- `src/lib/features/**` — browser-safe shared logic and types. The model capability registry
-  (`registry/image-registry.ts`, `registry/video-registry.ts`, `registry/normalize*.ts`) lives here
-  because both the UI and the server normalize requests against it.
-- `src/routes/api/**` — HTTP endpoints; job updates stream over SSE from
-  `src/routes/api/events/jobs/+server.ts`.
-- `migrations/**` — SQL migrations at the repository root, **not** under `src/`.
-
-`tests/security/static-architecture.test.ts` statically enforces these invariants, so a violation
-fails `bun test` rather than review:
-
-- No value imports of `$lib/server` (or `lib/server`, `/server/`) from `*.svelte`,
-  `src/hooks.client.ts`, or `src/lib/features/**`. `import type` is permitted.
-- Svelte 5 runes only — no `export let`, no `on:` event directives.
-- No `tailwindcss`, `@sveltejs/adapter-node`, `express`, `ts-node`, `jest`, or `vitest` dependency,
-  and no `npm`/`pnpm`/`yarn`/`node` in any `package.json` script.
-
-## Key workflows
-
-### Adding a database migration
-
-Migrations are checksummed (`migrationChecksum` in `src/lib/server/platform/database.ts`), so
-editing an already-applied migration throws `no longer matches its recorded checksum`. Always add a
-new file instead.
-
-1. Create `migrations/000N-name.ts` exporting a `Migration` (`version`, `name`, `sql`, optional
-   `afterSql`). Versions must be unique and strictly increasing.
-2. Register it in the `migrations` array in `migrations/index.ts`.
-3. Bump `DATABASE_SCHEMA_VERSION` in `src/lib/server/platform/version.ts` — `migrateDatabase`
-   throws if the applied max version and this constant disagree.
-4. Add any new table to `expectedTables` in `tests/integration/database/migrations.test.ts`, which
-   asserts an exact sorted table list.
-5. Verify: `bun test tests/integration/database/migrations.test.ts`.
-
-### Changing the model registry
-
-`scripts/validate-registry.ts` is an evidence gate, not a formality: it recomputes the source-corpus
-hash, requires a reviewed request fixture per workflow and an invalid fixture per conditional rule,
-and hard-asserts inventory counts (22 image pages / 44 public IDs / 50 workflows; 35 video pages /
-53 public IDs / 121 current workflows). Changing entries without refreshing evidence fails with
-`inventory changed without reviewed evidence`.
-
-1. Edit `src/lib/features/registry/image-registry.ts` or `video-registry.ts`, plus the matching
-   validation in `normalize.ts` / `normalize-video.ts`.
-2. Refresh the evidence in `src/lib/features/registry/evidence/` with
-   `bun run registry:evidence:refresh` (network fetch of public docs only — no credentials, no
-   credits).
-3. Update the hardcoded counts and `registryVersion` expectations in `scripts/validate-registry.ts`.
-4. Verify: `bun run validate:registry`, then `bun test`.
-
-### Adding an API route
-
-Mutating JSON routes must read the body through `readSameOriginJson` from
-`$lib/server/platform/request-security` — it enforces the Origin check, `sec-fetch-site`, content
-type, and a body-size cap. No route calls `request.json()` directly.
+Canonical mutation shape (`src/routes/api/presets/+server.ts`):
 
 ```ts
-// src/routes/api/presets/+server.ts
-export const POST: RequestHandler = async ({ request }) => {
-  try {
-    const body = await readSameOriginJson<SavePresetRequest>(request, { maxBytes: 256 * 1024 });
-    const platform = await getPlatformServices();
-    const preset = new PresetRepository(platform.database).save(body);
-    return Response.json({ preset }, { status: body.id ? 200 : 201 });
-  } catch (error) {
-    /* map to a safe error response — see the table below */
-  }
-};
+const body = await readSameOriginJson<SavePresetRequest>(request, { maxBytes: 256 * 1024 });
+const platform = await getPlatformServices();
+const preset = new PresetRepository(platform.database).save(body);
+return Response.json({ preset }, { status: body.id ? 200 : 201 });
 ```
 
-### Choosing an error mapper
+### Change the database schema
 
-| Route surface | Mapper |
-|---|:---:|
-| Job submit/retry/rerun/refresh — needs `RegistryValidationError` issue lists | `jobHttpError` (`$lib/server/jobs/http`) |
-| Cleanup, settings, api-key, balance — needs `CleanupValidationError` / `EnvironmentKeyActiveError` | `operationsHttpError` (`$lib/server/operations/http`) |
-| Neither category applies | Inline `catch` that still special-cases `RequestSecurityError` |
+1. Preserve `migrations/0001-initial.ts` and
+   `tests/fixtures/database/pre-collapse-schema-signature.json` as the locked version-1 baseline;
+   add a forward `migrations/000N-name.ts` instead of changing a recorded checksum.
+2. Register the migration in increasing order in `migrations/index.ts` and bump
+   `DATABASE_SCHEMA_VERSION` in `src/lib/server/platform/version.ts`.
+3. Extend `tests/integration/database/migrations.test.ts` for exact tables/columns, upgrade,
+   rollback, checksum, and reopen behavior. Keep its immutable v1 compatibility assertion rather
+   than rewriting the fixture to match new schema.
+4. Run `bun test tests/integration/database/migrations.test.ts`, relevant repository tests, then
+   `bun run test` and `bun run test:restart` for lifecycle-sensitive changes.
 
-## Repository-specific rules
+### Change the model registry
 
-- Build the Poyo client with `createPoyoClient` from `$lib/server/poyo/factory`; never construct
-  `new PoyoClient`/`PoyoTransport` or raw `fetch` calls to Poyo. The factory resolves the API key,
-  applies retry/backoff, pins the base URL, and attaches the redacting metadata logger.
-- Never surface a raw `PoyoError`; return `error.toSafeDto()`. API keys must not reach page data,
-  browser storage, SQLite, diagnostics exports, or logs — `POYO_API_KEY` from
-  `$env/dynamic/private` always wins over the local secret store (`ApiKeyManager.resolve`).
-- `PLS_TEST_POYO_BASE_URL` and the job-timing overrides throw unless `PLS_TEST_MODE=1`, and the test
-  origin must be loopback HTTP. Point tests at `tests/helpers/mock-poyo-server.ts` rather than
-  loosening these gates.
-- `prek.toml` blocks direct commits to `main` and enforces Conventional Commits, gitleaks, format,
-  lint, `svelte-check`, `bun test`, registry validation, and a production build. Work on a branch.
-- `.svelte-kit/` and `build/` are generated; `bun run check` runs `svelte-kit sync` for you when
-  `./$types` imports look unresolved.
+1. Update `image-registry.ts` or `video-registry.ts` together with `normalize.ts`,
+   `normalize-video.ts`, or `normalize-registry.ts` as applicable; bump the affected registry
+   version.
+2. Run `bun run registry:evidence:refresh` to refetch public official documentation and regenerate
+   workflow fixtures. Review every evidence diff; update reviewed conditional/conflict records when
+   the change affects those decisions.
+3. Update intentional inventory assertions in `scripts/validate-registry.ts`; do not weaken the
+   source hashes, per-workflow fixtures, invalid conditional vectors, or inventory gate merely to
+   make validation pass.
+4. Run `bun run validate:registry`, targeted `tests/unit/registry/**` tests, and `bun run test`.
 
-## References
+## Decision Guide
 
-- `.augment/rules/poyo-studio-tech-stack.md` — the authoritative Bun / Svelte 5 runes / SvelteKit 2
-  / UnoCSS `presetWind4` / shadcn-svelte coding guide. Read before writing components or styles.
-- `README.md` — user-facing setup, privacy model, and known Poyo upstream limitations (no
-  cancellation, no remote deletion, conflicting retention docs).
-</content>
-</invoke>
+| Situation | Use | Avoid |
+| --- | --- | --- |
+| Logic/types needed by browser and server | `src/lib/features/**` | Value imports from `$lib/server` |
+| Database/settings/logger/credential access | `getPlatformServices()` | A second database or service singleton |
+| Job repository/coordinator/worker access | `getJobRuntime()` | Constructing runtime workers in routes |
+| Job submit/retry/rerun errors | `jobHttpError()` | Leaking registry/Poyo internals |
+| Cleanup/settings/key/balance errors | `operationsHttpError()` | Duplicating mapper branches |
+| Domain-specific API error | Inline safe mapper including `RequestSecurityError` | Returning `String(error)` indiscriminately |
+
+## Coding Conventions and Definition of Done
+
+- Biome enforces 2 spaces, 100 columns, single quotes, semicolons, and no trailing commas. Use
+  `import type`; strict TypeScript enables unchecked-index, exact-optional, and unknown-catch checks.
+- Svelte components use `$props`, `$state`, `$derived`, snippets/`{@render}`, and event properties
+  such as `onclick`. Do not use `export let`, slots for new composition, or `on:` directives; the
+  static architecture test rejects legacy syntax.
+- Reuse UI primitives in `src/lib/components/ui/**`, UnoCSS theme tokens/shortcuts from
+  `uno.config.ts`, and the `$lib` alias. Import `uno.css` only through `src/hooks.client.ts`.
+- Create production Poyo clients with `createPoyoClient()` to retain credential resolution,
+  loopback test origins, retry/backoff, and redacted logging. Use the mock Poyo helper in tests.
+- Before finishing: run format check, lint, check, targeted tests, `bun run test`, then registry,
+  browser/security, restart/performance, build, and smoke gates when the changed surface requires
+  them. Report any deliberately unrun paid or network probe.
+
+## Commit and Pull Request Expectations
+
+`prek.toml` blocks direct commits to `main`, scans secrets, and enforces Conventional Commits.
+Recent history uses subjects such as `feat(studio): ... (#6)`, `feat(storage): ... (#5)`,
+`docs: ...`, and `chore(cleanup): ...`. There is no repository PR template or CI workflow; state
+the validations actually run rather than inventing approval, screenshot, or issue-link rules.
+
+## Reference Documentation
+
+- `README.md` — Read before setup, production exposure, storage, credentials, privacy, reset,
+  upstream-limitation, or live-network changes.
+- `.augment/rules/poyo-studio-tech-stack.md` — Read before Svelte, runes, UnoCSS, or Bits UI work.
+- `tests/security/static-architecture.test.ts` — Read before changing dependencies, boundaries,
+  framework configuration, or Svelte syntax.
+- `src/lib/server/platform/request-security.ts` — Read before adding a mutating JSON endpoint.
+- `src/lib/server/platform/database.ts` and `tests/integration/database/migrations.test.ts` — Read
+  before database, migration, preflight, or schema-signature work.
+- `scripts/validate-registry.ts` — Read before changing registry entries, evidence, counts, or
+  normalization rules.
+- `prek.toml` — Read before changing validation tooling or preparing a commit.
