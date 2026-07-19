@@ -1,10 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { resolveAppPaths } from '../src/lib/server/platform/app-paths';
-import { openDatabase } from '../src/lib/server/platform/database';
-import { SettingsRepository } from '../src/lib/server/settings/settings-repository';
-import { updateOnboarding } from '../src/lib/server/settings/studio-settings';
+import { startStudioMockPoyoServer } from '../tests/helpers/studio-mock-poyo-server';
 
 const host = '127.0.0.1';
 const startupTimeoutMs = 15_000;
@@ -82,20 +79,37 @@ const url = `http://${host}:${port}/`;
 const origin = url.slice(0, -1);
 const smokeDirectory = await mkdtemp(join(tmpdir(), 'poyo-production-smoke-'));
 const appData = join(smokeDirectory, 'data');
-const appPaths = resolveAppPaths({ environment: { PLS_APP_DATA_DIR: appData } });
-const server = Bun.spawn({
-  cmd: [process.execPath, 'run', 'start'],
-  env: {
-    ...Bun.env,
-    HOST: host,
-    ORIGIN: origin,
-    PORT: String(port),
-    POYO_API_KEY: '',
-    PLS_APP_DATA_DIR: appData
-  },
-  stdout: 'pipe',
-  stderr: 'pipe'
-});
+let mock: Awaited<ReturnType<typeof startStudioMockPoyoServer>>;
+try {
+  mock = await startStudioMockPoyoServer();
+} catch (error) {
+  await rm(smokeDirectory, { recursive: true, force: true });
+  throw error;
+}
+const syntheticKey = ['sk', 'production_smoke_canary_never_real_123456'].join('-');
+let server: ReturnType<typeof Bun.spawn>;
+try {
+  server = Bun.spawn({
+    cmd: [process.execPath, 'run', 'start'],
+    env: {
+      ...Bun.env,
+      HOST: host,
+      ORIGIN: origin,
+      PORT: String(port),
+      POYO_API_KEY: syntheticKey,
+      PLS_APP_DATA_DIR: appData,
+      PLS_TEST_MODE: '1',
+      PLS_TEST_POYO_BASE_URL: mock.baseUrl,
+      PLS_TEST_PUBLIC_IPV4_URL: `${mock.baseUrl}/ip`
+    },
+    stdout: 'pipe',
+    stderr: 'pipe'
+  });
+} catch (error) {
+  await mock.stop().catch(() => undefined);
+  await rm(smokeDirectory, { recursive: true, force: true });
+  throw error;
+}
 const stdout = new Response(server.stdout).text();
 const stderr = new Response(server.stderr).text();
 
@@ -135,11 +149,33 @@ try {
     throw new Error('Fresh production startup did not enter onboarding.');
   }
 
-  const database = await openDatabase(appPaths.database);
-  try {
-    updateOnboarding(new SettingsRepository(database), { dismiss: true });
-  } finally {
-    database.close();
+  const jsonHeaders = {
+    'content-type': 'application/json',
+    origin,
+    'sec-fetch-site': 'same-origin'
+  };
+  const connectivity = await fetch(new URL('/api/settings/api-key/connectivity', url), {
+    method: 'POST',
+    headers: jsonHeaders,
+    body: '{}',
+    signal: AbortSignal.timeout(requestTimeoutMs)
+  });
+  if (!connectivity.ok) {
+    throw new Error(
+      `Production connectivity verification responded with HTTP ${connectivity.status}.`
+    );
+  }
+  if (!mock.requests.some((request) => request.pathname === '/api/user/balance')) {
+    throw new Error('Production smoke did not verify connectivity through the mock Poyo API.');
+  }
+  const dismissal = await fetch(new URL('/api/onboarding', url), {
+    method: 'PUT',
+    headers: jsonHeaders,
+    body: JSON.stringify({ dismiss: true }),
+    signal: AbortSignal.timeout(requestTimeoutMs)
+  });
+  if (!dismissal.ok) {
+    throw new Error(`Production onboarding dismissal responded with HTTP ${dismissal.status}.`);
   }
 
   for (const [pathname, marker] of routeChecks) {
@@ -156,6 +192,9 @@ try {
       throw new Error(`Production route ${pathname} did not contain its application markers.`);
     }
   }
+  if (mock.ipRequests.length === 0) {
+    throw new Error('Production smoke did not resolve public IPv4 through the loopback fixture.');
+  }
 
   console.log(
     `Production smoke passed: onboarding and ${routeChecks.length} routes responded on the loopback listener ${url}.`
@@ -165,6 +204,11 @@ try {
 } finally {
   try {
     await stopProcess(server);
+  } catch (error) {
+    failure ??= error;
+  }
+  try {
+    await mock.stop();
   } catch (error) {
     failure ??= error;
   }
