@@ -3,6 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { MediaPrivacySettings } from '../../../src/lib/features/settings/contracts';
 import {
+  createMediaSanitizer,
   MediaSanitizationError,
   runMediaCommand,
   sanitizeMedia
@@ -450,6 +451,58 @@ describe('still image sanitization', () => {
     ).rejects.toBeInstanceOf(MediaSanitizationError);
     expect(await Bun.file(outputPath).exists()).toBe(false);
   });
+
+  test.each([
+    ['byte 6', 6, 7, 0x0a],
+    ['byte 7', 7, 6, 0x1a]
+  ] as const)(
+    'rejects a PNG with corrupt signature %s',
+    async (_name, byteIndex, otherIndex, otherByte) => {
+      const root = await temporary();
+      const inputPath = join(root, `input-${byteIndex}.png`);
+      const outputPath = join(root, `output-${byteIndex}.png`);
+      command(['magick', '-size', '8x8', 'xc:green', inputPath]);
+      let mutationHookRan = false;
+      let outputWriteCompleted = false;
+      let postWriteCommandReached = false;
+      const sanitizer = createMediaSanitizer(async (mediaCommand) => {
+        const outputArgumentIndex = mediaCommand.cmd.indexOf('-o');
+        const isOutputWrite =
+          mediaCommand.cmd[0] === 'exiftool' &&
+          outputArgumentIndex >= 0 &&
+          mediaCommand.cmd[outputArgumentIndex + 1] === outputPath;
+        if (outputWriteCompleted && !isOutputWrite) postWriteCommandReached = true;
+
+        const result = await runMediaCommand(mediaCommand);
+        if (isOutputWrite) {
+          const bytes = await readFile(outputPath);
+          expect(bytes.byteLength).toBeGreaterThan(7);
+          expect(bytes[otherIndex]).toBe(otherByte);
+          bytes[byteIndex] = 0;
+          await writeFile(outputPath, bytes);
+          mutationHookRan = true;
+          outputWriteCompleted = true;
+        }
+        return result;
+      });
+
+      await expect(
+        sanitizer({
+          inputPath,
+          outputPath,
+          mimeType: 'image/png',
+          mediaKind: 'image',
+          settings: defaults,
+          maxOutputBytes: 1024 * 1024
+        })
+      ).rejects.toBeInstanceOf(MediaSanitizationError);
+      expect(mutationHookRan).toBe(true);
+      expect(outputWriteCompleted).toBe(true);
+      expect(postWriteCommandReached).toBe(false);
+      expect(await Bun.file(outputPath).exists()).toBe(false);
+      expect(await Bun.file(inputPath).exists()).toBe(true);
+    }
+  );
 });
 
 describe('video sanitization', () => {

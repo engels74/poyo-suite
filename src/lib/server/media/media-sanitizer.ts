@@ -381,7 +381,14 @@ function hasSignature(type: string, bytes: Uint8Array): boolean {
   const ascii = (start: number, end: number) => new TextDecoder().decode(bytes.slice(start, end));
   if (type === 'image/jpeg') return bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
   if (type === 'image/png')
-    return bytes[0] === 0x89 && ascii(1, 4) === 'PNG' && bytes[4] === 0x0d && bytes[5] === 0x0a;
+    return (
+      bytes[0] === 0x89 &&
+      ascii(1, 4) === 'PNG' &&
+      bytes[4] === 0x0d &&
+      bytes[5] === 0x0a &&
+      bytes[6] === 0x1a &&
+      bytes[7] === 0x0a
+    );
   if (type === 'image/gif') return ascii(0, 6) === 'GIF87a' || ascii(0, 6) === 'GIF89a';
   if (type === 'image/webp') return ascii(0, 4) === 'RIFF' && ascii(8, 12) === 'WEBP';
   if (type === 'video/mp4') return ascii(4, 8) === 'ftyp';
