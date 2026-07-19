@@ -35,7 +35,9 @@ async function expectNoLegacyStorageLanguage(page: Page): Promise<void> {
 test('fresh onboarding keeps storage informational and completes through one local credential path', async () => {
   const harness = await startBrowserAppHarness({ freshOnboarding: true });
   const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 844 }
+  });
   const page = await context.newPage();
   const issues = trackBrowserIssues(page);
   const requestedPaths: string[] = [];
@@ -59,6 +61,21 @@ test('fresh onboarding keeps storage informational and completes through one loc
     expect(await page.locator('input').count()).toBe(0);
     expect((await page.textContent('body')) ?? '').not.toContain(harness.temporaryPath);
     await page.getByRole('button', { name: 'Continue' }).click();
+
+    await page.getByRole('heading', { name: 'Protect local media metadata' }).waitFor();
+    await page.getByText(/Remote URLs/i).waitFor();
+    await page.getByText(/does not anonymize visible people, places, text, or audio/i).waitFor();
+    const master = page.getByLabel('Sanitize local media before sharing with Poyo');
+    const exif = page.getByLabel('Remove EXIF metadata');
+    const xmp = page.getByLabel('Remove XMP metadata');
+    expect(await master.isChecked()).toBe(true);
+    expect(await exif.isChecked()).toBe(true);
+    await xmp.uncheck();
+    await master.uncheck();
+    expect(await exif.isDisabled()).toBe(true);
+    expect(await exif.isChecked()).toBe(true);
+    await master.check();
+    await page.getByRole('button', { name: 'Save and continue' }).click();
 
     await page.getByRole('heading', { name: 'Connect your Poyo API key' }).waitFor();
     expect(await page.locator('input[type="password"]').count()).toBe(1);
@@ -87,7 +104,9 @@ test('fresh onboarding keeps storage informational and completes through one loc
         await route.fulfill({
           status: 401,
           contentType: 'application/json',
-          body: JSON.stringify({ error: { message: 'The test credential was rejected.' } })
+          body: JSON.stringify({
+            error: { message: 'The test credential was rejected.' }
+          })
         });
         return;
       }
@@ -119,6 +138,9 @@ test('fresh onboarding keeps storage informational and completes through one loc
     await page.waitForURL((url) => url.pathname === '/');
     await page.reload();
     expect(new URL(page.url()).pathname).toBe('/');
+    await page.goto(`${harness.url}/settings`);
+    await page.getByRole('heading', { name: 'Settings' }).waitFor();
+    expect(await page.getByLabel('Remove XMP metadata').isChecked()).toBe(false);
 
     expect(requestedPaths).not.toContain('/api/settings/storage-root');
     expect(requestedPaths).not.toContain('/api/settings/credential-backend');
@@ -134,7 +156,9 @@ test('fresh onboarding keeps storage informational and completes through one loc
 test('environment-managed onboarding exposes authority without secrets or paths and can be dismissed', async () => {
   const harness = await startBrowserAppHarness();
   const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const context = await browser.newContext({
+    viewport: { width: 1280, height: 900 }
+  });
   const page = await context.newPage();
   const issues = trackBrowserIssues(page);
 
@@ -150,6 +174,9 @@ test('environment-managed onboarding exposes authority without secrets or paths 
     await expectNoLegacyStorageControls(page);
     await expectNoLegacyStorageLanguage(page);
     await page.getByRole('button', { name: 'Continue' }).click();
+
+    await page.getByRole('heading', { name: 'Protect local media metadata' }).waitFor();
+    await page.getByRole('button', { name: 'Save and continue' }).click();
 
     await page.getByText('Environment key active', { exact: true }).waitFor();
     await page.getByText(/managed by the server environment/i).waitFor();

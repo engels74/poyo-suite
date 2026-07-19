@@ -7,6 +7,7 @@ import { CleanupRepository } from '../cleanup/repository';
 import { DEFAULT_CLEANUP_POLICY, normalizeCleanupPolicy } from '../cleanup/policy';
 import type { ApiKeyStatusDto } from './api-key-manager';
 import type { SettingsRepository } from './settings-repository';
+import { readMediaPrivacySettings, saveMediaPrivacySettings } from './media-privacy-settings';
 
 export interface OperationsSettings {
   polling: { intervalMs: number; staleAfterMs: number };
@@ -97,9 +98,10 @@ export class OperationsSettingsService {
     );
   }
 
-  update(input: { operations?: unknown; localCleanup?: unknown }): {
+  update(input: { operations?: unknown; localCleanup?: unknown; mediaPrivacy?: unknown }): {
     operations: OperationsSettings;
     localCleanup: LocalCleanupPolicy;
+    mediaPrivacy: SettingsDto['mediaPrivacy'];
   } {
     const operations =
       input.operations === undefined ? this.get() : normalizeOperationsSettings(input.operations);
@@ -107,9 +109,13 @@ export class OperationsSettingsService {
       input.localCleanup === undefined
         ? (this.cleanup.getPolicy() ?? this.cleanup.savePolicy(DEFAULT_CLEANUP_POLICY))
         : this.cleanup.savePolicy(normalizeCleanupPolicy(input.localCleanup));
+    const mediaPrivacy =
+      input.mediaPrivacy === undefined
+        ? readMediaPrivacySettings(this.repository)
+        : saveMediaPrivacySettings(this.repository, input.mediaPrivacy);
     this.repository.set('operations', operations);
     this.logger.updateRotationSettings(operations.logs);
-    return { operations, localCleanup };
+    return { operations, localCleanup, mediaPrivacy };
   }
 
   dto(paths: AppPaths, apiKey: ApiKeyStatusDto): SettingsDto {
@@ -121,6 +127,7 @@ export class OperationsSettingsService {
         source: paths.source
       },
       ...operations,
+      mediaPrivacy: readMediaPrivacySettings(this.repository),
       localCleanup,
       remoteCleanup: REMOTE_CLEANUP_CAPABILITY
     };

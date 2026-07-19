@@ -1,8 +1,14 @@
 import type { Database } from 'bun:sqlite';
 import { unlink } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import { type AppPaths, resolvePathWithin } from '../platform/app-paths';
 import { DatabaseRepository } from '../platform/repository';
-import { inspectCanonicalFile } from './filesystem-boundary';
+import {
+  assertCanonicalDirectory,
+  inspectCanonicalFile,
+  inspectCanonicalRoot,
+  syncDirectory
+} from './filesystem-boundary';
 import type { LocalSourceIntake } from './source-intake';
 
 export type ManagedSourceAvailability = 'available' | 'missing' | 'deleted';
@@ -48,45 +54,69 @@ function assertManagedSourceId(id: string): void {
   }
 }
 
+interface ManagedSourceFileOperations {
+  unlink: (path: string) => Promise<void>;
+  syncDirectory: (path: string) => Promise<void>;
+}
+
+const managedSourceFileOperations: ManagedSourceFileOperations = { unlink, syncDirectory };
+
 export class ManagedSourceRepository extends DatabaseRepository {
   constructor(
     database: Database,
     private readonly paths: Pick<AppPaths, 'uploads'>,
-    private readonly now: () => Date = () => new Date()
+    private readonly now: () => Date = () => new Date(),
+    private readonly fileOperations: ManagedSourceFileOperations = managedSourceFileOperations
   ) {
     super(database);
   }
 
   async register(source: LocalSourceIntake): Promise<ManagedSourceRecord> {
     assertManagedSourceId(source.id);
-    const inspected = await inspectCanonicalFile(
-      this.paths.uploads,
-      source.localPath,
-      'Managed source'
-    );
-    if (!inspected || inspected.size !== source.sizeBytes) {
-      throw new Error('Managed source copy could not be verified.');
-    }
-    this.database
-      .query(
-        `INSERT INTO managed_sources(id,original_name,media_kind,mime_type,byte_size,checksum,signature,relative_path,availability,created_at,last_verified_at)
-         VALUES (?,?,?,?,?,?,?,?,'available',?,?)`
-      )
-      .run(
-        source.id,
-        source.originalName,
-        source.mediaKind,
-        source.mimeType,
-        source.sizeBytes,
-        source.checksum,
-        source.signature,
-        inspected.relativePath,
-        source.createdAt,
-        source.createdAt
+    let inserted = false;
+    try {
+      const inspected = await inspectCanonicalFile(
+        this.paths.uploads,
+        source.localPath,
+        'Managed source'
       );
-    const registered = this.get(source.id);
-    if (!registered) throw new Error('Managed source registration failed.');
-    return registered;
+      if (!inspected || inspected.size !== source.sizeBytes) {
+        throw new Error('Managed source copy could not be verified.');
+      }
+      this.database
+        .query(
+          `INSERT INTO managed_sources(id,original_name,media_kind,mime_type,byte_size,checksum,signature,relative_path,availability,created_at,last_verified_at)
+           VALUES (?,?,?,?,?,?,?,?,'available',?,?)`
+        )
+        .run(
+          source.id,
+          source.originalName,
+          source.mediaKind,
+          source.mimeType,
+          source.sizeBytes,
+          source.checksum,
+          source.signature,
+          inspected.relativePath,
+          source.createdAt,
+          source.createdAt
+        );
+      inserted = true;
+      const registered = this.get(source.id);
+      if (!registered) throw new Error('Managed source registration failed.');
+      return registered;
+    } catch (registrationError) {
+      try {
+        if (inserted) await this.discardUnreferenced(source.id);
+        else await this.discardUnregisteredIntake(source);
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [registrationError, cleanupError],
+          'Managed source registration and cleanup failed.',
+          { cause: registrationError }
+        );
+      }
+      throw registrationError;
+    }
   }
 
   get(id: string): ManagedSourceRecord | null {
@@ -174,23 +204,54 @@ export class ManagedSourceRepository extends DatabaseRepository {
         )
         .get(id)?.count ?? 0;
     if (references > 0) return false;
-    const inspected = await inspectCanonicalFile(
-      this.paths.uploads,
-      source.relative_path,
-      'Managed source cleanup'
-    );
+    const root = await inspectCanonicalRoot(this.paths.uploads, 'Managed source cleanup');
+    const path = resolvePathWithin(root, source.relative_path);
+    const parent = dirname(path);
+    await assertCanonicalDirectory(root, parent, 'Managed source cleanup');
+    const inspected = await inspectCanonicalFile(root, path, 'Managed source cleanup');
     if (inspected) {
-      const revalidated = await inspectCanonicalFile(
-        this.paths.uploads,
-        source.relative_path,
-        'Managed source cleanup'
-      );
+      const revalidated = await inspectCanonicalFile(root, path, 'Managed source cleanup');
       if (!revalidated || revalidated.path !== inspected.path) {
         throw new Error('Managed source cleanup path changed before deletion.');
       }
-      await unlink(revalidated.path);
+      await this.fileOperations.unlink(revalidated.path);
     }
+    await this.fileOperations.syncDirectory(parent);
     return this.database.query('DELETE FROM managed_sources WHERE id=?').run(id).changes === 1;
+  }
+
+  private async discardUnregisteredIntake(source: LocalSourceIntake): Promise<void> {
+    const inspected = await inspectCanonicalFile(
+      this.paths.uploads,
+      source.localPath,
+      'Managed source cleanup'
+    );
+    if (!inspected || this.hasPathOwner(inspected.relativePath)) return;
+    const revalidated = await inspectCanonicalFile(
+      this.paths.uploads,
+      source.localPath,
+      'Managed source cleanup'
+    );
+    if (
+      !revalidated ||
+      revalidated.path !== inspected.path ||
+      revalidated.relativePath !== inspected.relativePath
+    ) {
+      throw new Error('Managed source cleanup path changed before deletion.');
+    }
+    if (this.hasPathOwner(revalidated.relativePath)) return;
+    await this.fileOperations.unlink(revalidated.path);
+    await this.fileOperations.syncDirectory(dirname(revalidated.path));
+  }
+
+  private hasPathOwner(relativePath: string): boolean {
+    return (
+      this.database
+        .query<{ id: string }, [string]>(
+          'SELECT id FROM managed_sources WHERE relative_path=? LIMIT 1'
+        )
+        .get(relativePath) !== null
+    );
   }
 
   private map(row: ManagedSourceRow): ManagedSourceRecord {

@@ -2,6 +2,7 @@
 import { untrack } from 'svelte';
 import { goto, invalidateAll } from '$app/navigation';
 import SettingsNavigation from '$lib/components/settings/SettingsNavigation.svelte';
+import MediaPrivacyControls from '$lib/components/settings/MediaPrivacyControls.svelte';
 import ThemeToggle from '$lib/components/shell/ThemeToggle.svelte';
 import AppIcon from '$lib/components/ui/AppIcon.svelte';
 import Badge from '$lib/components/ui/Badge.svelte';
@@ -12,6 +13,7 @@ import {
   apiKeyUiState,
   cleanupConsequenceLabel,
   cleanupPolicyRequest,
+  mediaPrivacyRequest,
   operationsRequest,
   settingsDraft
 } from '$lib/features/settings/controller';
@@ -94,11 +96,12 @@ function applyBrowserTheme(): void {
 function saveOperations(): void {
   void run('operations', async () => {
     const result = await request<{ settings: SettingsDto }>('/api/settings', 'PUT', {
-      operations: operationsRequest(draft)
+      operations: operationsRequest(draft),
+      mediaPrivacy: mediaPrivacyRequest(draft)
     });
     adopt(result.settings);
     applyBrowserTheme();
-    message = 'Operational settings saved.';
+    message = 'Settings saved.';
   });
 }
 
@@ -251,6 +254,10 @@ function applyCleanup(): void {
           <label class="mt-5 flex items-start gap-3 text-sm"><input type="checkbox" bind:checked={draft.automaticDownloads} class="focus-ring mt-0.5 size-4" /><span><strong>Download successful outputs automatically</strong><span class="mt-1 block text-xs leading-5 text-muted-foreground">Recommended because remote retention is not documented.</span></span></label>
         </section>
 
+        <section id="media-privacy" class="py-6" aria-label="Media privacy settings">
+          <MediaPrivacyControls bind:mediaPrivacy={draft.mediaPrivacy} disabled={pending !== null} />
+        </section>
+
         <section id="jobs" class="py-6" aria-labelledby="jobs-heading">
           <h3 id="jobs-heading" class="section-heading">Polling and recovery</h3><p class="mt-2 text-sm leading-6 text-muted-foreground">These values control normal status cadence and when interrupted work is marked stale. Retry-After and bounded exponential backoff still take precedence after failures.</p>
           <div class="mt-4 grid gap-4 sm:grid-cols-2"><label class="text-xs font-semibold">Polling interval (seconds)<input type="number" min="1" max="300" step="1" bind:value={draft.pollingSeconds} class="focus-ring mt-1.5 h-10 w-full rounded border border-input bg-background px-3 text-sm" /></label><label class="text-xs font-semibold">Stale threshold (minutes)<input type="number" min="1" max="10080" step="1" bind:value={draft.staleMinutes} class="focus-ring mt-1.5 h-10 w-full rounded border border-input bg-background px-3 text-sm" /></label></div>
@@ -274,7 +281,7 @@ function applyCleanup(): void {
         <section id="registry" class="py-6" aria-labelledby="registry-heading"><h3 id="registry-heading" class="section-heading">Registry and versions</h3><p class="mt-2 text-sm leading-6 text-muted-foreground">The local audited registry is seeded into SQLite at startup.</p><dl class="mt-4 grid gap-3 text-xs sm:grid-cols-3"><div><dt class="text-muted-foreground">Application</dt><dd class="mt-1 font-mono font-semibold">{data.versions.application}</dd></div><div><dt class="text-muted-foreground">Database schema</dt><dd class="mt-1 font-mono font-semibold">{data.versions.databaseSchema}</dd></div><div><dt class="text-muted-foreground">Registry schema</dt><dd class="mt-1 font-mono font-semibold">{data.versions.registrySchema}</dd></div></dl><ul class="mt-4 divide-y divide-border border-y border-border">{#each data.registry as registry}<li class="grid gap-1 py-3 text-xs sm:grid-cols-[minmax(0,1fr)_auto_auto]"><span class="font-mono font-semibold">{registry.version}</span><span>{registry.status}</span><time class="text-muted-foreground" datetime={registry.verifiedAt}>{dateTimeLabel(registry.verifiedAt)}</time></li>{/each}</ul></section>
       </div>
 
-      <div class="sticky bottom-16 z-10 mt-5 flex flex-wrap items-center justify-between gap-3 rounded border border-border bg-background/95 p-2.5 shadow-[var(--shadow-md)] backdrop-blur sm:p-3 lg:bottom-4"><p class="hidden text-xs text-muted-foreground sm:block">Saves polling, download, logging, and default theme settings. Cleanup policy is saved by its preview action.</p><button onclick={saveOperations} disabled={pending !== null} class="focus-ring min-h-10 w-full rounded bg-primary px-4 text-sm font-semibold text-primary-foreground disabled:opacity-50 sm:w-auto">{pending === 'operations' ? 'Saving…' : 'Save operational settings'}</button></div>
+      <div class="sticky bottom-16 z-10 mt-5 flex flex-wrap items-center justify-between gap-3 rounded border border-border bg-background/95 p-2.5 shadow-[var(--shadow-md)] backdrop-blur sm:p-3 lg:bottom-4"><p class="hidden text-xs text-muted-foreground sm:block">Saves media privacy, polling, download, logging, and default theme settings. Cleanup policy is saved by its preview action.</p><button onclick={saveOperations} disabled={pending !== null} class="focus-ring min-h-10 w-full rounded bg-primary px-4 text-sm font-semibold text-primary-foreground disabled:opacity-50 sm:w-auto">{pending === 'operations' ? 'Saving…' : 'Save settings'}</button></div>
     </section>
   </div>
 </div>

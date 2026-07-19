@@ -33,14 +33,23 @@ describe('onboarding state', () => {
       version: 1,
       completedAt: '2026-01-01T00:00:00.000Z',
       dismissedAt: null,
-      steps: { location: true, connection: true, theme: true, defaults: true }
+      steps: {
+        location: true,
+        mediaPrivacy: true,
+        connection: true,
+        theme: true,
+        defaults: true
+      }
     });
     expect(state.completed).toBe(true);
   });
 
   test('update records completion and reopen clears it', async () => {
     const settings = await repository();
-    const completed = updateOnboarding(settings, { complete: true, steps: { location: true } });
+    const completed = updateOnboarding(settings, {
+      complete: true,
+      steps: { location: true }
+    });
     expect(completed.completedAt).not.toBeNull();
     expect(completed.steps.location).toBe(true);
     expect(readOnboarding(settings)?.completedAt).not.toBeNull();
@@ -52,10 +61,23 @@ describe('onboarding state', () => {
     // on the first step rather than the done screen.
     expect(reopened.steps).toEqual({
       location: false,
+      mediaPrivacy: false,
       connection: false,
       theme: false,
       defaults: false
     });
+  });
+
+  test('normalizes older in-progress records without changing completed markers', async () => {
+    const settings = await repository();
+    settings.set('onboarding', {
+      completedAt: '2026-01-01T00:00:00.000Z',
+      dismissedAt: null,
+      steps: { location: true, connection: true, theme: true, defaults: true }
+    });
+    const record = readOnboarding(settings);
+    expect(record?.steps.mediaPrivacy).toBe(false);
+    expect(computeOnboardingState(record).completed).toBe(true);
   });
 
   test('dismiss marks completion without a completedAt', async () => {

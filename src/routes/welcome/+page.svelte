@@ -1,27 +1,34 @@
 <script lang="ts">
 import { tick, untrack } from 'svelte';
 import { goto } from '$app/navigation';
+import MediaPrivacyControls from '$lib/components/settings/MediaPrivacyControls.svelte';
 import AppIcon from '$lib/components/ui/AppIcon.svelte';
 import Badge from '$lib/components/ui/Badge.svelte';
 import Button from '$lib/components/ui/Button.svelte';
 import type { OnboardingStateDto, SettingsDto } from '$lib/features/settings/contracts';
-import { apiKeyUiState, operationsRequest, settingsDraft } from '$lib/features/settings/controller';
+import {
+  apiKeyUiState,
+  mediaPrivacyRequest,
+  operationsRequest,
+  settingsDraft
+} from '$lib/features/settings/controller';
 import { resolveTheme, type ThemePreference, themePreferences, themeStorageKey } from '$lib/theme';
 import type { PageData } from './$types';
 
 let { data }: { data: PageData } = $props();
 const initial = untrack(() => data);
 
-const setupSteps = ['location', 'apiKey', 'theme', 'defaults'] as const;
+const setupSteps = ['location', 'mediaPrivacy', 'apiKey', 'theme', 'defaults'] as const;
 const steps = ['intro', ...setupSteps, 'done'] as const;
 type SetupStep = (typeof setupSteps)[number];
 type Step = (typeof steps)[number];
 
 let settings = $state<SettingsDto>(initial.settings);
 function firstIncompleteStep(state: OnboardingStateDto): Step {
-  const { location, connection, theme, defaults } = state.steps;
-  if (!location && !connection && !theme && !defaults) return 'intro';
+  const { location, mediaPrivacy, connection, theme, defaults } = state.steps;
+  if (!location && !mediaPrivacy && !connection && !theme && !defaults) return 'intro';
   if (!location) return 'location';
+  if (!mediaPrivacy) return 'mediaPrivacy';
   if (!connection) return 'apiKey';
   if (!theme) return 'theme';
   if (!defaults) return 'defaults';
@@ -41,6 +48,7 @@ let connectivityState = $state<ConnectivityState>(
 );
 let connectivityAccount = $state<string | null>(null);
 let themeChoice = $state<ThemePreference>(untrack(() => initial.settings.theme.defaultMode));
+let mediaPrivacy = $state({ ...initial.settings.mediaPrivacy });
 let heading = $state<HTMLHeadingElement | null>(null);
 let connectivityButton = $state<HTMLButtonElement | undefined>();
 
@@ -129,6 +137,19 @@ async function markStep(patch: Partial<OnboardingStateDto['steps']>): Promise<vo
 function confirmLocation(): void {
   void run(async () => {
     await markStep({ location: true });
+    next();
+  });
+}
+
+function saveMediaPrivacy(): void {
+  void run(async () => {
+    const draft = { ...settingsDraft(settings), mediaPrivacy };
+    const result = await request<{ settings: SettingsDto }>('/api/settings', 'PUT', {
+      mediaPrivacy: mediaPrivacyRequest(draft)
+    });
+    settings = result.settings;
+    mediaPrivacy = { ...result.settings.mediaPrivacy };
+    await markStep({ mediaPrivacy: true });
     next();
   });
 }
@@ -222,7 +243,7 @@ function leaveSetup(dismiss: boolean): void {
   void run(async () => {
     await request('/api/onboarding', 'PUT', {
       ...(dismiss ? { dismiss: true } : { complete: true }),
-      steps: { location: true, connection: true, theme: true, defaults: true }
+      steps: { location: true, mediaPrivacy: true, connection: true, theme: true, defaults: true }
     });
     await goto('/');
   });
@@ -236,6 +257,7 @@ const themeLabels: Record<ThemePreference, string> = {
 const stepTitles: Record<Step, string> = {
   intro: 'Welcome to Poyo Local Studio',
   location: 'Your work stays local',
+  mediaPrivacy: 'Protect local media metadata',
   apiKey: 'Connect your Poyo API key',
   theme: 'Choose your appearance',
   defaults: 'Review the defaults',
@@ -243,6 +265,7 @@ const stepTitles: Record<Step, string> = {
 };
 const setupStepLabels: Record<SetupStep, string> = {
   location: 'Privacy',
+  mediaPrivacy: 'Media',
   apiKey: 'API key',
   theme: 'Theme',
   defaults: 'Defaults'
@@ -302,7 +325,7 @@ const setupStepLabels: Record<SetupStep, string> = {
 
     {#if step === 'intro'}
       <p class="mt-3 text-sm leading-6 text-muted-foreground">
-        Set up privacy, your Poyo connection, appearance, and sensible working defaults in four
+        Set up privacy, your Poyo connection, appearance, and sensible working defaults in five
         short steps.
       </p>
       <ul class="mt-4 grid gap-2 text-sm">
@@ -328,6 +351,10 @@ const setupStepLabels: Record<SetupStep, string> = {
             ? 'The server administrator manages the local storage location.'
             : 'The Studio uses its private local application storage.'}
         </p>
+      </div>
+    {:else if step === 'mediaPrivacy'}
+      <div class="mt-4">
+        <MediaPrivacyControls bind:mediaPrivacy disabled={busy} />
       </div>
     {:else if step === 'apiKey'}
       <div class="mt-3 flex flex-wrap items-center gap-2">
@@ -456,6 +483,8 @@ const setupStepLabels: Record<SetupStep, string> = {
         <Button variant="primary" onclick={next}>Get started</Button>
       {:else if step === 'location'}
         <Button variant="primary" onclick={confirmLocation} disabled={busy}>Continue</Button>
+      {:else if step === 'mediaPrivacy'}
+        <Button variant="primary" onclick={saveMediaPrivacy} disabled={busy}>Save and continue</Button>
       {:else if step === 'apiKey'}
         <Button
           variant="primary"

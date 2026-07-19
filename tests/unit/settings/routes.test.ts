@@ -47,6 +47,9 @@ describe('settings HTTP and page boundaries', () => {
   test('onboarding and settings keep paths and credential implementation choices behind the server', async () => {
     const welcome = await Bun.file('src/routes/welcome/+page.svelte').text();
     const settings = await Bun.file('src/routes/settings/+page.svelte').text();
+    const mediaPrivacy = await Bun.file(
+      'src/lib/components/settings/MediaPrivacyControls.svelte'
+    ).text();
     for (const page of [welcome, settings]) {
       expect(page).toContain('never');
       expect(page).not.toContain('selectedBackend');
@@ -57,7 +60,12 @@ describe('settings HTTP and page boundaries', () => {
       expect(page).not.toMatch(/PLS_(?:APP_DATA_DIR|DATABASE_PATH|MEDIA_DIR|LOG_DIR)/);
     }
     expect(welcome).toContain('Your work stays local');
+    expect(welcome).toContain('Protect local media metadata');
+    expect(welcome).toContain('MediaPrivacyControls');
     expect(settings).toContain('Local-only data boundary');
+    expect(settings).toContain('MediaPrivacyControls');
+    expect(mediaPrivacy).toContain('Remote URLs');
+    expect(mediaPrivacy).toContain('visible people, places, text, or audio');
     expect(settings).toContain('Clear local logs');
     expect(welcome).toContain('/api/settings/api-key');
     expect(settings).toContain('/api/settings/api-key');

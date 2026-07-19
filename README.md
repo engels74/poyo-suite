@@ -44,6 +44,10 @@ The project is independent and is not an official Poyo.ai client.
 ### Requirements
 
 - [Bun 1.3.14](https://bun.sh/) — pinned in `.bun-version` and `package.json`.
+- [ExifTool 13.55+](https://exiftool.org/), [FFmpeg/ffprobe 8.1+](https://ffmpeg.org/), and
+  [ImageMagick 7.1+](https://imagemagick.org/) on the server `PATH` for privacy-preserving local
+  image and video intake. The application invokes these tools directly with bounded argument-array
+  subprocesses; no shell integration is used.
 - A Poyo API key for connectivity or generation. No paid request is needed to install, build,
   or run the automated test suite.
 
@@ -87,6 +91,16 @@ user or required to finish a durable job. Active jobs are checked every ten seco
 unchanged status observations advance the durable poll clock without creating repetitive lifecycle
 history entries.
 
+Local media metadata sanitization is enabled by default. Before a newly selected local image or
+video becomes a managed source, the loopback server removes the selected EXIF, IPTC, XMP, and
+Photoshop/8BIM metadata categories and verifies the result. Embedded still-image color profiles are
+preserved byte-for-byte by default, and video streams are remuxed without re-encoding while their
+playback-critical color signalling is checked. Poyo receives the verified managed bytes under a
+generated neutral filename, never the user's original filename. Missing tools, unsupported stream
+layouts, timeouts, or failed privacy/media verification reject the intake without falling back to
+the original. These controls apply only to local files handled by the app; Poyo fetches remote URLs
+directly. Metadata removal does not anonymize visible people, landmarks, text, watermarks, or audio.
+
 ### Delete local data
 
 Deletion is explicit and browser-based:
@@ -115,6 +129,11 @@ root and start fresh rather than editing `schema_migrations`.
 
 ## Important upstream limitations
 
+- Metadata removal covers removable data recognized by the provisioned ExifTool/FFmpeg/ImageMagick
+  toolchain, not arbitrary steganography or opaque proprietary payloads. Oriented multi-frame images
+  and video stream layouts that cannot be preserved and verified safely are rejected. A single-frame
+  oriented JPEG may be re-encoded while its visible orientation, dimensions, and color profile are
+  verified because the current cross-platform toolchain has no universal lossless orientation path.
 - Poyo documents no task cancellation, task/file/upload deletion, task-history API,
   submission-idempotency mechanism, dynamic model/capability listing, or pricing-estimate API.
 - Remote cleanup is therefore unavailable; local deletion is never presented as remote

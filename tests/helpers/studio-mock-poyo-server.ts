@@ -7,6 +7,10 @@ export interface RecordedPoyoRequest {
   pathname: string;
   authorizationScheme: string | null;
   json: unknown;
+  multipart: {
+    file: { name: string; size: number; type: string; checksum: string };
+    fileName: string | null;
+  } | null;
 }
 
 interface MockTask {
@@ -52,14 +56,29 @@ export async function startStudioMockPoyoServer(): Promise<{
       }
 
       let json: unknown = null;
+      let multipart: RecordedPoyoRequest['multipart'] = null;
       const contentType = request.headers.get('content-type') ?? '';
       if (contentType.includes('application/json')) json = await request.json();
+      if (contentType.includes('multipart/form-data')) {
+        const form = await request.formData();
+        const file = form.get('file');
+        if (file instanceof File) {
+          const bytes = new Uint8Array(await file.arrayBuffer());
+          const checksum = new Bun.CryptoHasher('sha256').update(bytes).digest('hex');
+          multipart = {
+            file: { name: file.name, size: file.size, type: file.type, checksum },
+            fileName:
+              typeof form.get('file_name') === 'string' ? String(form.get('file_name')) : null
+          };
+        }
+      }
       const authorization = request.headers.get('authorization');
       requests.push({
         method: request.method,
         pathname: url.pathname,
         authorizationScheme: authorization?.split(' ', 1)[0] ?? null,
-        json
+        json,
+        multipart
       });
 
       if (url.pathname === '/api/user/balance') {

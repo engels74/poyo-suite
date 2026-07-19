@@ -12,15 +12,18 @@ export const GET: RequestHandler = async ({ setHeaders }) => {
     platform.database,
     platform.logger
   );
-  return Response.json({ settings: service.dto(platform.paths, await platform.apiKey.status()) });
+  return Response.json({
+    settings: service.dto(platform.paths, await platform.apiKey.status())
+  });
 };
 
 export const PUT: RequestHandler = async ({ request }) => {
   try {
-    const body = await readSameOriginJson<{ operations?: unknown; localCleanup?: unknown }>(
-      request,
-      { maxBytes: 32 * 1024 }
-    );
+    const body = await readSameOriginJson<{
+      operations?: unknown;
+      localCleanup?: unknown;
+      mediaPrivacy?: unknown;
+    }>(request, { maxBytes: 32 * 1024 });
     const platform = await getPlatformServices();
     const service = new OperationsSettingsService(
       platform.settings,
@@ -28,7 +31,9 @@ export const PUT: RequestHandler = async ({ request }) => {
       platform.logger
     );
     service.update(body);
-    return Response.json({ settings: service.dto(platform.paths, await platform.apiKey.status()) });
+    return Response.json({
+      settings: service.dto(platform.paths, await platform.apiKey.status())
+    });
   } catch (error) {
     return operationsHttpError(error);
   }

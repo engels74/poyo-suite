@@ -1406,6 +1406,9 @@ serial('E2E-01..15 production studios, recovery, library, settings and accessibi
     expect(
       harness.mock.requests.filter((request) => request.pathname === '/api/common/upload/stream')
     ).toHaveLength(2);
+    const localUploads = harness.mock.requests.filter(
+      (request) => request.pathname === '/api/common/upload/stream'
+    );
     const imageEditSubmit = harness.mock.requests
       .filter((request) => request.pathname === '/api/generate/submit')
       .at(-1);
@@ -1430,10 +1433,21 @@ serial('E2E-01..15 production studios, recovery, library, settings and accessibi
       expect(input?.local_reference).toBeNull();
       expect(input?.managed_source_id).toBeTruthy();
       expect(input?.relative_path).toBeTruthy();
-      expect(
-        input?.relative_path &&
-          (await Bun.file(`${harness.appData}/uploads/${input.relative_path}`).exists())
-      ).toBe(true);
+      const managedPath = input?.relative_path
+        ? `${harness.appData}/uploads/${input.relative_path}`
+        : null;
+      if (!managedPath) throw new Error('Managed source path was not persisted.');
+      expect(await Bun.file(managedPath).exists()).toBe(true);
+      const managedChecksum = new Bun.CryptoHasher('sha256')
+        .update(await Bun.file(managedPath).bytes())
+        .digest('hex');
+      for (const upload of localUploads) {
+        if (!upload.multipart) throw new Error('Local Poyo upload was not multipart.');
+        expect(upload.multipart.file.name).toBe(`${input?.managed_source_id}.png`);
+        expect(upload.multipart.fileName).toBe(`${input?.managed_source_id}.png`);
+        expect(upload.multipart.file.checksum).toBe(managedChecksum);
+        expect(JSON.stringify(upload.multipart)).not.toContain('portrait-near-nine-sixteen.png');
+      }
       expect(input?.upload_url).toContain('/media/source.png');
     } finally {
       database.close();
@@ -2020,16 +2034,18 @@ serial('E2E-01..15 production studios, recovery, library, settings and accessibi
     await page.getByRole('button', { name: /Test connection/ }).click();
     await page.getByText(/Passed/).waitFor();
     await page.getByLabel('Download successful outputs automatically').uncheck();
+    await page.getByLabel('Remove XMP metadata').uncheck();
     await page.getByLabel('Polling interval (seconds)').fill('2');
     await page.getByLabel('Stale threshold (minutes)').fill('3');
-    await page.getByRole('button', { name: 'Save operational settings' }).click();
-    await page.getByText('Operational settings saved.').waitFor();
+    await page.getByRole('button', { name: 'Save settings' }).click();
+    await page.getByText('Settings saved.').waitFor();
     await page.reload();
     expect(await page.getByLabel('Download successful outputs automatically').isChecked()).toBe(
       false
     );
     expect(await page.getByLabel('Polling interval (seconds)').inputValue()).toBe('2');
     expect(await page.getByLabel('Stale threshold (minutes)').inputValue()).toBe('3');
+    expect(await page.getByLabel('Remove XMP metadata').isChecked()).toBe(false);
     expect(await page.getByText('Never delete automatically').count()).toBeGreaterThan(0);
     await page.getByRole('button', { name: 'Save automatic policy and preview' }).click();
     await page.getByText('Preview: 0 candidates').waitFor();
@@ -2045,8 +2061,8 @@ serial('E2E-01..15 production studios, recovery, library, settings and accessibi
 
     await page.goto(`${harness.url}/settings`);
     await page.getByLabel('Download successful outputs automatically').check();
-    await page.getByRole('button', { name: 'Save operational settings' }).click();
-    await page.getByText('Operational settings saved.').waitFor();
+    await page.getByRole('button', { name: 'Save settings' }).click();
+    await page.getByText('Settings saved.').waitFor();
 
     await page.goto(`${harness.url}/studio/image`);
     const imageBatchInspector = page.locator('#parameter-inspector');

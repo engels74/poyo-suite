@@ -1,22 +1,38 @@
-import { constants } from 'node:fs';
-import { link, open, rm } from 'node:fs/promises';
+import { constants, type Dirent } from 'node:fs';
+import { link, open, readdir, rm, unlink } from 'node:fs/promises';
 import { basename } from 'node:path';
+import type { MediaPrivacySettings } from '../../features/settings/contracts';
+import { DEFAULT_MEDIA_PRIVACY_SETTINGS } from '../../features/settings/media-privacy';
 import type { AppPaths } from '../platform/app-paths';
 import { resolvePathWithin } from '../platform/app-paths';
 import { RequestSecurityError } from '../platform/request-security';
-import { validateLocalFile } from '../poyo/uploads';
+import { POYO_STREAM_VIDEO_MAX_BYTES, validateLocalFile } from '../poyo/uploads';
 import {
   assertCanonicalDirectory,
   ensureCanonicalChildDirectory,
   ensureCanonicalRoot,
+  readExactPositioned,
   syncDirectory
 } from './filesystem-boundary';
+import { type MediaSanitizer, sanitizeMedia } from './media-sanitizer';
 
 const IMAGE_MAX_BYTES = 25 * 1024 * 1024;
 const REQUEST_MAX_BYTES = 101 * 1024 * 1024;
 
 export interface SourceIntakeOptions {
   maxRequestBytes?: number;
+  mediaPrivacy?: MediaPrivacySettings;
+  sanitizer?: MediaSanitizer;
+}
+
+export class SourceIntakeError extends Error {
+  readonly code = 'source_sanitization_failed';
+  readonly status = 422;
+
+  constructor(cause?: unknown) {
+    super('The local file could not be sanitized safely.', { cause });
+    this.name = 'SourceIntakeError';
+  }
 }
 
 const extensions: Record<string, string> = {
@@ -30,6 +46,55 @@ const extensions: Record<string, string> = {
   'video/x-msvideo': '.avi',
   'video/x-matroska': '.mkv'
 };
+
+const sourceId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const sourceTemporary =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(?:raw|sanitized|oriented)\.(?:jpg|png|gif|webp|mp4|webm|mov|avi|mkv)$/i;
+
+export function localSourceExtension(mimeType: string): string {
+  const extension = extensions[mimeType.toLowerCase()];
+  if (!extension) throw new Error('The selected local file format is not supported.');
+  return extension;
+}
+
+export function neutralSourceUploadName(id: string, mimeType: string): string {
+  if (!sourceId.test(id)) throw new Error('The managed local source identifier is not valid.');
+  return `${id}${localSourceExtension(mimeType)}`;
+}
+
+interface SourceIntakeRecoveryOperations {
+  readDirectory: (path: string) => Promise<Dirent[]>;
+  unlink: (path: string) => Promise<void>;
+  syncDirectory: (path: string) => Promise<void>;
+}
+
+const sourceIntakeRecoveryOperations: SourceIntakeRecoveryOperations = {
+  readDirectory: (path) => readdir(path, { withFileTypes: true }),
+  unlink,
+  syncDirectory
+};
+
+export async function recoverSourceIntakeTemporaries(
+  paths: Pick<AppPaths, 'temporary'>,
+  operations: SourceIntakeRecoveryOperations = sourceIntakeRecoveryOperations
+): Promise<number> {
+  const root = await ensureCanonicalRoot(paths.temporary, 'Managed source temporary recovery');
+  const entries = await operations.readDirectory(root);
+  let removed = 0;
+  for (const entry of entries) {
+    if (!sourceTemporary.test(entry.name) || (!entry.isFile() && !entry.isSymbolicLink())) continue;
+    await assertCanonicalDirectory(root, root, 'Managed source temporary recovery');
+    const target = resolvePathWithin(root, entry.name);
+    try {
+      await operations.unlink(target);
+      removed += 1;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+  }
+  if (removed > 0) await operations.syncDirectory(root);
+  return removed;
+}
 
 export interface LocalSourceIntake {
   id: string;
@@ -223,20 +288,18 @@ function safeOriginalName(value: string): string {
   return name && name !== '.' && name !== '..' ? name.slice(0, 255) : 'source';
 }
 
-async function writeStreamed(file: File, destination: string): Promise<string> {
+async function writeStreamed(file: File, destination: string): Promise<void> {
   const handle = await open(
     destination,
     constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW,
     0o600
   );
   const reader = file.stream().getReader();
-  const hasher = new Bun.CryptoHasher('sha256');
   let written = 0;
   try {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      hasher.update(value);
       written += value.byteLength;
       let offset = 0;
       while (offset < value.byteLength) {
@@ -247,9 +310,62 @@ async function writeStreamed(file: File, destination: string): Promise<string> {
     }
     if (written !== file.size) throw new Error('The local source copy is incomplete.');
     await handle.sync();
-    return hasher.digest('hex');
   } finally {
     await reader.cancel().catch(() => undefined);
+    await handle.close();
+  }
+}
+
+async function makePrivateRegular(path: string): Promise<void> {
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const details = await handle.stat();
+    if (!details.isFile()) throw new Error('The sanitized local source is not a regular file.');
+    await handle.chmod(0o600);
+  } finally {
+    await handle.close();
+  }
+}
+
+interface CandidateDetails {
+  sizeBytes: number;
+  checksum: string;
+  signature: string;
+}
+
+async function inspectCandidate(
+  path: string,
+  mimeType: string,
+  maxBytes: number
+): Promise<CandidateDetails> {
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const details = await handle.stat();
+    if (!details.isFile() || details.size <= 0 || details.size > maxBytes) {
+      throw new Error('The sanitized local source size is invalid.');
+    }
+    const header = new Uint8Array(Math.min(16, details.size));
+    await readExactPositioned(handle, header, 0);
+    if (!hasSignature(mimeType, header)) {
+      throw new Error('The sanitized local source signature does not match its type.');
+    }
+
+    const hasher = new Bun.CryptoHasher('sha256');
+    const buffer = new Uint8Array(64 * 1024);
+    let position = 0;
+    while (position < details.size) {
+      const length = Math.min(buffer.byteLength, details.size - position);
+      const { bytesRead } = await handle.read(buffer, 0, length, position);
+      if (bytesRead <= 0) throw new Error('The sanitized local source is incomplete.');
+      hasher.update(buffer.subarray(0, bytesRead));
+      position += bytesRead;
+    }
+    return {
+      sizeBytes: details.size,
+      checksum: hasher.digest('hex'),
+      signature: Array.from(header, (byte) => byte.toString(16).padStart(2, '0')).join('')
+    };
+  } finally {
     await handle.close();
   }
 }
@@ -260,6 +376,8 @@ export async function intakeLocalSource(
   options: SourceIntakeOptions = {}
 ): Promise<LocalSourceIntake> {
   const maxRequestBytes = options.maxRequestBytes ?? REQUEST_MAX_BYTES;
+  const mediaPrivacy = options.mediaPrivacy ?? DEFAULT_MEDIA_PRIVACY_SETTINGS;
+  const sanitizer = options.sanitizer ?? sanitizeMedia;
   const boundary = assertSameOriginMultipart(request, maxRequestBytes);
   const { file, mediaKind: requestedKind } = requiredParts(
     await boundedFormData(request, maxRequestBytes, boundary)
@@ -267,8 +385,7 @@ export async function intakeLocalSource(
   if (requestedKind === 'image' && file.size > IMAGE_MAX_BYTES)
     throw new Error('Local image sources are limited to 25 MB.');
   const type = file.type.toLowerCase();
-  const extension = extensions[type];
-  if (!extension) throw new Error('The selected local file format is not supported.');
+  const extension = localSourceExtension(type);
   validateLocalFile({
     kind: 'local-file',
     file,
@@ -292,31 +409,60 @@ export async function intakeLocalSource(
     'Managed source upload'
   );
   const destination = resolvePathWithin(directory.path, `${id}${extension}`);
-  const temporary = resolvePathWithin(temporaryRoot, `${id}.part`);
-  let checksum: string;
+  const rawTemporary = resolvePathWithin(temporaryRoot, `${id}.raw${extension}`);
+  const sanitizedTemporary = resolvePathWithin(temporaryRoot, `${id}.sanitized${extension}`);
   let published = false;
+  let sanitizationPendingVerification = false;
   try {
-    checksum = await writeStreamed(file, temporary);
+    await writeStreamed(file, rawTemporary);
+    await assertCanonicalDirectory(temporaryRoot, temporaryRoot, 'Managed source temporary');
+    let candidate = rawTemporary;
+    const maxOutputBytes =
+      requestedKind === 'image' ? IMAGE_MAX_BYTES : POYO_STREAM_VIDEO_MAX_BYTES;
+    if (mediaPrivacy.sanitizeLocalMedia) {
+      sanitizationPendingVerification = true;
+      await sanitizer({
+        inputPath: rawTemporary,
+        outputPath: sanitizedTemporary,
+        mimeType: type,
+        mediaKind: requestedKind,
+        settings: mediaPrivacy,
+        maxOutputBytes
+      });
+      await makePrivateRegular(sanitizedTemporary);
+      candidate = sanitizedTemporary;
+    }
+    await assertCanonicalDirectory(temporaryRoot, temporaryRoot, 'Managed source temporary');
+    const details = await inspectCandidate(candidate, type, maxOutputBytes);
+    sanitizationPendingVerification = false;
     await assertCanonicalDirectory(uploadRoot, directory.path, 'Managed source upload');
     await assertCanonicalDirectory(temporaryRoot, temporaryRoot, 'Managed source temporary');
-    await link(temporary, destination);
+    await link(candidate, destination);
     published = true;
     await syncDirectory(directory.path);
-    await rm(temporary);
+    await rm(rawTemporary, { force: true });
+    await rm(sanitizedTemporary, { force: true });
+    return {
+      id,
+      originalName: safeOriginalName(file.name),
+      mediaKind: requestedKind,
+      mimeType: type,
+      sizeBytes: details.sizeBytes,
+      checksum: details.checksum,
+      signature: details.signature,
+      createdAt,
+      localPath: destination
+    };
   } catch (error) {
-    await rm(temporary, { force: true }).catch(() => undefined);
-    if (published) await rm(destination, { force: true }).catch(() => undefined);
+    await rm(rawTemporary, { force: true }).catch(() => undefined);
+    await rm(sanitizedTemporary, { force: true }).catch(() => undefined);
+    if (published) {
+      await rm(destination, { force: true }).catch(() => undefined);
+      await syncDirectory(directory.path).catch(() => undefined);
+    }
+    if (sanitizationPendingVerification && !(error instanceof SourceIntakeError)) {
+      throw new SourceIntakeError(error);
+    }
     throw error;
   }
-  return {
-    id,
-    originalName: safeOriginalName(file.name),
-    mediaKind: requestedKind,
-    mimeType: type,
-    sizeBytes: file.size,
-    checksum,
-    signature: Array.from(header, (byte) => byte.toString(16).padStart(2, '0')).join(''),
-    createdAt,
-    localPath: destination
-  };
 }

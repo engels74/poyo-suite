@@ -1,5 +1,6 @@
 import { env } from '$env/dynamic/private';
 import { StructuredLogger } from '../diagnostics/jsonl-logger';
+import { recoverSourceIntakeTemporaries } from '../media/source-intake';
 import { seedImageRegistry, seedVideoRegistry } from '../registry/repository';
 import { ApiKeyManager } from '../settings/api-key-manager';
 import { SecretMetadataRepository } from '../settings/secret-metadata-repository';
@@ -33,6 +34,7 @@ async function createPlatformServices(): Promise<PlatformServices> {
     let database: Awaited<ReturnType<typeof openDatabase>> | null = null;
     try {
       await ensureAppPaths(paths);
+      const recoveredSourceTemporaries = await recoverSourceIntakeTemporaries(paths);
       await preflightDatabase(paths.database);
       database = await openDatabase(paths.database);
       seedImageRegistry(database);
@@ -71,7 +73,8 @@ async function createPlatformServices(): Promise<PlatformServices> {
         data: {
           schemaVersion: DATABASE_SCHEMA_VERSION,
           appDataSource: paths.source,
-          credentialBackend: secretStore.kind
+          credentialBackend: secretStore.kind,
+          recoveredSourceTemporaries
         }
       });
       maintenanceGate.registerDrain('logger', () => logger.suspendAndDrain());

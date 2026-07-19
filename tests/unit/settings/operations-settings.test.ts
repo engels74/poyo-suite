@@ -7,6 +7,7 @@ import {
   OperationsSettingsService
 } from '../../../src/lib/server/settings/operations-settings';
 import { SettingsRepository } from '../../../src/lib/server/settings/settings-repository';
+import { DEFAULT_MEDIA_PRIVACY_SETTINGS } from '../../../src/lib/features/settings/media-privacy';
 import { createTemporaryDirectory } from '../../helpers/temporary-directory';
 
 const cleanups: Array<() => Promise<void>> = [];
@@ -18,7 +19,9 @@ describe('validated operations settings', () => {
     cleanups.push(temporary.cleanup);
     const database = await openDatabase(join(temporary.path, 'studio.sqlite'));
     try {
-      const logger = new StructuredLogger({ directory: join(temporary.path, 'logs') });
+      const logger = new StructuredLogger({
+        directory: join(temporary.path, 'logs')
+      });
       const service = new OperationsSettingsService(
         new SettingsRepository(database),
         database,
@@ -96,12 +99,24 @@ describe('validated operations settings', () => {
         }
       );
       expect(publicSettings.storage).toEqual({ source: 'project-default' });
+      expect(publicSettings.mediaPrivacy).toEqual(DEFAULT_MEDIA_PRIVACY_SETTINGS);
       expect(JSON.stringify(publicSettings)).not.toContain(temporary.path);
       expect(() =>
         service.update({
-          operations: { ...operations, polling: { intervalMs: 0, staleAfterMs: 1 } }
+          operations: {
+            ...operations,
+            polling: { intervalMs: 0, staleAfterMs: 1 }
+          }
         })
       ).toThrow('supported range');
+      expect(() =>
+        service.update({
+          mediaPrivacy: {
+            ...DEFAULT_MEDIA_PRIVACY_SETTINGS,
+            removeXmp: 'yes'
+          }
+        })
+      ).toThrow('boolean');
     } finally {
       database.close();
     }

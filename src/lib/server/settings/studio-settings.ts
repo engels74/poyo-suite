@@ -12,6 +12,7 @@ export interface OnboardingRecord {
 
 const DEFAULT_STEPS: OnboardingStepsDto = {
   location: false,
+  mediaPrivacy: false,
   connection: false,
   theme: false,
   defaults: false
@@ -21,6 +22,7 @@ function normalizeSteps(value: unknown): OnboardingStepsDto {
   const input = (value ?? {}) as Record<string, unknown>;
   return {
     location: input.location === true,
+    mediaPrivacy: input.mediaPrivacy === true,
     connection: input.connection === true,
     theme: input.theme === true,
     defaults: input.defaults === true

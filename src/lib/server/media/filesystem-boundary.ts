@@ -14,6 +14,29 @@ export interface CanonicalFile {
   size: number;
 }
 
+export interface PositionedReader {
+  read(
+    buffer: Uint8Array,
+    offset: number,
+    length: number,
+    position: number
+  ): Promise<{ bytesRead: number }>;
+}
+
+export async function readExactPositioned(
+  reader: PositionedReader,
+  buffer: Uint8Array,
+  position: number
+): Promise<void> {
+  let offset = 0;
+  while (offset < buffer.byteLength) {
+    const remaining = buffer.byteLength - offset;
+    const { bytesRead } = await reader.read(buffer, offset, remaining, position + offset);
+    if (bytesRead <= 0 || bytesRead > remaining) throw new Error('The file header is incomplete.');
+    offset += bytesRead;
+  }
+}
+
 function boundaryError(label: string, detail: string): Error {
   return new Error(`${label} ${detail}`);
 }

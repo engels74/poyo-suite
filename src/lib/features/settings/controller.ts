@@ -4,7 +4,8 @@ import type {
   LocalCleanupPolicy
 } from '../cleanup/contracts';
 import type { OperationsDiagnosticsDto } from '../diagnostics/contracts';
-import type { ApiKeySettingsDto, SettingsDto } from './contracts';
+import type { ApiKeySettingsDto, MediaPrivacySettings, SettingsDto } from './contracts';
+import { parseMediaPrivacySettings } from './media-privacy';
 
 export interface SettingsDraft {
   pollingSeconds: number;
@@ -23,6 +24,7 @@ export interface SettingsDraft {
   excludeFavorites: boolean;
   excludePinned: boolean;
   excludedTags: string;
+  mediaPrivacy: MediaPrivacySettings;
 }
 
 const mb = 1024 * 1024;
@@ -47,8 +49,13 @@ export function settingsDraft(settings: SettingsDto): SettingsDraft {
     minFreeGb: (settings.localCleanup.minFreeBytes ?? 10 * gb) / gb,
     excludeFavorites: settings.localCleanup.exclusions.favorites,
     excludePinned: settings.localCleanup.exclusions.pinned,
-    excludedTags: settings.localCleanup.exclusions.tags.join(', ')
+    excludedTags: settings.localCleanup.exclusions.tags.join(', '),
+    mediaPrivacy: { ...settings.mediaPrivacy }
   };
+}
+
+export function mediaPrivacyRequest(draft: SettingsDraft): MediaPrivacySettings {
+  return parseMediaPrivacySettings(draft.mediaPrivacy);
 }
 
 function integer(value: number, name: string): number {

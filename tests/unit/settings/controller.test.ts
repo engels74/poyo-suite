@@ -2,11 +2,13 @@ import { describe, expect, test } from 'bun:test';
 import { REMOTE_CLEANUP_CAPABILITY } from '../../../src/lib/features/cleanup/contracts';
 import type { OperationsDiagnosticsDto } from '../../../src/lib/features/diagnostics/contracts';
 import type { ApiKeySettingsDto, SettingsDto } from '../../../src/lib/features/settings/contracts';
+import { DEFAULT_MEDIA_PRIVACY_SETTINGS } from '../../../src/lib/features/settings/media-privacy';
 import {
   apiKeyUiState,
   cleanupConsequenceLabel,
   cleanupPolicyRequest,
   diagnosticsReport,
+  mediaPrivacyRequest,
   operationsRequest,
   settingsDraft
 } from '../../../src/lib/features/settings/controller';
@@ -49,6 +51,7 @@ function settings(apiKey = key()): SettingsDto {
       maxRotatedFiles: 10
     },
     theme: { defaultMode: 'light' },
+    mediaPrivacy: { ...DEFAULT_MEDIA_PRIVACY_SETTINGS },
     localCleanup,
     remoteCleanup: REMOTE_CLEANUP_CAPABILITY
   };
@@ -59,7 +62,11 @@ function diagnostics(): OperationsDiagnosticsDto {
     health: {
       status: 'ok',
       checkedAt: '2026-07-15T12:00:00.000Z',
-      application: { version: '0.1.0', databaseSchemaVersion: 2, registrySchemaVersion: 1 },
+      application: {
+        version: '0.1.0',
+        databaseSchemaVersion: 2,
+        registrySchemaVersion: 1
+      },
       network: { defaultHost: '127.0.0.1', loopbackOnlyByDefault: true },
       database: { status: 'ok', foreignKeys: true, schemaVersion: 2 },
       apiKey: {
@@ -138,11 +145,23 @@ describe('settings UI controller', () => {
   });
 
   test('supports local onboarding and removal without exposing credential material', () => {
-    expect(apiKeyUiState(key())).toMatchObject({ canConfigure: true, canRemove: false });
+    expect(apiKeyUiState(key())).toMatchObject({
+      canConfigure: true,
+      canRemove: false
+    });
     const state = apiKeyUiState(
-      key({ source: 'local', status: 'configured', storeKind: 'file', updatedAt: '2026-07-15' })
+      key({
+        source: 'local',
+        status: 'configured',
+        storeKind: 'file',
+        updatedAt: '2026-07-15'
+      })
     );
-    expect(state).toMatchObject({ canConfigure: true, canRemove: true, canTest: true });
+    expect(state).toMatchObject({
+      canConfigure: true,
+      canRemove: true,
+      canTest: true
+    });
     expect(JSON.stringify(state)).not.toContain('sk-');
   });
 
@@ -162,11 +181,26 @@ describe('settings UI controller', () => {
       olderThanDays: null,
       maxBytes: 2 * 1024 * 1024 * 1024,
       minFreeBytes: null,
-      exclusions: { favorites: true, pinned: true, tags: ['archive', 'client-work'] }
+      exclusions: {
+        favorites: true,
+        pinned: true,
+        tags: ['archive', 'client-work']
+      }
     });
     expect(cleanupConsequenceLabel('file')).toContain('keep history metadata');
     expect(cleanupConsequenceLabel('metadata')).toContain('untracked files');
     expect(cleanupConsequenceLabel('both')).toContain('both local files');
+  });
+
+  test('round-trips complete media privacy settings and retains subordinate choices when disabled', () => {
+    const draft = settingsDraft(settings());
+    draft.mediaPrivacy.sanitizeLocalMedia = false;
+    draft.mediaPrivacy.removeExif = false;
+    expect(mediaPrivacyRequest(draft)).toEqual({
+      ...DEFAULT_MEDIA_PRIVACY_SETTINGS,
+      sanitizeLocalMedia: false,
+      removeExif: false
+    });
   });
 
   test('DIAG-01 copies a whitelisted report without secret-like extras or paths', () => {

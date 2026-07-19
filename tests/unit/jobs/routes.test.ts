@@ -67,6 +67,58 @@ describe('job HTTP boundaries', () => {
     expect(route).not.toContain('normalizedPayload: input');
   });
 
+  test('UPLOAD-08 source intake and verified snapshot complete before any Poyo client exists', async () => {
+    const route = await Bun.file('src/routes/api/sources/+server.ts').text();
+    const intakeIndex = route.indexOf('await intakeLocalSource');
+    const registerIndex = route.indexOf('await managedSources.register');
+    const cleanupAuthorityIndex = route.indexOf('registeredSourceId = registered.id');
+    const verifyIndex = route.indexOf('await readVerifiedManagedSourceBlob');
+    const clientIndex = route.indexOf('await createPoyoClient');
+    const uploadIndex = route.indexOf('await client.upload');
+    const responseIndex = route.indexOf('return Response.json', uploadIndex);
+    const responseSourceIndex = route.indexOf('source: {', responseIndex);
+    const responseUploadIndex = route.indexOf('upload: {', responseSourceIndex);
+    const catchIndex = route.indexOf('} catch (error)');
+    expect(intakeIndex).toBeGreaterThan(-1);
+    expect(registerIndex).toBeGreaterThan(intakeIndex);
+    expect(cleanupAuthorityIndex).toBeGreaterThan(registerIndex);
+    expect(verifyIndex).toBeGreaterThan(cleanupAuthorityIndex);
+    expect(clientIndex).toBeGreaterThan(verifyIndex);
+    expect(uploadIndex).toBeGreaterThan(verifyIndex);
+    expect(responseIndex).toBeGreaterThan(uploadIndex);
+    expect(responseSourceIndex).toBeGreaterThan(responseIndex);
+    expect(responseUploadIndex).toBeGreaterThan(responseSourceIndex);
+    expect(catchIndex).toBeGreaterThan(responseUploadIndex);
+    expect(route).toContain('readMediaPrivacySettings(platform.settings)');
+    expect(route).not.toContain('sourceId = source.id');
+    expect(route.slice(catchIndex)).toContain('if (registeredSourceId && managedSources)');
+    expect(route.slice(catchIndex)).toContain('discardUnreferenced(registeredSourceId)');
+
+    const postRegistration = route.slice(registerIndex);
+    const uploadRequest = route.slice(uploadIndex, responseIndex);
+    for (const mapping of [
+      'mimeType: registered.mimeType',
+      'sizeBytes: registered.byteSize',
+      'mediaKind: registered.mediaKind',
+      'fileName: neutralSourceUploadName(registered.id, registered.mimeType)'
+    ]) {
+      expect(uploadRequest).toContain(mapping);
+    }
+
+    const sourceResponse = route.slice(responseSourceIndex, responseUploadIndex);
+    for (const mapping of [
+      'id: registered.id',
+      'name: registered.originalName',
+      'mediaKind: registered.mediaKind',
+      'mimeType: registered.mimeType',
+      'sizeBytes: registered.byteSize',
+      'availability: registered.availability'
+    ]) {
+      expect(sourceResponse).toContain(mapping);
+    }
+    expect(postRegistration).not.toMatch(/\bsource\./);
+  });
+
   test('JOB-14 rerun blocks before reconcile and maps repository errors safely', async () => {
     const route = await Bun.file('src/routes/api/jobs/[jobId]/rerun/+server.ts').text();
     const rerunIndex = route.indexOf('runtime.repository.rerunAsNew');
