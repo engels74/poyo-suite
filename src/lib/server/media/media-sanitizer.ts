@@ -91,6 +91,16 @@ function fail(): never {
   throw new MediaSanitizationError();
 }
 
+async function assertVacantOutputPath(path: string): Promise<void> {
+  try {
+    await lstat(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+    fail();
+  }
+  fail();
+}
+
 export const runMediaCommand: MediaCommandRunner = async ({
   cmd,
   timeoutMs = TOOL_TIMEOUT_MS,
@@ -688,6 +698,7 @@ export function createMediaSanitizer(runner: MediaCommandRunner): MediaSanitizer
       extname(input.outputPath).includes('\0')
     )
       fail();
+    await assertVacantOutputPath(input.outputPath);
     const intermediates: string[] = [];
     try {
       if (input.mediaKind === 'image' && imageTypes.has(input.mimeType)) {

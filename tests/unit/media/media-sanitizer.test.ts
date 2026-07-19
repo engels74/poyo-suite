@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readlink, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { MediaPrivacySettings } from '../../../src/lib/features/settings/contracts';
 import {
@@ -155,6 +155,83 @@ describe('media command runner', () => {
     await expect(runMediaCommand({ cmd, timeoutMs, maxBufferBytes })).rejects.toEqual(
       new MediaSanitizationError()
     );
+  });
+});
+
+describe('sanitizer output custody', () => {
+  test('refuses pre-existing files, symlinks, and directories without invoking tools', async () => {
+    const root = await temporary();
+    const inputPath = join(root, 'input.png');
+    const input = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    await writeFile(inputPath, input);
+    const runnerCalls: string[][] = [];
+    const sanitizer = createMediaSanitizer(async (mediaCommand) => {
+      runnerCalls.push(mediaCommand.cmd);
+      throw new Error('runner must not be called');
+    });
+
+    const existingFile = join(root, 'existing-file.png');
+    const existingBytes = new TextEncoder().encode('existing output');
+    await writeFile(existingFile, existingBytes);
+
+    const symlinkTarget = join(root, 'symlink-target.png');
+    const existingSymlink = join(root, 'existing-symlink.png');
+    const targetBytes = new TextEncoder().encode('symlink target');
+    await writeFile(symlinkTarget, targetBytes);
+    await symlink(symlinkTarget, existingSymlink);
+
+    const existingDirectory = join(root, 'existing-directory.png');
+    const sentinel = join(existingDirectory, 'sentinel');
+    const sentinelBytes = new TextEncoder().encode('directory sentinel');
+    await mkdir(existingDirectory);
+    await writeFile(sentinel, sentinelBytes);
+
+    for (const outputPath of [existingFile, existingSymlink, existingDirectory]) {
+      await expect(
+        sanitizer({
+          inputPath,
+          outputPath,
+          mimeType: 'image/png',
+          mediaKind: 'image',
+          settings: defaults,
+          maxOutputBytes: 1024 * 1024
+        })
+      ).rejects.toBeInstanceOf(MediaSanitizationError);
+    }
+
+    expect(runnerCalls).toEqual([]);
+    expect(await Bun.file(existingFile).bytes()).toEqual(existingBytes);
+    expect(await readlink(existingSymlink)).toBe(symlinkTarget);
+    expect(await Bun.file(symlinkTarget).bytes()).toEqual(targetBytes);
+    expect(await Bun.file(sentinel).bytes()).toEqual(sentinelBytes);
+  });
+
+  test('fails safely when output-path inspection raises a non-ENOENT error', async () => {
+    const root = await temporary();
+    const inputPath = join(root, 'input.png');
+    const regularParent = join(root, 'regular-parent');
+    const parentBytes = new TextEncoder().encode('not a directory');
+    await writeFile(inputPath, new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    await writeFile(regularParent, parentBytes);
+    let runnerCalls = 0;
+    const sanitizer = createMediaSanitizer(async () => {
+      runnerCalls += 1;
+      throw new Error('runner must not be called');
+    });
+
+    await expect(
+      sanitizer({
+        inputPath,
+        outputPath: join(regularParent, 'output.png'),
+        mimeType: 'image/png',
+        mediaKind: 'image',
+        settings: defaults,
+        maxOutputBytes: 1024 * 1024
+      })
+    ).rejects.toBeInstanceOf(MediaSanitizationError);
+
+    expect(runnerCalls).toBe(0);
+    expect(await Bun.file(regularParent).bytes()).toEqual(parentBytes);
   });
 });
 
@@ -603,5 +680,44 @@ describe('video sanitization', () => {
         .decode(command(['exiftool', '-s3', '-Title', '-Location', outputPath]))
         .trim()
     ).toBe('');
+  });
+
+  test('rejects versioned Lavf build metadata after the bitexact remux', async () => {
+    const root = await temporary();
+    const inputPath = join(root, 'input.mp4');
+    const outputPath = join(root, 'output.mp4');
+    videoFixture(inputPath, 'mp4', 'mpeg4', 'aac');
+    let modifiedPostRemuxProbe = false;
+    const sanitizer = createMediaSanitizer(async (mediaCommand) => {
+      const result = await runMediaCommand(mediaCommand);
+      if (
+        mediaCommand.cmd[0] === 'ffprobe' &&
+        mediaCommand.cmd.at(-1) === outputPath &&
+        (await Bun.file(outputPath).exists())
+      ) {
+        const probe = JSON.parse(new TextDecoder().decode(result.stdout)) as {
+          format?: { tags?: Record<string, string> };
+        };
+        probe.format ??= {};
+        probe.format.tags ??= {};
+        probe.format.tags.encoder = 'Lavf62.3.100';
+        modifiedPostRemuxProbe = true;
+        return { ...result, stdout: new TextEncoder().encode(JSON.stringify(probe)) };
+      }
+      return result;
+    });
+
+    await expect(
+      sanitizer({
+        inputPath,
+        outputPath,
+        mimeType: 'video/mp4',
+        mediaKind: 'video',
+        settings: defaults,
+        maxOutputBytes: 4 * 1024 * 1024
+      })
+    ).rejects.toBeInstanceOf(MediaSanitizationError);
+    expect(modifiedPostRemuxProbe).toBe(true);
+    expect(await Bun.file(outputPath).exists()).toBe(false);
   });
 });

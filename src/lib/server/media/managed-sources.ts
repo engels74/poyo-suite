@@ -1,8 +1,14 @@
 import type { Database } from 'bun:sqlite';
 import { unlink } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import { type AppPaths, resolvePathWithin } from '../platform/app-paths';
 import { DatabaseRepository } from '../platform/repository';
-import { inspectCanonicalFile } from './filesystem-boundary';
+import {
+  assertCanonicalDirectory,
+  inspectCanonicalFile,
+  inspectCanonicalRoot,
+  syncDirectory
+} from './filesystem-boundary';
 import type { LocalSourceIntake } from './source-intake';
 
 export type ManagedSourceAvailability = 'available' | 'missing' | 'deleted';
@@ -48,11 +54,19 @@ function assertManagedSourceId(id: string): void {
   }
 }
 
+interface ManagedSourceFileOperations {
+  unlink: (path: string) => Promise<void>;
+  syncDirectory: (path: string) => Promise<void>;
+}
+
+const managedSourceFileOperations: ManagedSourceFileOperations = { unlink, syncDirectory };
+
 export class ManagedSourceRepository extends DatabaseRepository {
   constructor(
     database: Database,
     private readonly paths: Pick<AppPaths, 'uploads'>,
-    private readonly now: () => Date = () => new Date()
+    private readonly now: () => Date = () => new Date(),
+    private readonly fileOperations: ManagedSourceFileOperations = managedSourceFileOperations
   ) {
     super(database);
   }
@@ -190,22 +204,19 @@ export class ManagedSourceRepository extends DatabaseRepository {
         )
         .get(id)?.count ?? 0;
     if (references > 0) return false;
-    const inspected = await inspectCanonicalFile(
-      this.paths.uploads,
-      source.relative_path,
-      'Managed source cleanup'
-    );
+    const root = await inspectCanonicalRoot(this.paths.uploads, 'Managed source cleanup');
+    const path = resolvePathWithin(root, source.relative_path);
+    const parent = dirname(path);
+    await assertCanonicalDirectory(root, parent, 'Managed source cleanup');
+    const inspected = await inspectCanonicalFile(root, path, 'Managed source cleanup');
     if (inspected) {
-      const revalidated = await inspectCanonicalFile(
-        this.paths.uploads,
-        source.relative_path,
-        'Managed source cleanup'
-      );
+      const revalidated = await inspectCanonicalFile(root, path, 'Managed source cleanup');
       if (!revalidated || revalidated.path !== inspected.path) {
         throw new Error('Managed source cleanup path changed before deletion.');
       }
-      await unlink(revalidated.path);
+      await this.fileOperations.unlink(revalidated.path);
     }
+    await this.fileOperations.syncDirectory(parent);
     return this.database.query('DELETE FROM managed_sources WHERE id=?').run(id).changes === 1;
   }
 
@@ -229,7 +240,8 @@ export class ManagedSourceRepository extends DatabaseRepository {
       throw new Error('Managed source cleanup path changed before deletion.');
     }
     if (this.hasPathOwner(revalidated.relativePath)) return;
-    await unlink(revalidated.path);
+    await this.fileOperations.unlink(revalidated.path);
+    await this.fileOperations.syncDirectory(dirname(revalidated.path));
   }
 
   private hasPathOwner(relativePath: string): boolean {

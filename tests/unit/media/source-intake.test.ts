@@ -16,6 +16,7 @@ import { basename, dirname, join } from 'node:path';
 import { DEFAULT_MEDIA_PRIVACY_SETTINGS } from '../../../src/lib/features/settings/media-privacy';
 import { jobHttpError } from '../../../src/lib/server/jobs/http';
 import { readVerifiedManagedSourceBlob } from '../../../src/lib/server/jobs/managed-source-upload';
+import { syncDirectory as syncFilesystemDirectory } from '../../../src/lib/server/media/filesystem-boundary';
 import { ManagedSourceRepository } from '../../../src/lib/server/media/managed-sources';
 import {
   intakeLocalSource as intakeWithPrivacy,
@@ -266,6 +267,50 @@ describe('local source intake', () => {
     ).toBeNull();
   });
 
+  test('UPLOAD-01E2 pre-insert cleanup unlinks before syncing and preserves error order', async () => {
+    const { paths, database } = await fixture();
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const source = await intakeLocalSource(
+      uploadRequest(png, 'image/png', 'http://127.0.0.1:5173'),
+      paths
+    );
+    const events: string[] = [];
+    const syncError = new Error('injected pre-insert directory sync failure');
+    const repository = new ManagedSourceRepository(database, paths, undefined, {
+      unlink: async (path) => {
+        events.push(`unlink:${path}`);
+        await unlink(path);
+      },
+      syncDirectory: async (path) => {
+        events.push(`sync:${path}`);
+        throw syncError;
+      }
+    });
+    let captured: unknown;
+
+    try {
+      await repository.register({ ...source, sizeBytes: source.sizeBytes + 1 });
+    } catch (error) {
+      captured = error;
+    }
+
+    expect(captured).toBeInstanceOf(AggregateError);
+    const aggregate = captured as AggregateError;
+    expect(aggregate.errors).toHaveLength(2);
+    expect((aggregate.errors[0] as Error).message).toBe(
+      'Managed source copy could not be verified.'
+    );
+    expect(aggregate.errors[1]).toBe(syncError);
+    expect(aggregate.cause).toBe(aggregate.errors[0]);
+    expect(events).toEqual([`unlink:${source.localPath}`, `sync:${dirname(source.localPath)}`]);
+    expect(await Bun.file(source.localPath).exists()).toBe(false);
+    expect(
+      database
+        .query<{ id: string }, [string]>('SELECT id FROM managed_sources WHERE id=?')
+        .get(source.id)
+    ).toBeNull();
+  });
+
   test('UPLOAD-01F invalid registration IDs do not transfer file custody', async () => {
     const { paths, database, repository } = await fixture();
     const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -439,6 +484,70 @@ describe('local source intake', () => {
     expect(await Bun.file(retained.localPath).exists()).toBe(false);
   });
 
+  test('UPLOAD-01L row-backed cleanup syncs after unlink and before deleting its row', async () => {
+    const { paths, database, repository } = await fixture();
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const source = await intakeLocalSource(
+      uploadRequest(png, 'image/png', 'http://127.0.0.1:5173'),
+      paths
+    );
+    await repository.register(source);
+    const events: string[] = [];
+    const syncError = new Error('injected row-backed directory sync failure');
+    let syncAttempts = 0;
+    const faultingRepository = new ManagedSourceRepository(database, paths, undefined, {
+      unlink: async (path) => {
+        events.push(`unlink:${path}`);
+        await unlink(path);
+      },
+      syncDirectory: async (path) => {
+        syncAttempts += 1;
+        events.push(`sync:${path}:attempt-${syncAttempts}`);
+        if (syncAttempts <= 2) throw syncError;
+        await syncFilesystemDirectory(path);
+      }
+    });
+
+    await expect(faultingRepository.discardUnreferenced(source.id)).rejects.toBe(syncError);
+    expect(events).toEqual([
+      `unlink:${source.localPath}`,
+      `sync:${dirname(source.localPath)}:attempt-1`
+    ]);
+    expect(await Bun.file(source.localPath).exists()).toBe(false);
+    expect(
+      database
+        .query<{ id: string }, [string]>('SELECT id FROM managed_sources WHERE id=?')
+        .get(source.id)
+    ).toEqual({ id: source.id });
+
+    await expect(faultingRepository.discardUnreferenced(source.id)).rejects.toBe(syncError);
+    expect(events).toEqual([
+      `unlink:${source.localPath}`,
+      `sync:${dirname(source.localPath)}:attempt-1`,
+      `sync:${dirname(source.localPath)}:attempt-2`
+    ]);
+    expect(await Bun.file(source.localPath).exists()).toBe(false);
+    expect(
+      database
+        .query<{ id: string }, [string]>('SELECT id FROM managed_sources WHERE id=?')
+        .get(source.id)
+    ).toEqual({ id: source.id });
+
+    expect(await faultingRepository.discardUnreferenced(source.id)).toBe(true);
+    expect(events).toEqual([
+      `unlink:${source.localPath}`,
+      `sync:${dirname(source.localPath)}:attempt-1`,
+      `sync:${dirname(source.localPath)}:attempt-2`,
+      `sync:${dirname(source.localPath)}:attempt-3`
+    ]);
+    expect(await Bun.file(source.localPath).exists()).toBe(false);
+    expect(
+      database
+        .query<{ id: string }, [string]>('SELECT id FROM managed_sources WHERE id=?')
+        .get(source.id)
+    ).toBeNull();
+  });
+
   test('UPLOAD-02 rejects content whose signature disagrees with its declared type', async () => {
     const { paths } = await fixture();
     const request = uploadRequest(
@@ -564,7 +673,7 @@ describe('local source intake', () => {
   });
 
   test('UPLOAD-05 parent swaps cannot satisfy reconcile or delete an outside same-size file', async () => {
-    const { paths, repository } = await fixture();
+    const { paths, database, repository } = await fixture();
     const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
     const source = await intakeLocalSource(
       uploadRequest(png, 'image/png', 'http://127.0.0.1:5173'),
@@ -576,19 +685,39 @@ describe('local source intake', () => {
     const outside = join(paths.root, 'outside-managed');
     await rename(bucket, retainedBucket);
     await mkdir(outside);
-    await writeFile(join(outside, basename(source.localPath)), png);
+    const outsideSource = join(outside, basename(source.localPath));
+    await writeFile(outsideSource, png);
     await symlink(outside, bucket, 'dir');
+    const cleanupEvents: string[] = [];
+    const cleanupRepository = new ManagedSourceRepository(database, paths, undefined, {
+      unlink: async (path) => {
+        cleanupEvents.push(`unlink:${path}`);
+        await unlink(path);
+      },
+      syncDirectory: async (path) => {
+        cleanupEvents.push(`sync:${path}`);
+        await syncFilesystemDirectory(path);
+      }
+    });
 
     expect(await repository.reconcile(source.id)).toBe('missing');
     await expect(repository.resolveAvailable(source.id)).rejects.toThrow('no longer available');
-    await expect(repository.discardUnreferenced(source.id)).rejects.toThrow(
-      /escapes|configured root/
+    await expect(cleanupRepository.discardUnreferenced(source.id)).rejects.toThrow(
+      /escapes|configured root|symbolic/
     );
-    expect(await Bun.file(join(outside, basename(source.localPath))).bytes()).toEqual(png);
+    expect(await Bun.file(outsideSource).bytes()).toEqual(png);
     expect(repository.get(source.id)).not.toBeNull();
+    expect(cleanupEvents).toEqual([]);
+
+    await unlink(outsideSource);
+    await expect(cleanupRepository.discardUnreferenced(source.id)).rejects.toThrow(
+      /symbolic|configured root/
+    );
+    expect(repository.get(source.id)).not.toBeNull();
+    expect(cleanupEvents).toEqual([]);
   });
 
-  test('UPLOAD-06 canonical ancestor aliases remain valid for intake and registration', async () => {
+  test('UPLOAD-06 canonical ancestor aliases remain valid for intake, registration and deletion', async () => {
     const temporary = await createTemporaryDirectory('poyo-source-alias-');
     const canonical = join(temporary.path, 'canonical');
     const alias = join(temporary.path, 'alias');
@@ -603,15 +732,27 @@ describe('local source intake', () => {
       database.close();
       await temporary.cleanup();
     });
-    const repository = new ManagedSourceRepository(database, paths);
+    const syncedDirectories: string[] = [];
+    const repository = new ManagedSourceRepository(database, paths, undefined, {
+      unlink,
+      syncDirectory: async (path) => {
+        syncedDirectories.push(path);
+        await syncFilesystemDirectory(path);
+      }
+    });
     const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
     const source = await intakeLocalSource(
       uploadRequest(png, 'image/png', 'http://127.0.0.1:5173'),
       paths
     );
     const registered = await repository.register(source);
+    const expectedCanonicalParent = await realpath(dirname(registered.localPath));
     expect(await realpath(registered.localPath)).toBe(await realpath(source.localPath));
     expect((await repository.resolveAvailable(source.id)).availability).toBe('available');
+    expect(await repository.discardUnreferenced(source.id)).toBe(true);
+    expect(syncedDirectories).toEqual([expectedCanonicalParent]);
+    expect(await Bun.file(source.localPath).exists()).toBe(false);
+    expect(repository.get(source.id)).toBeNull();
   });
 
   test('UPLOAD-07 restart recovery removes only orphaned intake temporaries without following links', async () => {
@@ -629,8 +770,87 @@ describe('local source intake', () => {
     await symlink(outside, join(paths.temporary, `${third}.raw.png`));
     await writeFile(join(paths.temporary, 'unrelated.part'), raw, { mode: 0o600 });
 
+    const matchingDirectory = join(paths.temporary, `${crypto.randomUUID()}.raw.png`);
+    const sentinel = join(matchingDirectory, 'sentinel');
+    await mkdir(matchingDirectory);
+    await writeFile(sentinel, raw, { mode: 0o600 });
+
     expect(await recoverSourceIntakeTemporaries(paths)).toBe(4);
-    expect(await readdir(paths.temporary)).toEqual(['unrelated.part']);
+    expect((await readdir(paths.temporary)).sort()).toEqual([
+      basename(matchingDirectory),
+      'unrelated.part'
+    ]);
+    expect(await Bun.file(sentinel).bytes()).toEqual(raw);
     expect(await Bun.file(outside).bytes()).toEqual(raw);
+    expect(await recoverSourceIntakeTemporaries(paths)).toBe(0);
+  });
+
+  test('UPLOAD-07B ignores ENOENT races without counting or syncing', async () => {
+    const { paths } = await fixture();
+    const name = `${crypto.randomUUID()}.raw.png`;
+    const target = join(paths.temporary, name);
+    await writeFile(target, 'temporary');
+    const entries = await readdir(paths.temporary, { withFileTypes: true });
+    let syncCalls = 0;
+
+    expect(
+      await recoverSourceIntakeTemporaries(paths, {
+        readDirectory: async () => entries,
+        unlink: async () => {
+          const error = new Error('gone') as NodeJS.ErrnoException;
+          error.code = 'ENOENT';
+          throw error;
+        },
+        syncDirectory: async () => {
+          syncCalls += 1;
+        }
+      })
+    ).toBe(0);
+    expect(syncCalls).toBe(0);
+  });
+
+  test('UPLOAD-07C exposes a file-to-directory swap without recursive deletion or sync', async () => {
+    const { paths } = await fixture();
+    const name = `${crypto.randomUUID()}.raw.png`;
+    const target = join(paths.temporary, name);
+    await writeFile(target, 'temporary');
+    const entries = await readdir(paths.temporary, { withFileTypes: true });
+    let syncCalls = 0;
+
+    await expect(
+      recoverSourceIntakeTemporaries(paths, {
+        readDirectory: async () => entries,
+        unlink: async (path) => {
+          await unlink(path);
+          await mkdir(path);
+          await unlink(path);
+        },
+        syncDirectory: async () => {
+          syncCalls += 1;
+        }
+      })
+    ).rejects.toBeInstanceOf(Error);
+    expect(await stat(target).then((details) => details.isDirectory())).toBe(true);
+    expect(syncCalls).toBe(0);
+  });
+
+  test('UPLOAD-07D exposes directory sync failure after a successful unlink', async () => {
+    const { paths } = await fixture();
+    const name = `${crypto.randomUUID()}.raw.png`;
+    const target = join(paths.temporary, name);
+    await writeFile(target, 'temporary');
+    const entries = await readdir(paths.temporary, { withFileTypes: true });
+    const syncError = new Error('injected recovery directory sync failure');
+
+    await expect(
+      recoverSourceIntakeTemporaries(paths, {
+        readDirectory: async () => entries,
+        unlink,
+        syncDirectory: async () => {
+          throw syncError;
+        }
+      })
+    ).rejects.toBe(syncError);
+    expect(await Bun.file(target).exists()).toBe(false);
   });
 });

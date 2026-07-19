@@ -1,4 +1,4 @@
-import { constants } from 'node:fs';
+import { constants, type Dirent } from 'node:fs';
 import { link, open, readdir, rm, unlink } from 'node:fs/promises';
 import { basename } from 'node:path';
 import type { MediaPrivacySettings } from '../../features/settings/contracts';
@@ -62,20 +62,38 @@ export function neutralSourceUploadName(id: string, mimeType: string): string {
   return `${id}${localSourceExtension(mimeType)}`;
 }
 
+interface SourceIntakeRecoveryOperations {
+  readDirectory: (path: string) => Promise<Dirent[]>;
+  unlink: (path: string) => Promise<void>;
+  syncDirectory: (path: string) => Promise<void>;
+}
+
+const sourceIntakeRecoveryOperations: SourceIntakeRecoveryOperations = {
+  readDirectory: (path) => readdir(path, { withFileTypes: true }),
+  unlink,
+  syncDirectory
+};
+
 export async function recoverSourceIntakeTemporaries(
-  paths: Pick<AppPaths, 'temporary'>
+  paths: Pick<AppPaths, 'temporary'>,
+  operations: SourceIntakeRecoveryOperations = sourceIntakeRecoveryOperations
 ): Promise<number> {
   const root = await ensureCanonicalRoot(paths.temporary, 'Managed source temporary recovery');
-  const names = (await readdir(root)).filter((name) => sourceTemporary.test(name));
-  for (const name of names) {
+  const entries = await operations.readDirectory(root);
+  let removed = 0;
+  for (const entry of entries) {
+    if (!sourceTemporary.test(entry.name) || (!entry.isFile() && !entry.isSymbolicLink())) continue;
     await assertCanonicalDirectory(root, root, 'Managed source temporary recovery');
-    const target = resolvePathWithin(root, name);
-    await unlink(target).catch((error: NodeJS.ErrnoException) => {
-      if (error.code !== 'ENOENT') throw error;
-    });
+    const target = resolvePathWithin(root, entry.name);
+    try {
+      await operations.unlink(target);
+      removed += 1;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
   }
-  if (names.length > 0) await syncDirectory(root);
-  return names.length;
+  if (removed > 0) await operations.syncDirectory(root);
+  return removed;
 }
 
 export interface LocalSourceIntake {
