@@ -457,6 +457,23 @@ async function assertModelPickerUserPath(page: Page): Promise<void> {
   expect(await summary.evaluate((element) => element === document.activeElement)).toBe(true);
 }
 
+async function assertVideoSafetyCapabilityMarkers(page: Page): Promise<void> {
+  const picker = page.locator('fieldset:visible').filter({ hasText: 'Audited model' }).first();
+  const details = picker.locator('details');
+  await details.locator('summary').click();
+  await picker.getByText('Safety checker available · off by default', { exact: true }).waitFor();
+  const markers = picker.locator('label [data-model-capability="safety-checker"]');
+  expect(await markers.count()).toBeGreaterThan(0);
+  expect(
+    await markers.evaluateAll((elements) =>
+      elements.every(
+        (element) => element.textContent?.trim() === 'Safety checker available; off by default'
+      )
+    )
+  ).toBe(true);
+  await details.locator('summary').click();
+}
+
 function pngCrc(bytes: Uint8Array): number {
   let crc = 0xffffffff;
   for (const byte of bytes) {
@@ -1575,6 +1592,7 @@ serial('E2E-01..15 production studios, recovery, library, settings and accessibi
     await page.goto(`${harness.url}/studio/video`);
     await page.setViewportSize({ width: 390, height: 844 });
     await assertModelPickerUserPath(page);
+    await assertVideoSafetyCapabilityMarkers(page);
     expect(await pageHasNoHorizontalOverflow(page)).toBe(true);
     await page.keyboard.press('Escape');
     await page.setViewportSize({ width: 1440, height: 900 });

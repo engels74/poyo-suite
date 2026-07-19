@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "registryVersion": "video-2026-07-15.2",
+  "registryVersion": "video-2026-07-19.1",
   "reviewedAt": "2026-07-15T21:58:12Z",
   "workflows": [
     {
@@ -6504,7 +6504,7 @@
             "apiKey": "prompt",
             "kind": "text",
             "level": "essential",
-            "required": false,
+            "required": true,
             "min": 1,
             "max": 5000
           },
@@ -6558,7 +6558,18 @@
             "default": false
           }
         ],
-        "inputRoles": [],
+        "inputRoles": [
+          {
+            "role": "audio",
+            "requestKey": "audioUrl",
+            "apiKey": "audio_url",
+            "mediaKind": "audio",
+            "required": false,
+            "min": 0,
+            "max": 1,
+            "formats": ["audio/mpeg", "audio/wav", "audio/mp4"]
+          }
+        ],
         "output": {
           "mediaKind": "video",
           "formats": ["video/mp4", "video/webm", "video/quicktime"],
@@ -6635,17 +6646,16 @@
           ]
         },
         "invalid": {
-          "label": "unsupported duration",
+          "label": "required prompt",
           "values": {
-            "prompt": "studio video",
-            "duration": 6,
+            "duration": 5,
             "aspectRatio": "16:9",
             "resolution": "720p",
             "seed": 0,
             "enableSafetyChecker": false,
             "multiShots": false
           },
-          "issueIncludes": "duration is unsupported"
+          "issueIncludes": "prompt is required"
         }
       },
       "manualDecisions": [
@@ -6736,6 +6746,26 @@
             "min": 1,
             "max": 2,
             "formats": ["image/jpeg", "image/png", "image/webp"]
+          },
+          {
+            "role": "source-video",
+            "requestKey": "videoUrl",
+            "apiKey": "video_url",
+            "mediaKind": "video",
+            "required": false,
+            "min": 0,
+            "max": 1,
+            "formats": ["video/mp4", "video/webm", "video/quicktime"]
+          },
+          {
+            "role": "audio",
+            "requestKey": "audioUrl",
+            "apiKey": "audio_url",
+            "mediaKind": "audio",
+            "required": false,
+            "min": 0,
+            "max": 1,
+            "formats": ["audio/mpeg", "audio/wav", "audio/mp4"]
           }
         ],
         "output": {
@@ -6857,7 +6887,7 @@
             "apiKey": "prompt",
             "kind": "text",
             "level": "essential",
-            "required": false,
+            "required": true,
             "min": 1,
             "max": 5000
           },
@@ -7017,18 +7047,17 @@
           ]
         },
         "invalid": {
-          "label": "unsupported aspectRatio",
+          "label": "required prompt",
           "values": {
-            "prompt": "studio video",
             "duration": 2,
-            "aspectRatio": "__unsupported_fixture_value__",
+            "aspectRatio": "16:9",
             "resolution": "720p",
             "seed": 0,
             "enableSafetyChecker": false,
             "multiShots": false,
             "referenceImageUrls": ["https://assets.example/reference.png"]
           },
-          "issueIncludes": "aspectRatio is unsupported"
+          "issueIncludes": "prompt is required"
         }
       },
       "manualDecisions": [
@@ -7054,7 +7083,7 @@
             "apiKey": "prompt",
             "kind": "text",
             "level": "essential",
-            "required": false,
+            "required": true,
             "min": 1,
             "max": 5000
           },
@@ -7235,18 +7264,18 @@
           ]
         },
         "invalid": {
-          "label": "required source-video input",
+          "label": "required prompt",
           "values": {
-            "prompt": "studio video",
             "duration": 0,
             "aspectRatio": "16:9",
             "resolution": "720p",
             "seed": 0,
             "enableSafetyChecker": false,
             "audioSetting": "auto",
-            "multiShots": false
+            "multiShots": false,
+            "videoUrl": "https://assets.example/source-video-0.mp4"
           },
-          "issueIncludes": "source-video"
+          "issueIncludes": "prompt is required"
         }
       },
       "manualDecisions": [

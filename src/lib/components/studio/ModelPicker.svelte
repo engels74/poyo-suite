@@ -1,5 +1,6 @@
 <script lang="ts">
 import { tick } from 'svelte';
+import AppIcon from '$lib/components/ui/AppIcon.svelte';
 import Badge from '$lib/components/ui/Badge.svelte';
 import type { StudioEntry } from '$lib/features/generation/contracts';
 import { groupStudioEntries, studioProviderLabel } from '$lib/features/generation/model-groups';
@@ -20,6 +21,11 @@ let id = $props.id();
 let selectedEntry = $derived(entries.find((entry) => entry.key === selectedKey));
 let groups = $derived(groupStudioEntries(entries, favorites, query));
 let filteredCount = $derived(groups.reduce((count, group) => count + group.entries.length, 0));
+let hasSafetyCapableEntries = $derived(entries.some(supportsOptionalSafetyChecker));
+
+function supportsOptionalSafetyChecker(entry: StudioEntry | undefined): boolean {
+  return entry?.output.mediaKind === 'video' && entry.output.safetyChecker;
+}
 
 function selectEntry(entry: StudioEntry): void {
   onchange(entry);
@@ -41,7 +47,18 @@ function selectEntry(entry: StudioEntry): void {
       {#if selectedEntry}
         <span class="flex min-w-0 items-center justify-between gap-3">
           <span class="min-w-0">
-            <span class="block truncate text-sm font-semibold">{selectedEntry.displayName}</span>
+            <span class="flex min-w-0 items-center gap-1.5">
+              <span class="truncate text-sm font-semibold">{selectedEntry.displayName}</span>
+              {#if supportsOptionalSafetyChecker(selectedEntry)}
+                <span
+                  class="grid size-5 shrink-0 place-items-center rounded-full bg-accent text-accent-foreground"
+                  title="Safety checker available; off by default"
+                >
+                  <AppIcon name="shield" size={12} strokeWidth={2} />
+                  <span class="sr-only">Safety checker available; off by default</span>
+                </span>
+              {/if}
+            </span>
             <span class="mt-0.5 block truncate text-[0.6875rem] text-muted-foreground">
               {studioProviderLabel(selectedEntry)} · {selectedEntry.publicModelId}
             </span>
@@ -67,6 +84,17 @@ function selectEntry(entry: StudioEntry): void {
         placeholder="Search models or providers"
         bind:value={query}
       />
+      {#if hasSafetyCapableEntries}
+        <p class="flex items-center gap-1.5 text-[0.6875rem] font-medium text-muted-foreground">
+          <span
+            class="grid size-4 shrink-0 place-items-center rounded-full bg-accent text-accent-foreground"
+            aria-hidden="true"
+          >
+            <AppIcon name="shield" size={10} strokeWidth={2} />
+          </span>
+          Safety checker available · off by default
+        </p>
+      {/if}
       <p class="sr-only" aria-live="polite">
         {filteredCount} audited {filteredCount === 1 ? 'model' : 'models'} available.
       </p>
@@ -96,8 +124,20 @@ function selectEntry(entry: StudioEntry): void {
                   />
                   <span class="flex items-start justify-between gap-2">
                     <span class="min-w-0">
-                      <span class="block truncate text-sm font-semibold">
-                        {favorites.includes(entry.key) ? '★ ' : ''}{entry.displayName}
+                      <span class="flex min-w-0 items-center gap-1.5">
+                        <span class="truncate text-sm font-semibold">
+                          {favorites.includes(entry.key) ? '★ ' : ''}{entry.displayName}
+                        </span>
+                        {#if supportsOptionalSafetyChecker(entry)}
+                          <span
+                            class="grid size-5 shrink-0 place-items-center rounded-full bg-accent text-accent-foreground"
+                            data-model-capability="safety-checker"
+                            title="Safety checker available; off by default"
+                          >
+                            <AppIcon name="shield" size={12} strokeWidth={2} />
+                            <span class="sr-only">Safety checker available; off by default</span>
+                          </span>
+                        {/if}
                       </span>
                       <span class="mt-0.5 block truncate text-[0.6875rem] text-muted-foreground">
                         {studioProviderLabel(entry)} · {entry.publicModelId}

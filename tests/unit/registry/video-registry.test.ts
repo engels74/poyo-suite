@@ -158,6 +158,12 @@ describe('reviewed video conditional adapters', () => {
       const values = minimumValidVideoRequest(entry);
       const input = normalizeVideoRequest(entry.key, values).request.input;
       if (safetyIds.has(entry.publicModelId)) {
+        expect(entry.output.safetyChecker).toBe(true);
+        expect(entry.fields.find((field) => field.key === 'enableSafetyChecker')).toMatchObject({
+          apiKey: 'enable_safety_checker',
+          kind: 'boolean',
+          default: false
+        });
         expect(input.enable_safety_checker).toBe(false);
         expect(
           normalizeVideoRequest(entry.key, { ...values, enableSafetyChecker: true }).request.input
@@ -339,6 +345,38 @@ describe('reviewed video conditional adapters', () => {
         duration: 15
       })
     ).toThrow('unsupported');
+    const text = 'wan2.7-text-to-video:text-to-video';
+    const textWithoutPrompt = minimum(text);
+    delete textWithoutPrompt.prompt;
+    expect(() => normalizeVideoRequest(text, textWithoutPrompt)).toThrow('prompt is required');
+    expect(
+      normalizeVideoRequest(text, {
+        ...minimum(text),
+        audioUrl: 'https://assets.example/narration.mp3'
+      }).request.input.audio_url
+    ).toBe('https://assets.example/narration.mp3');
+    const image = 'wan2.7-image-to-video:frame-to-video';
+    const imageWithoutPrompt = minimum(image);
+    delete imageWithoutPrompt.prompt;
+    expect(
+      normalizeVideoRequest(image, {
+        ...imageWithoutPrompt,
+        videoUrl: 'https://assets.example/motion.mp4',
+        audioUrl: 'https://assets.example/soundtrack.mp3'
+      }).request.input
+    ).toMatchObject({
+      image_urls: [expect.any(String)],
+      video_url: 'https://assets.example/motion.mp4',
+      audio_url: 'https://assets.example/soundtrack.mp3'
+    });
+    for (const key of [
+      'wan2.7-reference-to-video:reference-to-video',
+      'wan2.7-edit-video:video-edit'
+    ]) {
+      const values = minimum(key);
+      delete values.prompt;
+      expect(() => normalizeVideoRequest(key, values)).toThrow('prompt is required');
+    }
     const edit = 'wan2.7-edit-video:video-edit';
     expect(() => normalizeVideoRequest(edit, { ...minimum(edit), duration: 1 })).toThrow(
       '0 or 2-10'

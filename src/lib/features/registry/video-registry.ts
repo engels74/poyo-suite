@@ -1,3 +1,4 @@
+import { OFFICIAL_SOURCE_MANIFEST, officialModelSources } from './evidence/source-evidence';
 import type {
   FieldDefinition,
   GuidedVideoRequest,
@@ -8,9 +9,8 @@ import type {
   VideoRegistryEntry,
   VideoWorkflow
 } from './types';
-import { OFFICIAL_SOURCE_MANIFEST, officialModelSources } from './evidence/source-evidence';
 
-export const VIDEO_REGISTRY_VERSION = 'video-2026-07-15.2';
+export const VIDEO_REGISTRY_VERSION = 'video-2026-07-19.1';
 export const VIDEO_VERIFIED_AT = OFFICIAL_SOURCE_MANIFEST.verifiedAt;
 const videoFormats = ['video/mp4', 'video/webm', 'video/quicktime'];
 const imageFormats = ['image/jpeg', 'image/png', 'image/webp'];
@@ -599,12 +599,20 @@ function mediaRole(
 }
 
 function rolesFor(page: Page, modelId: string, workflow: VideoWorkflow): InputRole[] {
+  if (workflow === 'text-to-video' && page.family === 'Wan 2.7 Video')
+    return [mediaRole('audio', 'audioUrl', 'audio_url', 'audio', false, 0, 1)];
   if (workflow === 'image-to-video') {
     if (['Hailuo 2.3', 'Kling 2.1', 'Kling 2.5 Turbo Pro'].includes(page.family))
       return [mediaRole('start-frame', 'startImageUrl', 'start_image_url', 'image', true, 1, 1)];
     return [mediaRole('image', 'imageUrls', 'image_urls', 'image', true, 1, 1)];
   }
   if (workflow === 'frame-to-video') {
+    if (page.family === 'Wan 2.7 Video')
+      return [
+        mediaRole('start-frame', 'imageUrls', 'image_urls', 'image', true, 1, 2),
+        mediaRole('source-video', 'videoUrl', 'video_url', 'video', false, 0, 1),
+        mediaRole('audio', 'audioUrl', 'audio_url', 'audio', false, 0, 1)
+      ];
     if (page.family === 'Hailuo 02')
       return [
         mediaRole('start-frame', 'imageUrls', 'image_urls', 'image', true, 1, 1),
@@ -791,7 +799,7 @@ function fieldsFor(page: Page, modelId: string, workflow: VideoWorkflow): FieldD
   const promptOptional =
     (page.family.startsWith('Happy Horse') &&
       ['image-to-video', 'video-edit'].includes(workflow)) ||
-    page.family === 'Wan 2.7 Video';
+    (page.family === 'Wan 2.7 Video' && workflow === 'frame-to-video');
   const durations = effectiveDurations(page, modelId, workflow);
   const resolutions = effectiveResolutions(page, modelId);
   const omitDuration =
