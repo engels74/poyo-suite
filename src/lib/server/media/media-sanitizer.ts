@@ -3,6 +3,7 @@ import { constants } from 'node:fs';
 import { lstat, open, rm } from 'node:fs/promises';
 import { dirname, extname, join } from 'node:path';
 import type { MediaPrivacySettings } from '../../features/settings/contracts';
+import { readExactPositioned } from './filesystem-boundary';
 
 const SAFE_MESSAGE = 'The local media could not be sanitized safely.';
 const TOOL_TIMEOUT_MS = 120_000;
@@ -369,9 +370,9 @@ async function validateOutput(input: MediaSanitizationInput): Promise<void> {
     fail();
   const handle = await open(input.outputPath, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
-    const header = new Uint8Array(16);
-    const { bytesRead } = await handle.read(header, 0, header.byteLength, 0);
-    if (bytesRead <= 0 || !hasSignature(input.mimeType, header.subarray(0, bytesRead))) fail();
+    const header = new Uint8Array(Math.min(16, details.size));
+    await readExactPositioned(handle, header, 0);
+    if (!hasSignature(input.mimeType, header)) fail();
   } finally {
     await handle.close();
   }

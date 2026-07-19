@@ -11,9 +11,10 @@ import {
   assertCanonicalDirectory,
   ensureCanonicalChildDirectory,
   ensureCanonicalRoot,
+  readExactPositioned,
   syncDirectory
 } from './filesystem-boundary';
-import { sanitizeMedia, type MediaSanitizer } from './media-sanitizer';
+import { type MediaSanitizer, sanitizeMedia } from './media-sanitizer';
 
 const IMAGE_MAX_BYTES = 25 * 1024 * 1024;
 const REQUEST_MAX_BYTES = 101 * 1024 * 1024;
@@ -326,9 +327,8 @@ async function inspectCandidate(
       throw new Error('The sanitized local source size is invalid.');
     }
     const header = new Uint8Array(Math.min(16, details.size));
-    const headerRead = await handle.read(header, 0, header.byteLength, 0);
-    const signatureBytes = header.slice(0, headerRead.bytesRead);
-    if (!hasSignature(mimeType, signatureBytes)) {
+    await readExactPositioned(handle, header, 0);
+    if (!hasSignature(mimeType, header)) {
       throw new Error('The sanitized local source signature does not match its type.');
     }
 
@@ -345,7 +345,7 @@ async function inspectCandidate(
     return {
       sizeBytes: details.size,
       checksum: hasher.digest('hex'),
-      signature: Array.from(signatureBytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
+      signature: Array.from(header, (byte) => byte.toString(16).padStart(2, '0')).join('')
     };
   } finally {
     await handle.close();
@@ -394,7 +394,7 @@ export async function intakeLocalSource(
   const rawTemporary = resolvePathWithin(temporaryRoot, `${id}.raw${extension}`);
   const sanitizedTemporary = resolvePathWithin(temporaryRoot, `${id}.sanitized${extension}`);
   let published = false;
-  let sanitizationStarted = false;
+  let sanitizationPendingVerification = false;
   try {
     await writeStreamed(file, rawTemporary);
     await assertCanonicalDirectory(temporaryRoot, temporaryRoot, 'Managed source temporary');
@@ -402,7 +402,7 @@ export async function intakeLocalSource(
     const maxOutputBytes =
       requestedKind === 'image' ? IMAGE_MAX_BYTES : POYO_STREAM_VIDEO_MAX_BYTES;
     if (mediaPrivacy.sanitizeLocalMedia) {
-      sanitizationStarted = true;
+      sanitizationPendingVerification = true;
       await sanitizer({
         inputPath: rawTemporary,
         outputPath: sanitizedTemporary,
@@ -416,6 +416,7 @@ export async function intakeLocalSource(
     }
     await assertCanonicalDirectory(temporaryRoot, temporaryRoot, 'Managed source temporary');
     const details = await inspectCandidate(candidate, type, maxOutputBytes);
+    sanitizationPendingVerification = false;
     await assertCanonicalDirectory(uploadRoot, directory.path, 'Managed source upload');
     await assertCanonicalDirectory(temporaryRoot, temporaryRoot, 'Managed source temporary');
     await link(candidate, destination);
@@ -441,7 +442,7 @@ export async function intakeLocalSource(
       await rm(destination, { force: true }).catch(() => undefined);
       await syncDirectory(directory.path).catch(() => undefined);
     }
-    if (sanitizationStarted && !(error instanceof SourceIntakeError)) {
+    if (sanitizationPendingVerification && !(error instanceof SourceIntakeError)) {
       throw new SourceIntakeError(error);
     }
     throw error;

@@ -12,12 +12,14 @@ import {
 } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { DEFAULT_MEDIA_PRIVACY_SETTINGS } from '../../../src/lib/features/settings/media-privacy';
+import { jobHttpError } from '../../../src/lib/server/jobs/http';
 import { readVerifiedManagedSourceBlob } from '../../../src/lib/server/jobs/managed-source-upload';
 import { ManagedSourceRepository } from '../../../src/lib/server/media/managed-sources';
 import {
   intakeLocalSource as intakeWithPrivacy,
   neutralSourceUploadName,
   recoverSourceIntakeTemporaries,
+  SourceIntakeError,
   type SourceIntakeOptions
 } from '../../../src/lib/server/media/source-intake';
 import { ensureAppPaths, resolveAppPaths } from '../../../src/lib/server/platform/app-paths';
@@ -168,7 +170,8 @@ describe('local source intake', () => {
       })
     ).rejects.toMatchObject({
       code: 'source_sanitization_failed',
-      message: 'The local file could not be sanitized safely.'
+      message: 'The local file could not be sanitized safely.',
+      status: 422
     });
 
     await expect(
@@ -181,7 +184,7 @@ describe('local source intake', () => {
           });
         }
       })
-    ).rejects.toMatchObject({ code: 'source_sanitization_failed' });
+    ).rejects.toMatchObject({ code: 'source_sanitization_failed', status: 422 });
 
     const outside = join(paths.root, 'outside.png');
     await writeFile(outside, raw, { mode: 0o644 });
@@ -193,7 +196,7 @@ describe('local source intake', () => {
           await symlink(outside, outputPath);
         }
       })
-    ).rejects.toMatchObject({ code: 'source_sanitization_failed' });
+    ).rejects.toMatchObject({ code: 'source_sanitization_failed', status: 422 });
     expect((await stat(outside)).mode & 0o777).toBe(outsideMode);
     expect(await Bun.file(outside).bytes()).toEqual(raw);
 
@@ -201,6 +204,45 @@ describe('local source intake', () => {
     expect(
       await Array.fromAsync(new Bun.Glob('**/*').scan({ cwd: paths.uploads, onlyFiles: true }))
     ).toEqual([]);
+  });
+
+  test('UPLOAD-01D preserves a destination collision after sanitizer output verification', async () => {
+    const { paths } = await fixture();
+    const raw = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x72, 0x61, 0x77]);
+    const sanitized = new Uint8Array([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x73, 0x61, 0x66, 0x65
+    ]);
+    const collision = new TextEncoder().encode('existing destination');
+    let destination = '';
+    let captured: unknown;
+
+    try {
+      await intakeLocalSource(uploadRequest(raw, 'image/png', 'http://127.0.0.1:5173'), paths, {
+        mediaPrivacy: { ...DEFAULT_MEDIA_PRIVACY_SETTINGS },
+        sanitizer: async ({ inputPath, outputPath }) => {
+          await writeFile(outputPath, sanitized, { flag: 'wx', mode: 0o600 });
+          const id = basename(inputPath).split('.raw.')[0] as string;
+          const [bucket] = await readdir(paths.uploads);
+          destination = join(paths.uploads, bucket as string, `${id}.png`);
+          await writeFile(destination, collision, { flag: 'wx', mode: 0o600 });
+        }
+      });
+    } catch (error) {
+      captured = error;
+    }
+
+    expect((captured as NodeJS.ErrnoException).code).toBe('EEXIST');
+    expect(captured).not.toBeInstanceOf(SourceIntakeError);
+    const response = jobHttpError(captured);
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: {
+        code: 'job_request_failed',
+        message: 'The job request could not be completed.'
+      }
+    });
+    expect(await readdir(paths.temporary)).toEqual([]);
+    expect(await Bun.file(destination).bytes()).toEqual(collision);
   });
 
   test('UPLOAD-02 rejects content whose signature disagrees with its declared type', async () => {
