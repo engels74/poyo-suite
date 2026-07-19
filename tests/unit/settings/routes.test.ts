@@ -6,6 +6,8 @@ describe('settings HTTP and page boundaries', () => {
       'src/routes/api/settings/+server.ts',
       'src/routes/api/settings/api-key/+server.ts',
       'src/routes/api/settings/api-key/connectivity/+server.ts',
+      'src/routes/api/settings/public-ipv4-guard/+server.ts',
+      'src/routes/api/public-ipv4/+server.ts',
       'src/routes/api/settings/logs/+server.ts',
       'src/routes/api/onboarding/+server.ts',
       'src/routes/api/cleanup/preview/+server.ts',
@@ -13,6 +15,30 @@ describe('settings HTTP and page boundaries', () => {
     ]) {
       expect(await Bun.file(route).text()).toContain('readSameOriginJson');
     }
+  });
+
+  test('public IPv4 guard remains focused and shell-safe', async () => {
+    const layout = await Bun.file('src/routes/+layout.server.ts').text();
+    const settingsLoad = await Bun.file('src/routes/settings/+page.server.ts').text();
+    const shell = await Bun.file('src/lib/components/shell/AppShell.svelte').text();
+    const settingsPage = await Bun.file('src/routes/settings/+page.svelte').text();
+    const route = await Bun.file('src/routes/api/settings/public-ipv4-guard/+server.ts').text();
+    expect(layout).toContain('publicIpv4Status');
+    expect(layout).not.toContain('homeIpv4');
+    expect(settingsLoad).toContain('publicIpv4Guard');
+    expect(shell).toContain('await invalidateAll()');
+    expect(settingsPage).toContain('data.publicIpv4Status');
+    expect(route).toContain('saveSettings(body)');
+    expect(route).toContain('operationsHttpError');
+  });
+
+  test('production smoke verifies connectivity before onboarding dismissal', async () => {
+    const smoke = await Bun.file('scripts/production-smoke.ts').text();
+    expect(smoke).not.toContain('updateOnboarding');
+    expect(smoke).not.toContain('SettingsRepository');
+    expect(smoke.indexOf('/api/settings/api-key/connectivity')).toBeLessThan(
+      smoke.indexOf('/api/onboarding')
+    );
   });
 
   test('log deletion is explicitly confirmed, drained, path-free, and recoverable', async () => {

@@ -103,4 +103,42 @@ describe('durable job SSE protocol', () => {
     expect(remainder).toHaveLength(20);
     expect(remainder.every((event) => event.eventId > cursor)).toBe(true);
   });
+
+  test('policy snapshots and replay expose only the stable address-free discriminator', async () => {
+    const fixture = await createJobFixture();
+    cleanups.push(fixture.cleanup);
+    const job = createTestJob(fixture.repository, 'policy-safe-event');
+    const cursor = fixture.repository.eventBounds().max;
+    const claim = fixture.repository.claimSubmission(job.id, 'policy-worker', 1_000);
+    if (!claim) throw new Error('Expected submission claim.');
+    expect(
+      fixture.repository.rejectUntransmittedPolicy(job.id, claim.token, 'public_ipv4_guard_match')
+    ).toBe(true);
+    const misconfigured = createTestJob(fixture.repository, 'policy-safe-misconfigured');
+    const misconfiguredClaim = fixture.repository.claimSubmission(
+      misconfigured.id,
+      'policy-worker',
+      1_000
+    );
+    if (!misconfiguredClaim) throw new Error('Expected misconfigured submission claim.');
+    expect(
+      fixture.repository.rejectUntransmittedPolicy(
+        misconfigured.id,
+        misconfiguredClaim.token,
+        'public_ipv4_guard_misconfigured'
+      )
+    ).toBe(true);
+    const snapshot = initialJobEvents(fixture.repository, null);
+    const snapshotText = new TextDecoder().decode(snapshot.chunks[0]);
+    expect(snapshotText).toContain('ip_guard_blocked');
+    expect(snapshotText).toContain('"ipGuardReason":"match"');
+    expect(snapshotText).toContain('"ipGuardReason":"misconfigured"');
+    expect(snapshotText).not.toContain('public_ipv4_guard_match');
+    expect(snapshotText).not.toContain('public_ipv4_guard_misconfigured');
+    const replay = initialJobEvents(fixture.repository, String(cursor));
+    const replayText = replay.chunks.map((chunk) => new TextDecoder().decode(chunk)).join('\n');
+    expect(replayText).toContain('ip_guard_blocked');
+    expect(replayText).not.toContain('public_ipv4_guard_match');
+    expect(replayText).not.toContain('public_ipv4_guard_misconfigured');
+  });
 });

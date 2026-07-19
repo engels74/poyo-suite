@@ -26,10 +26,11 @@ async function createRuntime(): Promise<JobRuntime> {
     createPoyoClient({
       apiKeyManager: platform.apiKey,
       logger: platform.logger,
-      environment: platform.environment
+      environment: platform.environment,
+      publicIpv4Guard: platform.publicIpv4
     });
   const gateway: JobPoyoGateway = {
-    submit: async (request) => (await createGatewayClient()).submit(request),
+    submit: async (request, options) => (await createGatewayClient()).submit(request, options),
     getStatus: async (id) => (await createGatewayClient()).getStatus(id),
     getBalance: async () => (await createGatewayClient()).getBalance()
   };

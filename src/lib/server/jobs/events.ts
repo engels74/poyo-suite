@@ -1,8 +1,20 @@
+import { publicIpv4GuardReason } from '../poyo/errors';
 import type { JobRepository } from './repository';
 import type { JobRecord } from './types';
 
 const encoder = new TextEncoder();
+function safePolicy(code: string | null): {
+  attentionCode: string | null;
+  ipGuardReason: 'match' | 'unavailable' | 'misconfigured' | null;
+} {
+  const ipGuardReason = publicIpv4GuardReason(code);
+  return {
+    attentionCode: ipGuardReason ? 'ip_guard_blocked' : code,
+    ipGuardReason
+  };
+}
 export function safeJobDto(job: JobRecord) {
+  const policy = safePolicy(job.attentionCode);
   return {
     id: job.id,
     entryKey: job.entryKey,
@@ -12,7 +24,8 @@ export function safeJobDto(job: JobRecord) {
     remoteStatusRaw: job.remoteStatusRaw,
     remoteStatus: job.remoteStatus,
     failureDomain: job.failureDomain,
-    attentionCode: job.attentionCode,
+    attentionCode: policy.attentionCode,
+    ipGuardReason: policy.ipGuardReason,
     poyoTaskId: job.poyoTaskId,
     progress: job.progress,
     estimatedCredits: job.estimatedCredits,
@@ -24,6 +37,18 @@ export function safeJobDto(job: JobRecord) {
     startedAt: job.startedAt,
     updatedAt: job.updatedAt,
     completedAt: job.completedAt
+  };
+}
+function safeJobEvent(event: ReturnType<JobRepository['eventsAfter']>[number]) {
+  const code = typeof event.payload?.code === 'string' ? event.payload.code : null;
+  const policy = safePolicy(code);
+  if (!policy.ipGuardReason) return event;
+  const { code: _code, ...payload } = event.payload ?? {};
+  return {
+    ...event,
+    attentionCode: policy.attentionCode,
+    ipGuardReason: policy.ipGuardReason,
+    payload: { ...payload, policy: 'ip_guard_blocked', reason: policy.ipGuardReason }
   };
 }
 function encode(event: string, id: number, data: unknown): Uint8Array {
@@ -63,7 +88,7 @@ export function initialJobEvents(
   return {
     mode: 'replay',
     cursor: events.at(-1)?.eventId ?? parsed,
-    chunks: events.map((event) => encode('job', event.eventId, event))
+    chunks: events.map((event) => encode('job', event.eventId, safeJobEvent(event)))
   };
 }
 export function createJobEventStream(
@@ -81,7 +106,7 @@ export function createJobEventStream(
       for (const chunk of initial.chunks) controller.enqueue(chunk);
       const poll = () => {
         for (const event of repository.eventsAfter(cursor)) {
-          controller.enqueue(encode('job', event.eventId, event));
+          controller.enqueue(encode('job', event.eventId, safeJobEvent(event)));
           cursor = event.eventId;
         }
       };

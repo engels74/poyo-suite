@@ -106,4 +106,23 @@ describe('SEC-01/ARCH-01 static stack and browser-boundary enforcement', () => {
       );
     }
   });
+
+  test('keeps all shipped Poyo traffic behind the guarded factory and transport boundary', async () => {
+    const sources = await sourceFiles('**/*.ts', 'src');
+    for (const source of sources) {
+      if (source.path.endsWith('/lib/server/poyo/factory.ts')) continue;
+      if (source.path.endsWith('/lib/server/poyo/transport.ts')) continue;
+      expect(source.text, source.path).not.toMatch(/new\s+Poyo(?:Client|Transport)\s*\(/);
+      expect(source.text, source.path).not.toMatch(/fetch\([^\n]*POYO_API_BASE_URL/);
+    }
+    const factoryCallers = sources.filter(
+      (source) =>
+        !source.path.endsWith('/lib/server/poyo/factory.ts') &&
+        source.text.includes('createPoyoClient({')
+    );
+    expect(factoryCallers.length).toBeGreaterThan(0);
+    for (const caller of factoryCallers) {
+      expect(caller.text, caller.path).toContain('publicIpv4Guard: platform.publicIpv4');
+    }
+  });
 });

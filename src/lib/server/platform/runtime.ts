@@ -9,6 +9,7 @@ import { SettingsRepository } from '../settings/settings-repository';
 import { ensureAppPaths, resolveAppPaths } from './app-paths';
 import { openDatabase, preflightDatabase } from './database';
 import { maintenanceGate } from './maintenance-gate';
+import { PublicIpv4Service } from './public-ipv4';
 import { DATABASE_SCHEMA_VERSION } from './version';
 
 export interface PlatformServices {
@@ -18,6 +19,7 @@ export interface PlatformServices {
   settings: SettingsRepository;
   apiKey: ApiKeyManager;
   logger: StructuredLogger;
+  publicIpv4: PublicIpv4Service;
 }
 
 let servicesPromise: Promise<PlatformServices> | undefined;
@@ -69,6 +71,7 @@ async function createPlatformServices(): Promise<PlatformServices> {
         metadataRepository: new SecretMetadataRepository(database),
         mutationGate: maintenanceGate
       });
+      const publicIpv4 = new PublicIpv4Service({ settings, environment: env });
       await logger.info('platform.started', {
         data: {
           schemaVersion: DATABASE_SCHEMA_VERSION,
@@ -85,7 +88,8 @@ async function createPlatformServices(): Promise<PlatformServices> {
         database,
         settings,
         apiKey,
-        logger
+        logger,
+        publicIpv4
       };
     } catch (error) {
       database?.close();

@@ -526,7 +526,8 @@ export class JobRepository extends DatabaseRepository {
     phase: LocalPhase,
     domain: FailureDomain = 'none',
     attention: string | null = null,
-    eventType = 'job.transition'
+    eventType = 'job.transition',
+    payload: Record<string, unknown> | null = null
   ): JobRecord {
     return this.transaction(() => {
       const current = this.get(id);
@@ -540,7 +541,7 @@ export class JobRepository extends DatabaseRepository {
         )
         .run(phase, domain, attention, now, phase, now, id);
       const job = this.requireJob(id);
-      this.append(job, eventType);
+      this.append(job, eventType, payload);
       return job;
     });
   }
@@ -655,6 +656,27 @@ export class JobRepository extends DatabaseRepository {
         )
         .run(now, now, jobId, token);
       this.transition(jobId, 'requires_attention', 'submission', code, 'submission.rejected');
+    });
+  }
+  rejectUntransmittedPolicy(jobId: string, token: string, code: string): boolean {
+    return this.transaction(() => {
+      const now = this.timestamp();
+      const changed =
+        this.database
+          .query(
+            `UPDATE submission_intents SET state='rejected',resolved_at=?,updated_at=? WHERE job_id=? AND state='sending' AND transmit_claim_token=? AND sent_at IS NULL`
+          )
+          .run(now, now, jobId, token).changes === 1;
+      if (!changed) return false;
+      this.transition(
+        jobId,
+        'requires_attention',
+        'submission',
+        code,
+        'submission.policy_blocked',
+        { code }
+      );
+      return true;
     });
   }
   claimWork(type: WorkType, id: string, owner: string, leaseMs: number): WorkClaim | null {
@@ -832,6 +854,22 @@ export class JobRepository extends DatabaseRepository {
         .run(phase, stale ? 'stale' : code, nextPoll, now, jobId);
       const job = this.requireJob(jobId);
       this.append(job, 'poll.failed', { code });
+      return job;
+    });
+  }
+  recordPollBlocked(jobId: string, code: string): JobRecord {
+    return this.transaction(() => {
+      const current = this.get(jobId);
+      if (!current) throw new Error('Job not found.');
+      if (current.localPhase === 'complete' || current.remoteStatus === 'finished') return current;
+      const now = this.timestamp();
+      this.database
+        .query(
+          `UPDATE jobs SET local_phase='requires_attention',failure_domain='poll',attention_code=?,next_poll_at=NULL,updated_at=? WHERE id=?`
+        )
+        .run(code, now, jobId);
+      const job = this.requireJob(jobId);
+      this.append(job, 'poll.policy_blocked', { code });
       return job;
     });
   }

@@ -56,7 +56,8 @@ export function createManagedSourceResolver(platform: PlatformServices) {
     clientPromise ??= createPoyoClient({
       apiKeyManager: platform.apiKey,
       logger: platform.logger,
-      environment: platform.environment
+      environment: platform.environment,
+      publicIpv4Guard: platform.publicIpv4
     });
     const client = await clientPromise;
     const file = await readVerifiedManagedSourceBlob(source);

@@ -3,8 +3,12 @@ import { MaintenanceUnavailableError } from '../platform/maintenance-gate';
 import { RequestSecurityError } from '../platform/request-security';
 import { PoyoError } from '../poyo/errors';
 import { CredentialBackendError, EnvironmentKeyActiveError } from '../settings/api-key-manager';
+import { PublicIpv4ValidationError } from '../../features/settings/public-ipv4-guard';
 
 export function operationsHttpError(error: unknown): Response {
+  if (error instanceof PublicIpv4ValidationError) {
+    return Response.json({ error: { code: error.code, message: error.message } }, { status: 400 });
+  }
   if (error instanceof RequestSecurityError) {
     return Response.json(
       { error: { code: error.code, message: error.message } },

@@ -35,6 +35,7 @@ export interface PoyoSubmitResult {
 export interface PoyoRequestOptions {
   signal?: AbortSignal;
   timeoutMs?: number;
+  beforeDispatch?: () => Promise<void> | void;
 }
 
 export interface PoyoOutputFile {

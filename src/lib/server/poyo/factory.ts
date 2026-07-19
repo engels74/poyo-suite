@@ -5,7 +5,11 @@ import { PoyoClient } from './client';
 import { PoyoError } from './errors';
 import { createPoyoMetadataLogger } from './logging';
 import { PoyoTransport, type PoyoTransportOptions } from './transport';
-import type { Clock } from './types';
+import type { Clock, PoyoOperation } from './types';
+
+export interface PoyoRequestGuard {
+  assertPoyoRequestAllowed(operation: PoyoOperation): Promise<void>;
+}
 
 export interface PoyoClientFactoryOptions
   extends Omit<PoyoTransportOptions, 'apiKey' | 'clock' | 'logger'> {
@@ -13,6 +17,7 @@ export interface PoyoClientFactoryOptions
   logger?: StructuredLogger;
   clock?: Clock;
   environment?: Record<string, string | undefined>;
+  publicIpv4Guard: PoyoRequestGuard;
 }
 
 export function runtimePoyoBaseUrl(
@@ -55,6 +60,7 @@ export async function createPoyoClient(options: PoyoClientFactoryOptions): Promi
   const transport = new PoyoTransport({
     apiKey: resolved.key,
     clock,
+    beforeRequest: (operation) => options.publicIpv4Guard.assertPoyoRequestAllowed(operation),
     ...(baseUrl ? { baseUrl } : {}),
     ...(options.fetch ? { fetch: options.fetch } : {}),
     ...(options.sleeper ? { sleeper: options.sleeper } : {}),

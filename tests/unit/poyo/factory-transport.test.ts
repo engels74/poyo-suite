@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { createPoyoClient, runtimePoyoBaseUrl } from '../../../src/lib/server/poyo/factory';
 import { MemoryPoyoMetadataLogger } from '../../../src/lib/server/poyo/logging';
 import { PoyoTransport } from '../../../src/lib/server/poyo/transport';
+import { publicIpv4GuardError } from '../../../src/lib/server/poyo/errors';
 
 const missingStatus = {
   source: 'none' as const,
@@ -51,7 +52,8 @@ describe('Poyo transport safety boundaries', () => {
   test('PYO-05 factory refuses to create a client without a server-side key', async () => {
     await expect(
       createPoyoClient({
-        apiKeyManager: { resolve: async () => ({ key: null, status: missingStatus }) }
+        apiKeyManager: { resolve: async () => ({ key: null, status: missingStatus }) },
+        publicIpv4Guard: { assertPoyoRequestAllowed: async () => undefined }
       })
     ).rejects.toMatchObject({
       category: 'authentication',
@@ -160,5 +162,81 @@ describe('Poyo transport safety boundaries', () => {
         safeToRetry: false
       })
     ).rejects.toMatchObject({ category: 'provider', httpStatus: 502 });
+  });
+
+  test('runs guard, dispatch evidence, and fetch in exact order for every safe retry', async () => {
+    const order: string[] = [];
+    let attempts = 0;
+    const transport = new PoyoTransport({
+      apiKey: ['sk', 'order_canary_123456'].join('-'),
+      beforeRequest: () => {
+        order.push('guard');
+      },
+      fetch: async () => {
+        order.push('fetch');
+        attempts += 1;
+        if (attempts === 1) throw new TypeError('retry fixture');
+        return Response.json({ code: 200 });
+      },
+      sleeper: { sleep: async () => undefined },
+      retryPolicy: { maxAttempts: 2, baseDelayMs: 1, maxDelayMs: 1, jitterRatio: 0 }
+    });
+    await transport.request({
+      operation: 'status',
+      method: 'GET',
+      path: '/api/generate/status/task',
+      safeToRetry: true,
+      beforeDispatch: () => {
+        order.push('dispatch');
+      }
+    });
+    expect(order).toEqual(['guard', 'dispatch', 'fetch', 'guard', 'dispatch', 'fetch']);
+  });
+
+  test('policy and dispatch failures make zero upstream calls and are not retried', async () => {
+    let fetches = 0;
+    let dispatches = 0;
+    const blocked = new PoyoTransport({
+      apiKey: ['sk', 'blocked_canary_123456'].join('-'),
+      beforeRequest: (operation) => {
+        throw publicIpv4GuardError(operation, 'match');
+      },
+      fetch: async () => {
+        fetches += 1;
+        return Response.json({ code: 200 });
+      }
+    });
+    await expect(
+      blocked.request({
+        operation: 'submit',
+        method: 'POST',
+        path: '/api/generate/submit',
+        safeToRetry: false,
+        beforeDispatch: () => {
+          dispatches += 1;
+        }
+      })
+    ).rejects.toMatchObject({ category: 'policy', retryable: false });
+    expect({ fetches, dispatches }).toEqual({ fetches: 0, dispatches: 0 });
+
+    const dispatchFailure = new PoyoTransport({
+      apiKey: ['sk', 'dispatch_canary_123456'].join('-'),
+      fetch: async () => {
+        fetches += 1;
+        return Response.json({ code: 200 });
+      }
+    });
+    await expect(
+      dispatchFailure.request({
+        operation: 'submit',
+        method: 'POST',
+        path: '/api/generate/submit',
+        safeToRetry: false,
+        beforeDispatch: () => {
+          throw new Error('claim lost');
+        }
+      })
+    ).rejects.toMatchObject({ category: 'network' });
+    expect(fetches).toBe(0);
   });
 });

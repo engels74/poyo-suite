@@ -31,7 +31,8 @@ export async function refreshBalance(platform: PlatformServices): Promise<Balanc
   const client = await createPoyoClient({
     apiKeyManager: platform.apiKey,
     logger: platform.logger,
-    environment: platform.environment
+    environment: platform.environment,
+    publicIpv4Guard: platform.publicIpv4
   });
   const balance = await client.getBalance();
   platform.database

@@ -69,10 +69,11 @@ function jsonBody(value: unknown): string {
 
 function requestOptions(
   options: PoyoRequestOptions
-): Pick<PoyoRequestOptions, 'signal' | 'timeoutMs'> {
+): Pick<PoyoRequestOptions, 'signal' | 'timeoutMs' | 'beforeDispatch'> {
   return {
     ...(options.signal ? { signal: options.signal } : {}),
-    ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs })
+    ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+    ...(options.beforeDispatch ? { beforeDispatch: options.beforeDispatch } : {})
   };
 }
 

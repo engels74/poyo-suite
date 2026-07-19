@@ -9,7 +9,11 @@ setDefaultTimeout(30_000);
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => Promise.all(cleanups.splice(0).map((cleanup) => cleanup())));
 
-async function runWorker(mode: 'submit' | 'recover', root: string, baseUrl: string) {
+async function runWorker(
+  mode: 'submit' | 'recover' | 'enqueue-guarded' | 'recover-guarded',
+  root: string,
+  baseUrl: string
+) {
   const child = Bun.spawn({
     cmd: [process.execPath, 'tests/reliability/restart-worker.ts', mode, root, baseUrl],
     stdout: 'pipe',
@@ -21,7 +25,11 @@ async function runWorker(mode: 'submit' | 'recover', root: string, baseUrl: stri
     new Response(child.stderr).text()
   ]);
   if (exitCode !== 0) throw new Error(`Restart worker failed (${exitCode}): ${stderr}`);
-  return JSON.parse(stdout.trim()) as { jobId: string; phase: string };
+  return JSON.parse(stdout.trim()) as {
+    jobId: string;
+    phase: string;
+    attentionCode?: string | null;
+  };
 }
 
 test('JOB-03 separate Bun processes recover one paid task and verify its output', async () => {
@@ -59,4 +67,25 @@ test('JOB-03 separate Bun processes recover one paid task and verify its output'
   } finally {
     database.close();
   }
+});
+
+test('JOB-03 queued work remains guarded immediately before dispatch after process restart', async () => {
+  const temporary = await createTemporaryDirectory('poyo-restart-guard-');
+  const mock = await startStudioMockPoyoServer();
+  cleanups.push(temporary.cleanup, mock.stop);
+
+  const queued = await runWorker('enqueue-guarded', temporary.path, mock.baseUrl);
+  expect(queued.phase).toBe('submission_prepared');
+  expect(mock.requests).toHaveLength(0);
+
+  const recovered = await runWorker('recover-guarded', temporary.path, mock.baseUrl);
+  expect(recovered).toMatchObject({
+    jobId: queued.jobId,
+    phase: 'requires_attention',
+    attentionCode: 'public_ipv4_guard_match'
+  });
+  expect(
+    mock.requests.filter((request) => request.pathname === '/api/generate/submit')
+  ).toHaveLength(0);
+  expect(mock.ipRequests.length).toBeGreaterThan(0);
 });

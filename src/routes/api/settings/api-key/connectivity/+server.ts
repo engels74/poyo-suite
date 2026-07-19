@@ -12,7 +12,8 @@ export const POST: RequestHandler = async ({ request }) => {
       const client = await createPoyoClient({
         apiKeyManager: { resolve: () => Promise.resolve(resolved) },
         logger: platform.logger,
-        environment: platform.environment
+        environment: platform.environment,
+        publicIpv4Guard: platform.publicIpv4
       });
       const balance = await client.getBalance();
       platform.database

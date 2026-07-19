@@ -2,6 +2,7 @@ import { redactString } from '../diagnostics/redaction';
 import type { PoyoOperation } from './types';
 
 export type PoyoErrorCategory =
+  | 'policy'
   | 'authentication'
   | 'insufficient_credits'
   | 'rate_limit'
@@ -69,6 +70,38 @@ export class PoyoError extends Error {
       upstreamType: this.upstreamType
     };
   }
+}
+
+export type PublicIpv4GuardReason = 'match' | 'unavailable' | 'misconfigured';
+
+export function publicIpv4GuardReason(code: unknown): PublicIpv4GuardReason | null {
+  if (code === 'public_ipv4_guard_match') return 'match';
+  if (code === 'public_ipv4_guard_unavailable') return 'unavailable';
+  if (code === 'public_ipv4_guard_misconfigured') return 'misconfigured';
+  return null;
+}
+
+export function publicIpv4GuardError(
+  operation: PoyoOperation,
+  reason: PublicIpv4GuardReason
+): PoyoError {
+  return new PoyoError({
+    category: 'policy',
+    technicalCode:
+      reason === 'match'
+        ? 'public_ipv4_guard_match'
+        : reason === 'unavailable'
+          ? 'public_ipv4_guard_unavailable'
+          : 'public_ipv4_guard_misconfigured',
+    message:
+      reason === 'match'
+        ? 'Poyo was not contacted because the public IPv4 guard matched. Change networks or update the guard in Settings.'
+        : reason === 'unavailable'
+          ? 'Poyo was not contacted because the server could not verify its public IPv4. Refresh IP status or review Settings.'
+          : 'Poyo was not contacted because the saved public IPv4 guard settings are invalid. Disable or correct the guard in Settings.',
+    retryable: false,
+    operation
+  });
 }
 
 interface UpstreamErrorEnvelope {

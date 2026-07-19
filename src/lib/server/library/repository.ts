@@ -23,6 +23,7 @@ import { VIDEO_REGISTRY_ENTRIES } from '../../features/registry/video-registry';
 import { ManagedSourceRepository } from '../media/managed-sources';
 import { type AppPaths, resolvePathWithin } from '../platform/app-paths';
 import { DatabaseRepository } from '../platform/repository';
+import { publicIpv4GuardReason } from '../poyo/errors';
 
 type Binding = string | number | null;
 
@@ -71,6 +72,7 @@ type LibraryRow = {
   pinned: number;
   aspect_ratio: string | null;
   warning: string | null;
+  attention_code: string | null;
   tags_json: string;
   representative_id: string | null;
   representative_kind: 'image' | 'video' | null;
@@ -252,6 +254,7 @@ function mediaSummary(row: {
 
 function jobDto(row: JobListRow): JobListItemDto {
   const model = resolveModel(row.entry_key, row.public_model_id, row.workflow);
+  const ipGuardReason = publicIpv4GuardReason(row.attention_code);
   return {
     id: row.id,
     entryKey: row.entry_key,
@@ -263,7 +266,8 @@ function jobDto(row: JobListRow): JobListItemDto {
     localPhase: row.local_phase,
     remoteStatus: row.remote_status,
     failureDomain: row.failure_domain,
-    attentionCode: row.attention_code,
+    attentionCode: ipGuardReason ? 'ip_guard_blocked' : row.attention_code,
+    ipGuardReason,
     progress: row.progress,
     estimatedCredits: row.estimated_credits,
     actualCredits: row.actual_credits,
@@ -412,7 +416,7 @@ export class LibraryRepository extends DatabaseRepository {
       available:
         "EXISTS(SELECT 1 FROM job_outputs os WHERE os.job_id=j.id AND os.download_state='verified' AND os.local_path IS NOT NULL)",
       attention:
-        "EXISTS(SELECT 1 FROM job_outputs os WHERE os.job_id=j.id AND os.download_state IN ('failed','expired'))",
+        "(j.local_phase='requires_attention' OR EXISTS(SELECT 1 FROM job_outputs os WHERE os.job_id=j.id AND os.download_state IN ('failed','expired')))",
       'remote-only':
         "NOT EXISTS(SELECT 1 FROM job_outputs os WHERE os.job_id=j.id AND os.download_state='verified') AND EXISTS(SELECT 1 FROM job_outputs os WHERE os.job_id=j.id AND os.remote_url IS NOT NULL)",
       deleted:
@@ -422,7 +426,7 @@ export class LibraryRepository extends DatabaseRepository {
     addDateFilters('j', filters.dateFrom, filters.dateTo, clauses, bindings);
     const countBindings = [...bindings];
     addCursor('j', filters.cursor, clauses, bindings);
-    const sql = `SELECT j.id,j.entry_key,j.workflow,j.public_model_id,j.prompt_text,j.created_at,j.completed_at,
+    const sql = `SELECT j.id,j.entry_key,j.workflow,j.public_model_id,j.prompt_text,j.created_at,j.completed_at,j.attention_code,
       (SELECT COUNT(*) FROM job_outputs o WHERE o.job_id=j.id) output_count,
       (SELECT COUNT(*) FROM job_outputs o WHERE o.job_id=j.id AND o.download_state='verified') verified_count,
       COALESCE((SELECT SUM(COALESCE(o.byte_size,0)) FROM job_outputs o WHERE o.job_id=j.id AND o.download_state='verified'),0) total_bytes,
@@ -455,6 +459,7 @@ export class LibraryRepository extends DatabaseRepository {
     return {
       items: pageRows.map((row) => {
         const model = resolveModel(row.entry_key, row.public_model_id, row.workflow);
+        const ipGuardReason = publicIpv4GuardReason(row.attention_code);
         return {
           jobId: row.id,
           entryKey: row.entry_key,
@@ -472,7 +477,14 @@ export class LibraryRepository extends DatabaseRepository {
           favorite: row.favorite === 1,
           pinned: row.pinned === 1,
           aspectRatio: row.aspect_ratio,
-          warning: row.warning,
+          warning:
+            ipGuardReason === 'match'
+              ? 'Blocked by IP guard'
+              : ipGuardReason === 'unavailable'
+                ? 'IP check unavailable'
+                : ipGuardReason === 'misconfigured'
+                  ? 'IP guard settings invalid'
+                  : row.warning,
           tags: tagArray(row.tags_json),
           representative: mediaSummary(row)
         } satisfies LibraryGroupDto;
@@ -585,7 +597,20 @@ export class LibraryRepository extends DatabaseRepository {
         remoteStatus: event.remote_status,
         failureDomain: event.failure_domain,
         progress: event.progress,
-        payload: event.safe_payload_json ? JSON.parse(event.safe_payload_json) : null,
+        payload: (() => {
+          const payload = event.safe_payload_json
+            ? (JSON.parse(event.safe_payload_json) as Record<string, unknown>)
+            : null;
+          const code = payload?.code;
+          const reason = publicIpv4GuardReason(code);
+          if (!reason) return payload;
+          const { code: _code, ...rest } = payload ?? {};
+          return {
+            ...rest,
+            policy: 'ip_guard_blocked',
+            reason
+          };
+        })(),
         observedAt: event.observed_at,
         authority: event.event_type === 'status.observed' ? 'poyo' : 'local'
       }));

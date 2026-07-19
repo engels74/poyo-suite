@@ -26,6 +26,7 @@ export interface TransportRequest {
   safeToRetry: boolean;
   signal?: AbortSignal;
   timeoutMs?: number;
+  beforeDispatch?: () => Promise<void> | void;
 }
 
 export type PoyoFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -41,6 +42,7 @@ export interface PoyoTransportOptions {
   retryPolicy?: RetryPolicy;
   defaultTimeoutMs?: number;
   maxResponseBytes?: number;
+  beforeRequest?: (operation: Exclude<PoyoOperation, 'configuration'>) => Promise<void> | void;
 }
 
 const noopLogger: PoyoMetadataLogger = {
@@ -167,6 +169,8 @@ export class PoyoTransport {
       else request.signal?.addEventListener('abort', externalAbort, { once: true });
 
       try {
+        await this.options.beforeRequest?.(request.operation);
+        await request.beforeDispatch?.();
         const headers = new Headers({
           Accept: 'application/json',
           Authorization: `Bearer ${this.options.apiKey}`

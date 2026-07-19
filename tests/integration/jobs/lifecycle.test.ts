@@ -58,12 +58,15 @@ function finishedOutput(fixture: Awaited<ReturnType<typeof createJobFixture>>, s
 }
 function gateway(overrides: Partial<JobPoyoGateway> = {}): JobPoyoGateway {
   return {
-    submit: async () => ({
-      taskId: 'task-default',
-      statusRaw: 'not_started',
-      status: 'not_started',
-      createdTime: 'now'
-    }),
+    submit: async (_request, options) => {
+      await options?.beforeDispatch?.();
+      return {
+        taskId: 'task-default',
+        statusRaw: 'not_started',
+        status: 'not_started',
+        createdTime: 'now'
+      };
+    },
     getStatus: async () => ({
       taskId: 'task-default',
       statusRaw: 'running',
@@ -84,6 +87,177 @@ function gateway(overrides: Partial<JobPoyoGateway> = {}): JobPoyoGateway {
 }
 
 describe('durable coordinator and media lifecycle', () => {
+  test('IP guard policy blocks untransmitted submission once without ambiguity or recovery retry', async () => {
+    const fixture = await createJobFixture();
+    cleanups.push(fixture.cleanup);
+    const job = createTestJob(fixture.repository, 'ip-policy');
+    let gatewayCalls = 0;
+    let balanceAttempts = 0;
+    const coordinator = new JobCoordinator({
+      repository: fixture.repository,
+      poyo: gateway({
+        submit: async () => {
+          gatewayCalls += 1;
+          throw new PoyoError({
+            category: 'policy',
+            technicalCode: 'public_ipv4_guard_match',
+            message: 'Poyo was not contacted because the public IPv4 guard matched.',
+            retryable: false,
+            operation: 'submit'
+          });
+        },
+        getBalance: async () => {
+          balanceAttempts += 1;
+          throw new Error('Balance must remain behind the same blocked transport boundary.');
+        }
+      }),
+      downloader: new OutputDownloader({ repository: fixture.repository, paths: fixture.paths }),
+      workerId: 'ip-policy-worker'
+    });
+    await coordinator.recoverOnce();
+    await coordinator.recoverOnce();
+    expect(gatewayCalls).toBe(1);
+    expect(balanceAttempts).toBe(1);
+    expect(fixture.repository.get(job.id)).toMatchObject({
+      localPhase: 'requires_attention',
+      attentionCode: 'public_ipv4_guard_match'
+    });
+    const intent = fixture.database
+      .query<{ state: string; sent_at: string | null }, [string]>(
+        'SELECT state,sent_at FROM submission_intents WHERE job_id=?'
+      )
+      .get(job.id);
+    expect(intent).toEqual({ state: 'rejected', sent_at: null });
+  });
+
+  test('policy after possible transmit evidence preserves ambiguous submission truth', async () => {
+    const fixture = await createJobFixture();
+    cleanups.push(fixture.cleanup);
+    const job = createTestJob(fixture.repository, 'ip-policy-ambiguous');
+    const coordinator = new JobCoordinator({
+      repository: fixture.repository,
+      poyo: gateway({
+        submit: async (_request, options) => {
+          await options?.beforeDispatch?.();
+          throw new PoyoError({
+            category: 'policy',
+            technicalCode: 'public_ipv4_guard_unavailable',
+            message: 'Poyo was not contacted because public IPv4 verification failed.',
+            retryable: false,
+            operation: 'submit'
+          });
+        }
+      }),
+      downloader: new OutputDownloader({ repository: fixture.repository, paths: fixture.paths }),
+      workerId: 'ip-policy-ambiguous-worker'
+    });
+    await coordinator.submit(job.id);
+    expect(fixture.repository.get(job.id)).toMatchObject({
+      localPhase: 'requires_attention',
+      attentionCode: 'submission_unknown'
+    });
+  });
+
+  test('explicit rerun remains behind the guard before a new paid dispatch', async () => {
+    const fixture = await createJobFixture();
+    cleanups.push(fixture.cleanup);
+    const original = finishedOutput(fixture, 'ip-policy-rerun').job;
+    const rerun = await fixture.repository.rerunAsNew(
+      original.id,
+      crypto.randomUUID(),
+      async () => {
+        throw new Error('This rerun has no managed source to refresh.');
+      }
+    );
+    let gatewayCalls = 0;
+    const coordinator = new JobCoordinator({
+      repository: fixture.repository,
+      poyo: gateway({
+        submit: async (_request, options) => {
+          gatewayCalls += 1;
+          expect(options?.beforeDispatch).toBeFunction();
+          throw new PoyoError({
+            category: 'policy',
+            technicalCode: 'public_ipv4_guard_match',
+            message: 'Poyo was not contacted because the public IPv4 guard matched.',
+            retryable: false,
+            operation: 'submit'
+          });
+        }
+      }),
+      downloader: new OutputDownloader({ repository: fixture.repository, paths: fixture.paths }),
+      workerId: 'ip-policy-rerun-worker'
+    });
+
+    await coordinator.submit(rerun.id);
+
+    expect(gatewayCalls).toBe(1);
+    expect(fixture.repository.get(original.id)?.poyoTaskId).toBe('task-ip-policy-rerun');
+    expect(fixture.repository.get(rerun.id)).toMatchObject({
+      localPhase: 'requires_attention',
+      attentionCode: 'public_ipv4_guard_match',
+      retryOfJobId: original.id
+    });
+    expect(
+      fixture.database
+        .query<{ state: string; sent_at: string | null }, [string]>(
+          'SELECT state,sent_at FROM submission_intents WHERE job_id=?'
+        )
+        .get(rerun.id)
+    ).toEqual({ state: 'rejected', sent_at: null });
+  });
+
+  test('policy-blocked polling pauses automatic recovery and manual refresh can resume', async () => {
+    const fixture = await createJobFixture();
+    cleanups.push(fixture.cleanup);
+    const job = accepted(fixture, 'ip-policy-poll');
+    let polls = 0;
+    const coordinator = new JobCoordinator({
+      repository: fixture.repository,
+      poyo: gateway({
+        getStatus: async () => {
+          polls += 1;
+          if (polls === 1) {
+            throw new PoyoError({
+              category: 'policy',
+              technicalCode: 'public_ipv4_guard_unavailable',
+              message: 'Poyo was not contacted because public IPv4 verification failed.',
+              retryable: false,
+              operation: 'status'
+            });
+          }
+          return {
+            taskId: 'task-ip-policy-poll',
+            statusRaw: 'running',
+            status: 'running',
+            creditsAmount: 1,
+            files: [],
+            createdTime: 'now',
+            progress: 50,
+            errorMessage: null
+          };
+        }
+      }),
+      downloader: new OutputDownloader({ repository: fixture.repository, paths: fixture.paths }),
+      workerId: 'ip-policy-poll-worker'
+    });
+    await coordinator.poll(job.id);
+    expect(fixture.repository.get(job.id)).toMatchObject({
+      localPhase: 'requires_attention',
+      attentionCode: 'public_ipv4_guard_unavailable',
+      nextPollAt: null
+    });
+    await coordinator.recoverOnce();
+    expect(polls).toBe(1);
+    await coordinator.poll(job.id, true);
+    expect(polls).toBe(2);
+    expect(fixture.repository.get(job.id)).toMatchObject({
+      localPhase: 'monitoring',
+      remoteStatus: 'running',
+      attentionCode: null
+    });
+  });
+
   test('JOB-01 serializes paid submissions FIFO and continues after an unknown outcome', async () => {
     const fixture = await createJobFixture();
     cleanups.push(fixture.cleanup);
