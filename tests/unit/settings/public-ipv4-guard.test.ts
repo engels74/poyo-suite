@@ -87,6 +87,9 @@ describe('public IPv4 guard settings', () => {
       enabled: false,
       homeIpv4: null
     });
+    expect(() => parsePublicIpv4GuardSettings({ enabled: true, homeIpv4: null })).toThrow(
+      'Save a valid home public IPv4'
+    );
     expect(parsePublicIpv4GuardSettings({ enabled: true, homeIpv4: ' 8.8.4.4 ' })).toEqual({
       enabled: true,
       homeIpv4: '8.8.4.4'

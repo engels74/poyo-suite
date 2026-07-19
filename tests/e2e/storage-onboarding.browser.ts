@@ -182,6 +182,25 @@ async function exercisePublicIpv4Guard(harness: BrowserHarness, page: Page): Pro
   expect(
     await page.getByRole('button', { name: 'Refresh outbound public IPv4 status' }).isVisible()
   ).toBe(true);
+
+  const persistedToggle = page.getByLabel('Block Poyo requests on the saved home IPv4');
+  const persistedInput = page.getByLabel('Normal/home public IPv4');
+  await persistedInput.fill('');
+  await page.getByText('Disable the guard before clearing the saved home public IPv4.').waitFor();
+  expect(await page.getByRole('button', { name: 'Save address' }).isDisabled()).toBe(true);
+  await persistedInput.fill('1.1.1.1');
+  await persistedToggle.uncheck();
+  await page.getByText('Public IPv4 guard disabled.', { exact: true }).waitFor();
+  await persistedInput.fill('');
+  await page.getByText('Unsaved change. Save to clear the stored home public IPv4.').waitFor();
+  await page.getByRole('button', { name: 'Save address' }).click();
+  await page.getByText('Home public IPv4 cleared.', { exact: true }).waitFor();
+  expect(await persistedToggle.isDisabled()).toBe(true);
+  await page.reload();
+  expect(await page.getByLabel('Normal/home public IPv4').inputValue()).toBe('');
+  expect(await page.getByLabel('Block Poyo requests on the saved home IPv4').isDisabled()).toBe(
+    true
+  );
 }
 
 test('fresh onboarding keeps storage informational and completes through one local credential path', async () => {

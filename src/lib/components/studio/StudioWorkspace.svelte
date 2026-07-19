@@ -39,6 +39,7 @@ import {
 import {
   applyStudioJobEvent,
   compareStudioJobRecency,
+  mergeStudioJobEventAttention,
   mergeKnownStudioSnapshot,
   nextStudioResultCandidate,
   upsertStudioSessionJob,
@@ -1449,8 +1450,7 @@ function updateFromJobEvent(event: MessageEvent<string>): void {
       localPhase: update.localPhase,
       remoteStatus: update.remoteStatus,
       failureDomain: update.failureDomain,
-      attentionCode: update.attentionCode ?? batchItem.job.attentionCode,
-      ipGuardReason: update.ipGuardReason ?? batchItem.job.ipGuardReason ?? null,
+      ...mergeStudioJobEventAttention(batchItem.job, update),
       progress: update.progress,
       updatedAt: update.observedAt
     });

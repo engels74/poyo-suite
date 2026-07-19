@@ -1,20 +1,10 @@
-import { publicIpv4GuardReason } from '../poyo/errors';
+import { safeJobEventAttention, sanitizeDurableJobEventPayload } from './event-attention';
 import type { JobRepository } from './repository';
 import type { JobRecord } from './types';
 
 const encoder = new TextEncoder();
-function safePolicy(code: string | null): {
-  attentionCode: string | null;
-  ipGuardReason: 'match' | 'unavailable' | 'misconfigured' | null;
-} {
-  const ipGuardReason = publicIpv4GuardReason(code);
-  return {
-    attentionCode: ipGuardReason ? 'ip_guard_blocked' : code,
-    ipGuardReason
-  };
-}
 export function safeJobDto(job: JobRecord) {
-  const policy = safePolicy(job.attentionCode);
+  const attention = safeJobEventAttention(job.attentionCode);
   return {
     id: job.id,
     entryKey: job.entryKey,
@@ -24,8 +14,7 @@ export function safeJobDto(job: JobRecord) {
     remoteStatusRaw: job.remoteStatusRaw,
     remoteStatus: job.remoteStatus,
     failureDomain: job.failureDomain,
-    attentionCode: policy.attentionCode,
-    ipGuardReason: policy.ipGuardReason,
+    ...attention,
     poyoTaskId: job.poyoTaskId,
     progress: job.progress,
     estimatedCredits: job.estimatedCredits,
@@ -40,16 +29,10 @@ export function safeJobDto(job: JobRecord) {
   };
 }
 function safeJobEvent(event: ReturnType<JobRepository['eventsAfter']>[number]) {
-  const code = typeof event.payload?.code === 'string' ? event.payload.code : null;
-  const policy = safePolicy(code);
-  if (!policy.ipGuardReason) return event;
-  const { code: _code, ...payload } = event.payload ?? {};
-  return {
-    ...event,
-    attentionCode: policy.attentionCode,
-    ipGuardReason: policy.ipGuardReason,
-    payload: { ...payload, policy: 'ip_guard_blocked', reason: policy.ipGuardReason }
-  };
+  const sanitized = sanitizeDurableJobEventPayload(event.payload);
+  return sanitized.attention
+    ? { ...event, ...sanitized.attention, payload: sanitized.payload }
+    : { ...event, payload: sanitized.payload };
 }
 function encode(event: string, id: number, data: unknown): Uint8Array {
   return encoder.encode(`event: ${event}\nid: ${id}\ndata: ${JSON.stringify(data)}\n\n`);

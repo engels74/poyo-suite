@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  attentionDescription,
   byteSizeLabel,
   dateLabel,
   dateTimeLabel,
@@ -48,6 +49,15 @@ describe('jobs and library presentation contracts', () => {
       'Submission outcome unknown'
     );
     expect(statusLabel('monitoring', 'running', null)).toBe('Generating');
+  });
+
+  test('distinguishes submission-blocked from poll-blocked IP guard guidance', () => {
+    expect(attentionDescription('ip_guard_blocked', 'unavailable')).toContain(
+      'Poyo was not contacted'
+    );
+    expect(attentionDescription('ip_guard_blocked', 'unavailable', true)).toContain(
+      'IP guard paused monitoring'
+    );
   });
 
   test('keeps mixed-aspect media recognizable without allowing extreme frames', () => {

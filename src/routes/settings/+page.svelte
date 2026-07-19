@@ -64,7 +64,11 @@ let homeIpv4Dirty = $derived(
   homeIpv4CanonicalDraft !== publicIpv4Guard.homeIpv4 ||
     (homeIpv4CanonicalDraft === null && Boolean(homeIpv4Draft.trim()))
 );
-let homeIpv4CanSave = $derived(homeIpv4CanonicalDraft !== null && homeIpv4Dirty);
+let homeIpv4CanSave = $derived(
+  homeIpv4Dirty &&
+    !homeIpv4Validation &&
+    (!publicIpv4Guard.enabled || homeIpv4CanonicalDraft !== null)
+);
 let publicIpv4GuardCanEnable = $derived(publicIpv4Guard.homeIpv4 !== null && !homeIpv4Dirty);
 let publicIpv4GuardBadge = $derived.by(() => {
   if (!publicIpv4Guard.enabled) return { tone: 'neutral', label: 'Off by default' } as const;
@@ -227,7 +231,7 @@ function saveHomeIpv4(): void {
     publicIpv4Guard = result.settings;
     publicIpv4Status = result.status;
     homeIpv4Draft = result.settings.homeIpv4 ?? '';
-    message = 'Home public IPv4 saved.';
+    message = result.settings.homeIpv4 ? 'Home public IPv4 saved.' : 'Home public IPv4 cleared.';
     await invalidateAll();
   });
 }
@@ -402,7 +406,7 @@ function applyCleanup(): void {
             </div>
           </div>
           <p id="home-public-ipv4-help" class={`mt-2 text-xs leading-5 ${homeIpv4Validation ? 'text-warning' : 'text-muted-foreground'}`}>
-            {homeIpv4Validation || (homeIpv4Dirty && homeIpv4CanonicalDraft ? 'Unsaved changes. Save this address before enabling the guard.' : homeIpv4Draft.trim() ? 'Saved in canonical dotted-decimal form. “Use current IP” changes only this draft until you save.' : 'Enter the public IPv4 used by your normal/home connection.')}
+            {homeIpv4Validation || (homeIpv4Dirty ? homeIpv4CanonicalDraft ? 'Unsaved changes. Save this address before enabling the guard.' : publicIpv4Guard.enabled ? 'Disable the guard before clearing the saved home public IPv4.' : 'Unsaved change. Save to clear the stored home public IPv4.' : homeIpv4Draft.trim() ? 'Saved in canonical dotted-decimal form. “Use current IP” changes only this draft until you save.' : 'No home public IPv4 is saved. Enter one before enabling the guard.')}
           </p>
 
           <label class="mt-5 flex items-start gap-3 text-sm">

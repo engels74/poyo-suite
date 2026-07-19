@@ -23,6 +23,10 @@ import { VIDEO_REGISTRY_ENTRIES } from '../../features/registry/video-registry';
 import { ManagedSourceRepository } from '../media/managed-sources';
 import { type AppPaths, resolvePathWithin } from '../platform/app-paths';
 import { DatabaseRepository } from '../platform/repository';
+import {
+  packDurableJobEventPayload,
+  sanitizeDurableJobEventPayload
+} from '../jobs/event-attention';
 import { publicIpv4GuardReason } from '../poyo/errors';
 
 type Binding = string | number | null;
@@ -598,18 +602,8 @@ export class LibraryRepository extends DatabaseRepository {
         failureDomain: event.failure_domain,
         progress: event.progress,
         payload: (() => {
-          const payload = event.safe_payload_json
-            ? (JSON.parse(event.safe_payload_json) as Record<string, unknown>)
-            : null;
-          const code = payload?.code;
-          const reason = publicIpv4GuardReason(code);
-          if (!reason) return payload;
-          const { code: _code, ...rest } = payload ?? {};
-          return {
-            ...rest,
-            policy: 'ip_guard_blocked',
-            reason
-          };
+          const payload = event.safe_payload_json ? JSON.parse(event.safe_payload_json) : null;
+          return sanitizeDurableJobEventPayload(payload).payload;
         })(),
         observedAt: event.observed_at,
         authority: event.event_type === 'status.observed' ? 'poyo' : 'local'
@@ -797,12 +791,23 @@ export class LibraryRepository extends DatabaseRepository {
   }
 
   private appendEvent(jobId: string, eventType: string, payload: Record<string, unknown>): void {
+    const job = this.database
+      .query<{ attention_code: string | null }, [string]>(
+        'SELECT attention_code FROM jobs WHERE id=?'
+      )
+      .get(jobId);
+    if (!job) throw new Error('Job not found.');
     this.database
       .query(
         `INSERT INTO job_events(job_id,event_type,local_phase,remote_status_raw,remote_status,failure_domain,progress,safe_payload_json,observed_at)
          SELECT id,?,local_phase,remote_status_raw,remote_status,failure_domain,progress,?,? FROM jobs WHERE id=?`
       )
-      .run(eventType, JSON.stringify(payload), this.now().toISOString(), jobId);
+      .run(
+        eventType,
+        JSON.stringify(packDurableJobEventPayload(payload, job.attention_code)),
+        this.now().toISOString(),
+        jobId
+      );
   }
 }
 

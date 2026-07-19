@@ -70,6 +70,12 @@ describe('studio shell navigation', () => {
       expect(source).not.toContain('<h1');
     }
   });
+
+  test('renders poll-blocked dashboard guidance from the existing failure domain', async () => {
+    const dashboard = await Bun.file('src/routes/+page.svelte').text();
+    expect(dashboard).toContain("job.failureDomain === 'poll'");
+    expect(dashboard).not.toContain('job.poyoTaskId');
+  });
 });
 
 describe('theme and accessibility foundations', () => {

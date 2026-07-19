@@ -73,6 +73,60 @@ describe('studio session jobs', () => {
     expect(regressed['job-a']).toEqual(complete);
   });
 
+  test('distinguishes explicit attention clears from legacy event omission', () => {
+    const blocked = job({
+      localPhase: 'requires_attention',
+      attentionCode: 'ip_guard_blocked',
+      ipGuardReason: 'unavailable'
+    });
+
+    const afterLegacyEvent = applyStudioJobEvent(
+      { 'job-a': blocked },
+      {
+        jobId: 'job-a',
+        localPhase: 'monitoring',
+        remoteStatus: 'running',
+        failureDomain: 'none',
+        progress: 40,
+        observedAt: '2026-07-18T10:00:02.000Z'
+      }
+    );
+    expect(afterLegacyEvent['job-a']).toMatchObject({
+      attentionCode: 'ip_guard_blocked',
+      ipGuardReason: 'unavailable'
+    });
+
+    const afterExplicitClear = applyStudioJobEvent(afterLegacyEvent, {
+      jobId: 'job-a',
+      localPhase: 'monitoring',
+      remoteStatus: 'running',
+      failureDomain: 'none',
+      attentionCode: null,
+      ipGuardReason: null,
+      progress: 60,
+      observedAt: '2026-07-18T10:00:03.000Z'
+    });
+    expect(afterExplicitClear['job-a']).toMatchObject({
+      attentionCode: null,
+      ipGuardReason: null
+    });
+
+    const afterExplicitSet = applyStudioJobEvent(afterExplicitClear, {
+      jobId: 'job-a',
+      localPhase: 'requires_attention',
+      remoteStatus: 'running',
+      failureDomain: 'submission',
+      attentionCode: 'submission_unknown',
+      ipGuardReason: null,
+      progress: 60,
+      observedAt: '2026-07-18T10:00:04.000Z'
+    });
+    expect(afterExplicitSet['job-a']).toMatchObject({
+      attentionCode: 'submission_unknown',
+      ipGuardReason: null
+    });
+  });
+
   test('chooses the latest successful completion deterministically', () => {
     const jobs = {
       a: job({

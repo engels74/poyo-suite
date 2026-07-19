@@ -2,6 +2,7 @@ import type { Database } from 'bun:sqlite';
 import { DatabaseRepository } from '../platform/repository';
 import type { PoyoStatusResult, PoyoSubmitResult } from '../poyo/types';
 import { isPaidActionId, JobRequestError } from './create-request';
+import { packDurableJobEventPayload } from './event-attention';
 import type {
   CreateJobRequest,
   FailureDomain,
@@ -257,7 +258,7 @@ export class JobRepository extends DatabaseRepository {
           job.remoteStatus,
           job.failureDomain,
           job.progress,
-          payload ? JSON.stringify(payload) : null,
+          JSON.stringify(packDurableJobEventPayload(payload, job.attentionCode)),
           this.timestamp()
         ).lastInsertRowid
     );
@@ -861,6 +862,8 @@ export class JobRepository extends DatabaseRepository {
     return this.transaction(() => {
       const current = this.get(jobId);
       if (!current) throw new Error('Job not found.');
+      if (!current.poyoTaskId)
+        throw new Error('Cannot record a poll policy block without an acknowledged Poyo task.');
       if (current.localPhase === 'complete' || current.remoteStatus === 'finished') return current;
       const now = this.timestamp();
       this.database

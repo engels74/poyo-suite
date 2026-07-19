@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdir, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { JobFiltersDto, LibraryFiltersDto } from '../../../src/lib/features/library/contracts';
+import { JOB_EVENT_METADATA_KEY } from '../../../src/lib/server/jobs/event-attention';
 import { LibraryRepository } from '../../../src/lib/server/library/repository';
 import { seedImageRegistry } from '../../../src/lib/server/registry/repository';
 import { createJobFixture } from '../../helpers/job-fixture';
@@ -93,6 +94,42 @@ async function completedGeneration(suffix: string, prompt = `calm coast ${suffix
 }
 
 describe('server-side jobs and grouped library repository', () => {
+  test('keeps the poll failure domain authoritative without widening list DTOs', async () => {
+    const fixture = await createJobFixture();
+    cleanups.push(fixture.cleanup);
+    seedImageRegistry(fixture.database);
+    const job = fixture.repository.create({
+      actionId: crypto.randomUUID(),
+      entryKey: 'flux-schnell:text-to-image',
+      workflow: 'text-to-image',
+      publicModelId: 'flux-schnell',
+      guidedRequest: { prompt: 'poll-blocked fixture' },
+      normalizedPayload: { model: 'flux-schnell', input: { prompt: 'poll-blocked fixture' } }
+    });
+    const claim = fixture.repository.claimSubmission(job.id, 'test', 1_000);
+    if (!claim) throw new Error('Expected a submission claim.');
+    expect(
+      fixture.repository.acknowledgeSubmission(job.id, claim.token, {
+        taskId: 'task-poll-blocked-fixture',
+        statusRaw: 'not_started',
+        status: 'not_started',
+        createdTime: 'now'
+      })
+    ).toBe(true);
+    fixture.repository.recordPollBlocked(job.id, 'public_ipv4_guard_unavailable');
+
+    const item = new LibraryRepository(fixture.database).listJobs(
+      { ...jobs, status: 'attention' },
+      1
+    ).items[0];
+    expect(item).toMatchObject({
+      failureDomain: 'poll',
+      attentionCode: 'ip_guard_blocked',
+      ipGuardReason: 'unavailable'
+    });
+    expect(item).not.toHaveProperty('poyoTaskId');
+  });
+
   test('filters, paginates and groups outputs without exposing local paths', async () => {
     const fullPrompt = [
       'calm coast first with a complete persisted prompt',
@@ -154,12 +191,35 @@ describe('server-side jobs and grouped library repository', () => {
       repository.listLibrary({ ...library, favorite: true, tag: 'landscape' }).items[0]
     ).toMatchObject({ favorite: true, pinned: true, tags: ['Pinned', 'landscape'] });
 
+    fixture.database
+      .query('UPDATE jobs SET attention_code=? WHERE id=?')
+      .run('public_ipv4_guard_match', job.id);
+
     await repository.deleteOutput(job.id, output.id, 'file', fixture.paths);
     expect(await Bun.file(localPath).exists()).toBe(false);
     expect((await repository.getJobDetail(job.id))?.outputs[0]).toMatchObject({
       downloadState: 'deleted',
       localAvailable: false
     });
+    const storedEvent = fixture.database
+      .query<{ safe_payload_json: string }, [string, string]>(
+        'SELECT safe_payload_json FROM job_events WHERE job_id=? AND event_type=?'
+      )
+      .get(job.id, 'output.local_file_removed');
+    expect(JSON.parse(storedEvent?.safe_payload_json ?? '{}')).toEqual({
+      outputId: output.id,
+      [JOB_EVENT_METADATA_KEY]: {
+        version: 1,
+        attentionCode: 'public_ipv4_guard_match',
+        payloadWasNull: false
+      }
+    });
+    const outwardEvent = (await repository.getJobDetail(job.id))?.history.find(
+      (event) => event.eventType === 'output.local_file_removed'
+    );
+    expect(outwardEvent?.payload).toEqual({ outputId: output.id });
+    expect(JSON.stringify(outwardEvent)).not.toContain(JOB_EVENT_METADATA_KEY);
+    expect(JSON.stringify(outwardEvent)).not.toContain('public_ipv4_guard_match');
   });
 
   test('refuses to mark an output deleted when its file is outside managed media storage', async () => {
@@ -238,5 +298,67 @@ describe('server-side jobs and grouped library repository', () => {
       checksum: 'source-checksum'
     });
     expect(detail?.inputs[0]).not.toHaveProperty('localPath');
+  });
+
+  test('history strips durable attention metadata and redacts raw policy codes', async () => {
+    const fixture = await createJobFixture();
+    cleanups.push(fixture.cleanup);
+    seedImageRegistry(fixture.database);
+    const job = fixture.repository.create({
+      actionId: crypto.randomUUID(),
+      entryKey: 'flux-schnell:text-to-image',
+      workflow: 'text-to-image',
+      publicModelId: 'flux-schnell',
+      guidedRequest: { prompt: 'safe event history' },
+      normalizedPayload: { model: 'flux-schnell', input: { prompt: 'safe event history' } }
+    });
+    fixture.repository.transition(
+      job.id,
+      'requires_attention',
+      'poll',
+      'public_ipv4_guard_match',
+      'poll.policy_blocked',
+      { code: 'public_ipv4_guard_match', marker: 'retained' }
+    );
+    fixture.repository.transition(
+      job.id,
+      'requires_attention',
+      'submission',
+      'submission_unknown',
+      'submission.unknown'
+    );
+    fixture.database
+      .query(
+        `INSERT INTO job_events(job_id,event_type,local_phase,remote_status_raw,remote_status,failure_domain,progress,safe_payload_json,observed_at)
+         VALUES (?,?,?,?,?,?,?,?,?)`
+      )
+      .run(
+        job.id,
+        'malformed.metadata',
+        'requires_attention',
+        null,
+        'unknown',
+        'submission',
+        null,
+        JSON.stringify({
+          marker: 'malformed',
+          [JOB_EVENT_METADATA_KEY]: { version: 'invalid', payloadWasNull: false }
+        }),
+        '2026-07-15T12:00:01.000Z'
+      );
+
+    const history = (await new LibraryRepository(fixture.database).getJobDetail(job.id))?.history;
+    expect(history?.find((event) => event.eventType === 'job.created')?.payload).toBeNull();
+    expect(history?.find((event) => event.eventType === 'submission.unknown')?.payload).toBeNull();
+    expect(history?.find((event) => event.eventType === 'poll.policy_blocked')?.payload).toEqual({
+      marker: 'retained',
+      policy: 'ip_guard_blocked',
+      reason: 'match'
+    });
+    expect(history?.find((event) => event.eventType === 'malformed.metadata')?.payload).toEqual({
+      marker: 'malformed'
+    });
+    expect(JSON.stringify(history)).not.toContain(JOB_EVENT_METADATA_KEY);
+    expect(JSON.stringify(history)).not.toContain('public_ipv4_guard_match');
   });
 });

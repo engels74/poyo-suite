@@ -15,6 +15,20 @@ export interface StudioJobEventUpdate {
   ipGuardReason?: 'match' | 'unavailable' | 'misconfigured' | null;
 }
 
+export function mergeStudioJobEventAttention(
+  current: Pick<StudioJobDto, 'attentionCode' | 'ipGuardReason'>,
+  update: Pick<StudioJobEventUpdate, 'attentionCode' | 'ipGuardReason'>
+): Pick<StudioJobDto, 'attentionCode' | 'ipGuardReason'> {
+  return {
+    attentionCode: Object.hasOwn(update, 'attentionCode')
+      ? (update.attentionCode ?? null)
+      : current.attentionCode,
+    ipGuardReason: Object.hasOwn(update, 'ipGuardReason')
+      ? (update.ipGuardReason ?? null)
+      : (current.ipGuardReason ?? null)
+  };
+}
+
 function timestamp(value: string | null): number {
   if (!value) return Number.NEGATIVE_INFINITY;
   const parsed = Date.parse(value);
@@ -56,8 +70,7 @@ export function applyStudioJobEvent(
     localPhase: update.localPhase,
     remoteStatus: update.remoteStatus,
     failureDomain: update.failureDomain,
-    attentionCode: update.attentionCode ?? current.attentionCode,
-    ipGuardReason: update.ipGuardReason ?? current.ipGuardReason ?? null,
+    ...mergeStudioJobEventAttention(current, update),
     progress: update.progress,
     updatedAt: update.observedAt,
     completedAt:

@@ -508,6 +508,22 @@ describe('durable job repository invariants', () => {
     });
   });
 
+  test('JOB-05B refuses to record a poll policy block before a remote task is acknowledged', async () => {
+    const fixture = await createJobFixture();
+    cleanups.push(fixture.cleanup);
+    const job = createTestJob(fixture.repository, 'poll-policy-without-task');
+
+    expect(() =>
+      fixture.repository.recordPollBlocked(job.id, 'public_ipv4_guard_unavailable')
+    ).toThrow('acknowledged Poyo task');
+    expect(fixture.repository.get(job.id)).toMatchObject({
+      localPhase: 'submission_prepared',
+      failureDomain: 'none',
+      attentionCode: null,
+      poyoTaskId: null
+    });
+  });
+
   test('UPLOAD-04 persists and refreshes a managed source before a paid rerun', async () => {
     const fixture = await createJobFixture();
     cleanups.push(fixture.cleanup);

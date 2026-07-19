@@ -42,7 +42,7 @@ let { data }: { data: PageData } = $props();
 
     <aside aria-labelledby="attention-heading" class="border-t border-border pt-5 xl:border-t-0 xl:border-l xl:pl-6">
       <p class="eyebrow-label">Review</p><h2 id="attention-heading" class="mt-1 text-base font-semibold">Needs attention</h2>
-      {#if data.dashboard.attention.length}<ul class="mt-4 space-y-4">{#each data.dashboard.attention as job}<li><a href={`/jobs/${job.id}`} class="focus-ring block rounded text-sm font-semibold hover:underline">{job.displayName}</a><p class="mt-1 text-xs leading-5 text-muted-foreground">{attentionDescription(job.attentionCode, job.ipGuardReason ?? null)}</p></li>{/each}</ul>
+      {#if data.dashboard.attention.length}<ul class="mt-4 space-y-4">{#each data.dashboard.attention as job}<li><a href={`/jobs/${job.id}`} class="focus-ring block rounded text-sm font-semibold hover:underline">{job.displayName}</a><p class="mt-1 text-xs leading-5 text-muted-foreground">{attentionDescription(job.attentionCode, job.ipGuardReason ?? null, job.failureDomain === 'poll')}</p></li>{/each}</ul>
       {:else}<div class="mt-4 flex items-start gap-3 text-sm"><AppIcon name="success" size={17} class="mt-0.5 text-success" /><div><p class="font-semibold">Nothing needs attention</p><p class="mt-1 leading-5 text-muted-foreground">Failures and interrupted local work appear here.</p></div></div>{/if}
     </aside>
   </div>

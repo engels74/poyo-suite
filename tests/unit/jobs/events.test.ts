@@ -4,6 +4,7 @@ import {
   decodeEventChunk,
   initialJobEvents
 } from '../../../src/lib/server/jobs/events';
+import { JOB_EVENT_METADATA_KEY } from '../../../src/lib/server/jobs/event-attention';
 import { createJobFixture, createTestJob } from '../../helpers/job-fixture';
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -140,5 +141,175 @@ describe('durable job SSE protocol', () => {
     expect(replayText).toContain('ip_guard_blocked');
     expect(replayText).not.toContain('public_ipv4_guard_match');
     expect(replayText).not.toContain('public_ipv4_guard_misconfigured');
+  });
+
+  test('new replay events preserve explicit attention state and payload shape in durable order', async () => {
+    const fixture = await createJobFixture();
+    cleanups.push(fixture.cleanup);
+    const job = createTestJob(fixture.repository, 'attention-state');
+    const cursor = fixture.repository.eventBounds().max;
+
+    fixture.repository.transition(
+      job.id,
+      'requires_attention',
+      'submission',
+      'submission_unknown',
+      'submission.unknown'
+    );
+    fixture.repository.transition(
+      job.id,
+      'requires_attention',
+      'remote_generation',
+      'malformed_output_set',
+      'output_set.malformed',
+      { reason: 'missing_outputs', observedCount: 0 }
+    );
+    fixture.repository.transition(
+      job.id,
+      'requires_attention',
+      'poll',
+      'public_ipv4_guard_unavailable',
+      'poll.policy_blocked',
+      { code: 'public_ipv4_guard_unavailable', marker: { retained: true } }
+    );
+    fixture.repository.transition(job.id, 'monitoring', 'none', null, 'status.observed');
+
+    const rawRows = fixture.database
+      .query<{ safe_payload_json: string }, [string]>(
+        "SELECT safe_payload_json FROM job_events WHERE job_id=? AND event_type='submission.unknown'"
+      )
+      .all(job.id);
+    expect(rawRows).toHaveLength(1);
+    expect(JSON.parse(rawRows[0]?.safe_payload_json ?? '{}')).toMatchObject({
+      [JOB_EVENT_METADATA_KEY]: {
+        version: 1,
+        attentionCode: 'submission_unknown',
+        payloadWasNull: true
+      }
+    });
+
+    const replay = initialJobEvents(fixture.repository, String(cursor));
+    const events = replay.chunks.map((chunk) => decodeEventChunk(chunk).data) as Array<
+      Record<string, unknown>
+    >;
+    expect(events.map((event) => event.eventType)).toEqual([
+      'submission.unknown',
+      'output_set.malformed',
+      'poll.policy_blocked',
+      'status.observed'
+    ]);
+    expect(events[0]).toMatchObject({
+      attentionCode: 'submission_unknown',
+      ipGuardReason: null,
+      payload: null
+    });
+    expect(events[1]).toMatchObject({
+      attentionCode: 'malformed_output_set',
+      ipGuardReason: null,
+      payload: { reason: 'missing_outputs', observedCount: 0 }
+    });
+    expect(events[2]).toMatchObject({
+      attentionCode: 'ip_guard_blocked',
+      ipGuardReason: 'unavailable',
+      payload: {
+        marker: { retained: true },
+        policy: 'ip_guard_blocked',
+        reason: 'unavailable'
+      }
+    });
+    expect(events[3]).toMatchObject({ attentionCode: null, ipGuardReason: null, payload: null });
+    const replayText = replay.chunks.map((chunk) => new TextDecoder().decode(chunk)).join('\n');
+    expect(replayText).not.toContain(JOB_EVENT_METADATA_KEY);
+    expect(replayText).not.toContain('public_ipv4_guard_unavailable');
+  });
+
+  test('legacy and malformed metadata omit attention while stripping reserved and guard data', async () => {
+    const fixture = await createJobFixture();
+    cleanups.push(fixture.cleanup);
+    const job = createTestJob(fixture.repository, 'legacy-attention');
+    const cursor = fixture.repository.eventBounds().max;
+    const observedAt = '2026-07-15T12:00:01.000Z';
+    const insert = fixture.database.query(
+      `INSERT INTO job_events(job_id,event_type,local_phase,remote_status_raw,remote_status,failure_domain,progress,safe_payload_json,observed_at)
+       VALUES (?,?,?,?,?,?,?,?,?)`
+    );
+    insert.run(
+      job.id,
+      'legacy.event',
+      job.localPhase,
+      job.remoteStatusRaw,
+      job.remoteStatus,
+      job.failureDomain,
+      job.progress,
+      JSON.stringify({ marker: 'legacy' }),
+      observedAt
+    );
+    insert.run(
+      job.id,
+      'malformed.metadata',
+      job.localPhase,
+      job.remoteStatusRaw,
+      job.remoteStatus,
+      job.failureDomain,
+      job.progress,
+      JSON.stringify({
+        marker: 'malformed',
+        code: 'public_ipv4_guard_match',
+        [JOB_EVENT_METADATA_KEY]: { version: 1, attentionCode: 42, payloadWasNull: false }
+      }),
+      observedAt
+    );
+
+    const replay = initialJobEvents(fixture.repository, String(cursor));
+    const events = replay.chunks.map((chunk) => decodeEventChunk(chunk).data) as Array<
+      Record<string, unknown>
+    >;
+    expect(events).toHaveLength(2);
+    expect(events[0]?.payload).toEqual({ marker: 'legacy' });
+    expect(events[0]).not.toHaveProperty('attentionCode');
+    expect(events[0]).not.toHaveProperty('ipGuardReason');
+    expect(events[1]?.payload).toEqual({
+      marker: 'malformed',
+      policy: 'ip_guard_blocked',
+      reason: 'match'
+    });
+    expect(events[1]).not.toHaveProperty('attentionCode');
+    expect(events[1]).not.toHaveProperty('ipGuardReason');
+    const replayText = replay.chunks.map((chunk) => new TextDecoder().decode(chunk)).join('\n');
+    expect(replayText).not.toContain(JOB_EVENT_METADATA_KEY);
+    expect(replayText).not.toContain('public_ipv4_guard_match');
+  });
+
+  test('stripping durable metadata preserves null, empty and non-reserved payloads', async () => {
+    const fixture = await createJobFixture();
+    cleanups.push(fixture.cleanup);
+    const job = createTestJob(fixture.repository, 'payload-shape');
+    fixture.repository.transition(
+      job.id,
+      'requires_attention',
+      'submission',
+      'submission_unknown',
+      'payload.object',
+      { marker: 'kept', nested: { count: 1 } }
+    );
+    fixture.repository.transition(
+      job.id,
+      'requires_attention',
+      'submission',
+      'submission_unknown',
+      'payload.empty',
+      {}
+    );
+
+    const replay = initialJobEvents(fixture.repository, '0');
+    const events = replay.chunks.map((chunk) => decodeEventChunk(chunk).data) as Array<
+      Record<string, unknown>
+    >;
+    expect(events.find((event) => event.eventType === 'job.created')?.payload).toBeNull();
+    expect(events.find((event) => event.eventType === 'payload.object')?.payload).toEqual({
+      marker: 'kept',
+      nested: { count: 1 }
+    });
+    expect(events.find((event) => event.eventType === 'payload.empty')?.payload).toEqual({});
   });
 });
