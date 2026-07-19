@@ -158,6 +158,54 @@ describe('durable coordinator and media lifecycle', () => {
     });
   });
 
+  test('lost submission ownership before dispatch preserves established job truth', async () => {
+    const fixture = await createJobFixture();
+    cleanups.push(fixture.cleanup);
+    const job = createTestJob(fixture.repository, 'claim-lost-before-dispatch');
+    const markSubmissionTransmitted = fixture.repository.markSubmissionTransmitted.bind(
+      fixture.repository
+    );
+    let rejectionSucceeded = false;
+    fixture.repository.markSubmissionTransmitted = (jobId, token) => {
+      rejectionSucceeded = fixture.repository.rejectUntransmittedPolicy(
+        jobId,
+        token,
+        'public_ipv4_guard_match'
+      );
+      return markSubmissionTransmitted(jobId, token);
+    };
+    let upstreamDispatches = 0;
+    let balanceAttempts = 0;
+    const coordinator = new JobCoordinator({
+      repository: fixture.repository,
+      poyo: gateway({
+        submit: async (_request, options) => {
+          await options?.beforeDispatch?.();
+          upstreamDispatches += 1;
+          throw new Error('Upstream dispatch must not occur after ownership is lost.');
+        },
+        getBalance: async () => {
+          balanceAttempts += 1;
+          throw new Error('Balance refresh is not needed when dispatch never started.');
+        }
+      }),
+      downloader: new OutputDownloader({ repository: fixture.repository, paths: fixture.paths }),
+      workerId: 'claim-lost-before-dispatch-worker'
+    });
+
+    await coordinator.submit(job.id);
+
+    expect({ rejectionSucceeded, upstreamDispatches, balanceAttempts }).toEqual({
+      rejectionSucceeded: true,
+      upstreamDispatches: 0,
+      balanceAttempts: 0
+    });
+    expect(fixture.repository.get(job.id)).toMatchObject({
+      localPhase: 'requires_attention',
+      attentionCode: 'public_ipv4_guard_match'
+    });
+  });
+
   test('explicit rerun remains behind the guard before a new paid dispatch', async () => {
     const fixture = await createJobFixture();
     cleanups.push(fixture.cleanup);
