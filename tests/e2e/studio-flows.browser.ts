@@ -579,6 +579,7 @@ async function chooseImageEditWorkflow(page: Page): Promise<void> {
     .getByRole('textbox', { name: /^Prompt/ })
     .fill('Transform the retained source into a quiet cyanotype');
   const inputsPanel = await showInspectorSection(inspector, 'Inputs');
+  await inputsPanel.getByText('Local media protection ready', { exact: true }).waitFor();
   await inputsPanel.getByLabel('Add local file').setInputFiles({
     name: 'portrait-near-nine-sixteen.png',
     mimeType: 'image/png',
@@ -590,6 +591,9 @@ async function chooseImageEditWorkflow(page: Page): Promise<void> {
   await outputPanel.getByRole('radio', { name: 'Automatic (9:16 from 900 × 1601)' }).waitFor();
   await showInspectorSection(inspector, 'Inputs');
   await inputsPanel.getByText('Local transfer and Poyo upload completed.').waitFor();
+  await inputsPanel
+    .getByText('Privacy check complete · No selected metadata was found', { exact: true })
+    .waitFor();
   await waitForValidRequest(page);
 }
 
@@ -1566,6 +1570,7 @@ serial('E2E-01..15 production studios, recovery, library, settings and accessibi
     expect(storedImageDraft).toContain('retained-source.invalid');
     expect(storedImageDraft).not.toContain('portrait-near-nine-sixteen.png');
     expect(storedImageDraft).not.toContain('/media/source.png');
+    expect(storedImageDraft).not.toContain('sanitization');
     await page.reload();
     const restoredImageInspector = page.locator('#parameter-inspector');
     await generationCommands(page)
@@ -1573,6 +1578,9 @@ serial('E2E-01..15 production studios, recovery, library, settings and accessibi
       .waitFor();
     const restoredInputsPanel = await showInspectorSection(restoredImageInspector, 'Inputs');
     await restoredInputsPanel.getByText('900 × 1601 px').waitFor();
+    expect(await restoredInputsPanel.getByText(/Privacy (?:cleanup|check) complete/).count()).toBe(
+      0
+    );
     const restoredOutputPanel = await showInspectorSection(restoredImageInspector, 'Output');
     await restoredOutputPanel
       .getByRole('radio', { name: 'Automatic (9:16 from 900 × 1601)' })
@@ -1970,6 +1978,7 @@ serial('E2E-01..15 production studios, recovery, library, settings and accessibi
       .setInputFiles('tests/fixtures/media/tiny.mp4');
     await videoEditInputsPanel.getByText('16 × 16 px · 0.20 s').waitFor();
     await videoEditInputsPanel.getByText('Local transfer and Poyo upload completed.').waitFor();
+    await videoEditInputsPanel.getByText(/Privacy (?:cleanup|check) complete/).waitFor();
     await generationCommands(page).getByText('sourceVideoDuration is below minimum.').waitFor();
 
     await page.goto(`${harness.url}/studio/image`);

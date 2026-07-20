@@ -31,6 +31,40 @@ export interface MediaPrivacySettings {
   removeColorProfile: boolean;
 }
 
+export type MediaToolName = 'exiftool' | 'imagemagick' | 'ffmpeg' | 'ffprobe';
+export type MediaToolStatus = 'ready' | 'missing' | 'outdated' | 'error';
+
+export interface MediaToolReadinessDto {
+  name: MediaToolName;
+  label: string;
+  minimumVersion: string;
+  detectedVersion: string | null;
+  status: MediaToolStatus;
+}
+
+export interface MediaToolsReadinessDto {
+  tools: MediaToolReadinessDto[];
+  imageReady: boolean;
+  videoReady: boolean;
+}
+
+export type MediaSanitizationCategory =
+  | 'exif'
+  | 'iptc'
+  | 'xmp'
+  | 'photoshop-8bim'
+  | 'color-profile'
+  | 'container-tags'
+  | 'chapters';
+
+export interface MediaSanitizationReceiptDto {
+  applied: boolean;
+  mediaKind: 'image' | 'video';
+  removedCategories: readonly MediaSanitizationCategory[];
+  preservedCategories: readonly MediaSanitizationCategory[];
+  orientationNormalized: boolean | null;
+}
+
 export interface OnboardingStateDto {
   completed: boolean;
   completedAt: string | null;

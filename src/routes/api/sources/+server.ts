@@ -15,6 +15,7 @@ export const POST: RequestHandler = async ({ request }) => {
     const source = await intakeLocalSource(request, platform.paths, {
       mediaPrivacy: readMediaPrivacySettings(platform.settings)
     });
+    const { sanitization } = source;
     managedSources = new ManagedSourceRepository(platform.database, platform.paths);
     const registered = await managedSources.register(source);
     registeredSourceId = registered.id;
@@ -43,6 +44,7 @@ export const POST: RequestHandler = async ({ request }) => {
           sizeBytes: registered.byteSize,
           availability: registered.availability
         },
+        sanitization,
         upload: {
           url: uploaded.fileUrl,
           expiresAt: uploaded.expiresAt,

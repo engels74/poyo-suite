@@ -1,5 +1,6 @@
 const suites = {
   e2e: [
+    './tests/e2e/media-readiness.browser.ts',
     './tests/e2e/studio-flows.browser.ts',
     './tests/e2e/job-history.browser.ts',
     './tests/e2e/storage-onboarding.browser.ts'

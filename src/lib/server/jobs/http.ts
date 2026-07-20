@@ -1,5 +1,5 @@
 import { RequestSecurityError } from '../platform/request-security';
-import { SourceIntakeError } from '../media/source-intake';
+import { SourceIntakeError, SourceIntakePrerequisiteError } from '../media/source-intake';
 import { PoyoError } from '../poyo/errors';
 import { RegistryValidationError } from '../../features/registry/normalize';
 import { JobRequestError } from './create-request';
@@ -19,6 +19,11 @@ export function jobHttpError(error: unknown): Response {
   if (error instanceof RequestSecurityError)
     return Response.json(
       { error: { code: error.code, message: error.message } },
+      { status: error.status }
+    );
+  if (error instanceof SourceIntakePrerequisiteError)
+    return Response.json(
+      { error: { code: error.code, message: error.message, tool: error.tool } },
       { status: error.status }
     );
   if (error instanceof SourceIntakeError)

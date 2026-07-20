@@ -104,4 +104,29 @@ describe('settings HTTP and page boundaries', () => {
       expect(await Bun.file(deletedRoute).exists()).toBe(false);
     }
   });
+
+  test('media readiness is loaded for setup and Studio while receipts stay out of drafts', async () => {
+    const welcomeLoad = await Bun.file('src/routes/welcome/+page.server.ts').text();
+    const settingsLoad = await Bun.file('src/routes/settings/+page.server.ts').text();
+    const studioLoad = await Bun.file('src/lib/server/generation/studio-data.ts').text();
+    const mediaPrivacy = await Bun.file(
+      'src/lib/components/settings/MediaPrivacyControls.svelte'
+    ).text();
+    const studio = await Bun.file('src/lib/components/studio/StudioWorkspace.svelte').text();
+    const studioDraft = await Bun.file('src/lib/features/generation/studio-draft.ts').text();
+
+    expect(welcomeLoad).toContain('platform.mediaTools.getReadiness()');
+    expect(settingsLoad).toContain('platform.mediaTools.getReadiness()');
+    expect(studioLoad).toContain('platform.mediaTools.getReadiness()');
+    expect(studioLoad).toContain('readMediaPrivacySettings(platform.settings)');
+    expect(mediaPrivacy).toContain('Media protection ready');
+    expect(mediaPrivacy).toContain('Media protection needs setup');
+    expect(mediaPrivacy).toContain('Local files will be uploaded without metadata cleanup.');
+    expect(studio).toContain('Some local uploads need setup');
+    expect(studio).toContain('No metadata cleanup applied');
+    expect(studio).toContain('Privacy cleanup complete');
+    expect(studio).toContain('aria-live="polite"');
+    expect(studio).toContain('role="alert"');
+    expect(studioDraft).not.toContain('sanitizationReceipt');
+  });
 });

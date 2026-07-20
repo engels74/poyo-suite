@@ -1,7 +1,11 @@
 import { constants, type Dirent } from 'node:fs';
 import { link, open, readdir, rm, unlink } from 'node:fs/promises';
 import { basename } from 'node:path';
-import type { MediaPrivacySettings } from '../../features/settings/contracts';
+import type {
+  MediaPrivacySettings,
+  MediaSanitizationReceiptDto,
+  MediaToolReadinessDto
+} from '../../features/settings/contracts';
 import { DEFAULT_MEDIA_PRIVACY_SETTINGS } from '../../features/settings/media-privacy';
 import type { AppPaths } from '../platform/app-paths';
 import { resolvePathWithin } from '../platform/app-paths';
@@ -14,7 +18,7 @@ import {
   readExactPositioned,
   syncDirectory
 } from './filesystem-boundary';
-import { type MediaSanitizer, sanitizeMedia } from './media-sanitizer';
+import { MediaPrerequisiteError, type MediaSanitizer, sanitizeMedia } from './media-sanitizer';
 
 const IMAGE_MAX_BYTES = 25 * 1024 * 1024;
 const REQUEST_MAX_BYTES = 101 * 1024 * 1024;
@@ -32,6 +36,26 @@ export class SourceIntakeError extends Error {
   constructor(cause?: unknown) {
     super('The local file could not be sanitized safely.', { cause });
     this.name = 'SourceIntakeError';
+  }
+}
+
+export class SourceIntakePrerequisiteError extends Error {
+  readonly code = 'source_media_prerequisite_failed' as const;
+  readonly status = 422;
+
+  constructor(
+    readonly tool: MediaToolReadinessDto,
+    cause?: unknown
+  ) {
+    super(
+      cause instanceof MediaPrerequisiteError
+        ? cause.message
+        : 'A required media tool is unavailable.',
+      {
+        cause
+      }
+    );
+    this.name = 'SourceIntakePrerequisiteError';
   }
 }
 
@@ -106,6 +130,7 @@ export interface LocalSourceIntake {
   signature: string;
   createdAt: string;
   localPath: string;
+  sanitization: MediaSanitizationReceiptDto;
 }
 
 function assertSameOriginMultipart(request: Request, maxBytes: number): string {
@@ -417,11 +442,18 @@ export async function intakeLocalSource(
     await writeStreamed(file, rawTemporary);
     await assertCanonicalDirectory(temporaryRoot, temporaryRoot, 'Managed source temporary');
     let candidate = rawTemporary;
+    let sanitization: MediaSanitizationReceiptDto = {
+      applied: false,
+      mediaKind: requestedKind,
+      removedCategories: [],
+      preservedCategories: [],
+      orientationNormalized: null
+    };
     const maxOutputBytes =
       requestedKind === 'image' ? IMAGE_MAX_BYTES : POYO_STREAM_VIDEO_MAX_BYTES;
     if (mediaPrivacy.sanitizeLocalMedia) {
       sanitizationPendingVerification = true;
-      await sanitizer({
+      sanitization = await sanitizer({
         inputPath: rawTemporary,
         outputPath: sanitizedTemporary,
         mimeType: type,
@@ -451,7 +483,8 @@ export async function intakeLocalSource(
       checksum: details.checksum,
       signature: details.signature,
       createdAt,
-      localPath: destination
+      localPath: destination,
+      sanitization
     };
   } catch (error) {
     await rm(rawTemporary, { force: true }).catch(() => undefined);
@@ -460,7 +493,14 @@ export async function intakeLocalSource(
       await rm(destination, { force: true }).catch(() => undefined);
       await syncDirectory(directory.path).catch(() => undefined);
     }
-    if (sanitizationPendingVerification && !(error instanceof SourceIntakeError)) {
+    if (error instanceof MediaPrerequisiteError) {
+      throw new SourceIntakePrerequisiteError(error.tool, error);
+    }
+    if (
+      sanitizationPendingVerification &&
+      !(error instanceof SourceIntakeError) &&
+      !(error instanceof SourceIntakePrerequisiteError)
+    ) {
       throw new SourceIntakeError(error);
     }
     throw error;

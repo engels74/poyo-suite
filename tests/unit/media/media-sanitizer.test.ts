@@ -279,7 +279,7 @@ describe('still image sanitization', () => {
       await writeFile(profilePath, minimalIccProfile(), { mode: 0o600 });
       command(['exiftool', '-overwrite_original', `-ICC_Profile<=${profilePath}`, inputPath]);
 
-      await sanitizeMedia({
+      const receipt = await sanitizeMedia({
         inputPath,
         outputPath,
         mimeType,
@@ -291,6 +291,8 @@ describe('still image sanitization', () => {
       expect(command(['exiftool', '-b', '-ICC_Profile', outputPath])).toEqual(
         await readFile(profilePath)
       );
+      expect(receipt.removedCategories).toEqual([]);
+      expect(receipt.preservedCategories).toEqual(['color-profile']);
     }
   );
 
@@ -330,13 +332,21 @@ describe('still image sanitization', () => {
       expect(sourceTags).toContain(expected);
     }
 
-    await sanitizeMedia({
+    const receipt = await sanitizeMedia({
       inputPath,
       outputPath,
       mimeType: 'image/jpeg',
       mediaKind: 'image',
       settings: defaults,
       maxOutputBytes: 1024 * 1024
+    });
+
+    expect(receipt).toEqual({
+      applied: true,
+      mediaKind: 'image',
+      removedCategories: ['exif', 'iptc', 'xmp', 'photoshop-8bim'],
+      preservedCategories: ['color-profile'],
+      orientationNormalized: false
     });
 
     const tags = new TextDecoder().decode(
@@ -372,7 +382,7 @@ describe('still image sanitization', () => {
       const outputPath = join(root, `${name}-output.jpg`);
       if (name === 'profiled') await imageFixture(inputPath, profilePath);
       else command(['magick', '-size', '6x4', 'xc:red', inputPath]);
-      await sanitizeMedia({
+      const receipt = await sanitizeMedia({
         inputPath,
         outputPath,
         mimeType: 'image/jpeg',
@@ -381,6 +391,10 @@ describe('still image sanitization', () => {
         maxOutputBytes: 1024 * 1024
       });
       expect(command(['exiftool', '-b', '-ICC_Profile', outputPath]).byteLength).toBe(0);
+      expect(receipt.removedCategories).toEqual(
+        name === 'profiled' ? ['exif', 'iptc', 'xmp', 'photoshop-8bim', 'color-profile'] : []
+      );
+      expect(receipt.preservedCategories).toEqual([]);
     }
   });
 
@@ -391,7 +405,7 @@ describe('still image sanitization', () => {
     const profilePath = join(root, 'synthetic.icc');
     await imageFixture(inputPath, profilePath);
 
-    await sanitizeMedia({
+    const receipt = await sanitizeMedia({
       inputPath,
       outputPath,
       mimeType: 'image/jpeg',
@@ -399,6 +413,9 @@ describe('still image sanitization', () => {
       settings: { ...defaults, removeXmp: false },
       maxOutputBytes: 1024 * 1024
     });
+
+    expect(receipt.removedCategories).toEqual(['exif', 'iptc', 'photoshop-8bim']);
+    expect(receipt.preservedCategories).toEqual(['xmp', 'color-profile']);
 
     expect(
       new TextDecoder().decode(command(['exiftool', '-s3', '-XMP-dc:Creator', outputPath])).trim()
@@ -427,7 +444,7 @@ describe('still image sanitization', () => {
     ]);
     command(['exiftool', '-overwrite_original', '-Orientation#=6', inputPath]);
 
-    await sanitizeMedia({
+    const receipt = await sanitizeMedia({
       inputPath,
       outputPath,
       mimeType: 'image/jpeg',
@@ -435,6 +452,7 @@ describe('still image sanitization', () => {
       settings: defaults,
       maxOutputBytes: 1024 * 1024
     });
+    expect(receipt.orientationNormalized).toBe(true);
     expect(
       new TextDecoder().decode(command(['magick', 'identify', '-format', '%wx%h', outputPath]))
     ).toBe('4x10');
@@ -591,13 +609,20 @@ describe('video sanitization', () => {
       const outputPath = join(root, `output${extension}`);
       videoFixture(inputPath, muxer, videoCodec, audioCodec);
 
-      await sanitizeMedia({
+      const receipt = await sanitizeMedia({
         inputPath,
         outputPath,
         mimeType,
         mediaKind: 'video',
         settings: defaults,
         maxOutputBytes: 4 * 1024 * 1024
+      });
+
+      expect(receipt).toMatchObject({
+        applied: true,
+        mediaKind: 'video',
+        removedCategories: ['container-tags'],
+        orientationNormalized: null
       });
 
       const beforeProbe = JSON.parse(
@@ -663,7 +688,7 @@ describe('video sanitization', () => {
     videoFixture(inputPath, 'mp4', 'mpeg4', 'aac');
     command(['exiftool', '-overwrite_original', '-XMP-dc:Creator=Private Video Author', inputPath]);
 
-    await sanitizeMedia({
+    const receipt = await sanitizeMedia({
       inputPath,
       outputPath,
       mimeType: 'video/mp4',
@@ -671,6 +696,9 @@ describe('video sanitization', () => {
       settings: { ...defaults, removeXmp: false },
       maxOutputBytes: 4 * 1024 * 1024
     });
+
+    expect(receipt.removedCategories).toContain('container-tags');
+    expect(receipt.preservedCategories).toEqual(['xmp']);
 
     expect(
       new TextDecoder().decode(command(['exiftool', '-s3', '-XMP-dc:Creator', outputPath])).trim()

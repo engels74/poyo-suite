@@ -272,6 +272,9 @@ test('fresh onboarding keeps storage informational and completes through one loc
     await page.getByRole('button', { name: 'Continue' }).click();
 
     await page.getByRole('heading', { name: 'Protect local media metadata' }).waitFor();
+    await page.getByText('Media protection ready', { exact: true }).waitFor();
+    await page.getByText('Image · Ready', { exact: true }).waitFor();
+    await page.getByText('Video · Ready', { exact: true }).waitFor();
     await page.getByText(/Remote URLs/i).waitFor();
     await page.getByText(/does not anonymize visible people, places, text, or audio/i).waitFor();
     const master = page.getByLabel('Sanitize local media before sharing with Poyo');
@@ -281,6 +284,10 @@ test('fresh onboarding keeps storage informational and completes through one loc
     expect(await exif.isChecked()).toBe(true);
     await xmp.uncheck();
     await master.uncheck();
+    await page.getByText('Media protection is off', { exact: true }).waitFor();
+    await page
+      .getByText('Local files will be uploaded without metadata cleanup.', { exact: true })
+      .waitFor();
     expect(await exif.isDisabled()).toBe(true);
     expect(await exif.isChecked()).toBe(true);
     await master.check();
@@ -349,6 +356,7 @@ test('fresh onboarding keeps storage informational and completes through one loc
     expect(new URL(page.url()).pathname).toBe('/');
     await page.goto(`${harness.url}/settings`);
     await page.getByRole('heading', { name: 'Settings' }).waitFor();
+    await page.getByText('Media protection ready', { exact: true }).waitFor();
     expect(await page.getByLabel('Remove XMP metadata').isChecked()).toBe(false);
 
     expect(requestedPaths).not.toContain('/api/settings/storage-root');
@@ -385,6 +393,7 @@ test('environment-managed onboarding and the persisted exact IPv4 guard work wit
     await page.getByRole('button', { name: 'Continue' }).click();
 
     await page.getByRole('heading', { name: 'Protect local media metadata' }).waitFor();
+    await page.getByText('Media protection ready', { exact: true }).waitFor();
     await page.getByRole('button', { name: 'Save and continue' }).click();
 
     await page.getByText('Environment key active', { exact: true }).waitFor();

@@ -2,13 +2,22 @@ import { execFile } from 'node:child_process';
 import { constants } from 'node:fs';
 import { lstat, open, rm } from 'node:fs/promises';
 import { dirname, extname, join } from 'node:path';
-import type { MediaPrivacySettings } from '../../features/settings/contracts';
+import type {
+  MediaPrivacySettings,
+  MediaSanitizationCategory,
+  MediaSanitizationReceiptDto,
+  MediaToolName,
+  MediaToolReadinessDto,
+  MediaToolsReadinessDto
+} from '../../features/settings/contracts';
 import { readExactPositioned } from './filesystem-boundary';
 
 const SAFE_MESSAGE = 'The local media could not be sanitized safely.';
 const TOOL_TIMEOUT_MS = 120_000;
 const TOOL_OUTPUT_LIMIT = 8 * 1024 * 1024;
 const PROFILE_OUTPUT_LIMIT = 4 * 1024 * 1024;
+const VERSION_PROBE_TIMEOUT_MS = 3_000;
+const VERSION_PROBE_OUTPUT_LIMIT = 64 * 1024;
 const IMAGE_MAGICK_LIMITS = [
   '-limit',
   'area',
@@ -63,7 +72,9 @@ export interface MediaSanitizationInput {
   maxOutputBytes: number;
 }
 
-export type MediaSanitizer = (input: MediaSanitizationInput) => Promise<void>;
+export type MediaSanitizer = (
+  input: MediaSanitizationInput
+) => Promise<MediaSanitizationReceiptDto>;
 
 export interface MediaCommand {
   cmd: string[];
@@ -84,6 +95,15 @@ export class MediaSanitizationError extends Error {
   constructor() {
     super(SAFE_MESSAGE);
     this.name = 'MediaSanitizationError';
+  }
+}
+
+export class MediaPrerequisiteError extends Error {
+  readonly code = 'media_prerequisite_failed' as const;
+
+  constructor(readonly tool: MediaToolReadinessDto) {
+    super(mediaPrerequisiteMessage(tool));
+    this.name = 'MediaPrerequisiteError';
   }
 }
 
@@ -136,6 +156,32 @@ export const runMediaCommand: MediaCommandRunner = async ({
   }
 };
 
+export const runMediaProbeCommand: MediaCommandRunner = async ({ cmd }) => {
+  const [executable, ...arguments_] = cmd;
+  if (!executable) throw new Error('Invalid media tool probe.');
+  return new Promise<MediaCommandResult>((resolve, reject) => {
+    const child = execFile(
+      executable,
+      arguments_,
+      {
+        encoding: 'buffer',
+        timeout: VERSION_PROBE_TIMEOUT_MS,
+        killSignal: 'SIGKILL',
+        maxBuffer: VERSION_PROBE_OUTPUT_LIMIT,
+        windowsHide: true
+      },
+      (error, stdout, stderr) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve({ stdout: new Uint8Array(stdout), stderr: new Uint8Array(stderr) });
+      }
+    );
+    child.stdin?.end();
+  });
+};
+
 function text(bytes: Uint8Array): string {
   return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
 }
@@ -167,33 +213,126 @@ async function toolText(
   return text((await runner({ cmd, maxBufferBytes, timeoutMs: TOOL_TIMEOUT_MS })).stdout);
 }
 
-function requireVersion(output: string, pattern: RegExp, minimum: [number, number]): void {
-  const match = pattern.exec(output);
-  if (!match) fail();
-  const major = Number(match[1]);
-  const minor = Number(match[2]);
-  if (major < minimum[0] || (major === minimum[0] && minor < minimum[1])) fail();
+interface MediaToolDefinition {
+  name: MediaToolName;
+  label: string;
+  minimumVersion: string;
+  command: string[];
+  versionPattern: RegExp;
 }
 
-async function requireExifTool(runner: MediaCommandRunner): Promise<void> {
-  requireVersion(await toolText(runner, ['exiftool', '-ver']), /^(\d+)\.(\d+)/, [13, 55]);
+const MEDIA_TOOLS: MediaToolDefinition[] = [
+  {
+    name: 'exiftool',
+    label: 'ExifTool',
+    minimumVersion: '13.55',
+    command: ['exiftool', '-ver'],
+    versionPattern: /^(\d+(?:\.\d+)+)/
+  },
+  {
+    name: 'imagemagick',
+    label: 'ImageMagick',
+    minimumVersion: '7.1',
+    command: ['magick', '-version'],
+    versionPattern: /ImageMagick (\d+(?:\.\d+)+)/
+  },
+  {
+    name: 'ffmpeg',
+    label: 'FFmpeg',
+    minimumVersion: '8.1',
+    command: ['ffmpeg', '-version'],
+    versionPattern: /^ffmpeg version n?(\d+(?:\.\d+)+)(?=$|[\s-])/
+  },
+  {
+    name: 'ffprobe',
+    label: 'ffprobe',
+    minimumVersion: '8.1',
+    command: ['ffprobe', '-version'],
+    versionPattern: /^ffprobe version n?(\d+(?:\.\d+)+)(?=$|[\s-])/
+  }
+];
+
+function versionAtLeast(detected: string, minimum: string): boolean {
+  const detectedSegments = detected.split('.').map(Number);
+  const minimumSegments = minimum.split('.').map(Number);
+  const length = Math.max(detectedSegments.length, minimumSegments.length);
+  for (let index = 0; index < length; index += 1) {
+    const actual = detectedSegments[index] ?? 0;
+    const required = minimumSegments[index] ?? 0;
+    if (actual > required) return true;
+    if (actual < required) return false;
+  }
+  return true;
 }
 
-async function requireImageMagick(runner: MediaCommandRunner): Promise<void> {
-  requireVersion(
-    await toolText(runner, ['magick', '-version']),
-    /ImageMagick (\d+)\.(\d+)/,
-    [7, 1]
+async function probeMediaTool(
+  definition: MediaToolDefinition,
+  runner: MediaCommandRunner
+): Promise<MediaToolReadinessDto> {
+  const base = {
+    name: definition.name,
+    label: definition.label,
+    minimumVersion: definition.minimumVersion
+  };
+  try {
+    const result = await runner({
+      cmd: definition.command,
+      timeoutMs: VERSION_PROBE_TIMEOUT_MS,
+      maxBufferBytes: VERSION_PROBE_OUTPUT_LIMIT
+    });
+    const match = definition.versionPattern.exec(text(result.stdout));
+    const detectedVersion = match?.[1] ?? null;
+    if (!detectedVersion) return { ...base, detectedVersion: null, status: 'error' };
+    return {
+      ...base,
+      detectedVersion,
+      status: versionAtLeast(detectedVersion, definition.minimumVersion) ? 'ready' : 'outdated'
+    };
+  } catch (error) {
+    return {
+      ...base,
+      detectedVersion: null,
+      status: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'error'
+    };
+  }
+}
+
+export async function probeMediaTools(
+  runner: MediaCommandRunner = runMediaProbeCommand
+): Promise<MediaToolsReadinessDto> {
+  const tools = await Promise.all(MEDIA_TOOLS.map((tool) => probeMediaTool(tool, runner)));
+  const ready = (name: MediaToolName) =>
+    tools.find((tool) => tool.name === name)?.status === 'ready';
+  return {
+    tools,
+    imageReady: ready('exiftool') && ready('imagemagick'),
+    videoReady: ready('exiftool') && ready('ffmpeg') && ready('ffprobe')
+  };
+}
+
+function mediaPrerequisiteMessage(tool: MediaToolReadinessDto): string {
+  if (tool.status === 'missing') {
+    return `${tool.label} is not available to the Studio server. Version ${tool.minimumVersion} or newer is required.`;
+  }
+  if (tool.status === 'outdated') {
+    return `${tool.label} ${tool.detectedVersion ?? 'unknown'} is below the required version ${tool.minimumVersion}.`;
+  }
+  return `Studio could not verify ${tool.label}. Version ${tool.minimumVersion} or newer is required.`;
+}
+
+export async function assertMediaToolsReady(
+  mediaKind: 'image' | 'video',
+  runner: MediaCommandRunner = runMediaProbeCommand
+): Promise<void> {
+  const names: MediaToolName[] =
+    mediaKind === 'image' ? ['exiftool', 'imagemagick'] : ['exiftool', 'ffmpeg', 'ffprobe'];
+  const tools = await Promise.all(
+    MEDIA_TOOLS.filter((tool) => names.includes(tool.name)).map((tool) =>
+      probeMediaTool(tool, runner)
+    )
   );
-}
-
-async function requireVideoTools(runner: MediaCommandRunner): Promise<void> {
-  const [ffmpeg, ffprobe] = await Promise.all([
-    toolText(runner, ['ffmpeg', '-version']),
-    toolText(runner, ['ffprobe', '-version'])
-  ]);
-  requireVersion(ffmpeg, /ffmpeg version (\d+)\.(\d+)/, [8, 1]);
-  requireVersion(ffprobe, /ffprobe version (\d+)\.(\d+)/, [8, 1]);
+  const unavailable = tools.find((tool) => tool.status !== 'ready');
+  if (unavailable) throw new MediaPrerequisiteError(unavailable);
 }
 
 type MetadataRecord = Record<string, unknown>;
@@ -257,6 +396,33 @@ function metadataPolicies(
     ['XMP', settings.removeXmp],
     ['Photoshop', settings.removePhotoshop8bim]
   ];
+}
+
+const metadataCategories: Record<'EXIF' | 'IPTC' | 'XMP' | 'Photoshop', MediaSanitizationCategory> =
+  {
+    EXIF: 'exif',
+    IPTC: 'iptc',
+    XMP: 'xmp',
+    Photoshop: 'photoshop-8bim'
+  };
+
+interface MutableReceiptCategories {
+  removedCategories: MediaSanitizationCategory[];
+  preservedCategories: MediaSanitizationCategory[];
+}
+
+function metadataReceipt(
+  before: MetadataRecord,
+  settings: MediaPrivacySettings
+): MutableReceiptCategories {
+  const removedCategories: MediaSanitizationCategory[] = [];
+  const preservedCategories: MediaSanitizationCategory[] = [];
+  for (const [group, remove] of metadataPolicies(settings)) {
+    const present = groupValue(before, group) !== '{}';
+    if (!present) continue;
+    (remove ? removedCategories : preservedCategories).push(metadataCategories[group]);
+  }
+  return { removedCategories, preservedCategories };
 }
 
 function assertMetadataPolicies(
@@ -412,10 +578,11 @@ function hasSignature(type: string, bytes: Uint8Array): boolean {
 
 async function sanitizeImage(
   runner: MediaCommandRunner,
+  readinessRunner: MediaCommandRunner,
   input: MediaSanitizationInput,
   intermediates: string[]
-): Promise<void> {
-  await Promise.all([requireExifTool(runner), requireImageMagick(runner)]);
+): Promise<MediaSanitizationReceiptDto> {
+  await assertMediaToolsReady('image', readinessRunner);
   const [beforeMetadata, beforeProfile, beforeFrames, orientation] = await Promise.all([
     metadata(runner, input.inputPath),
     iccProfile(runner, input.inputPath),
@@ -465,6 +632,19 @@ async function sanitizeImage(
   }
   if (!imageFramesMatch(beforeFrames, afterFrames, transformed ? orientation : 1)) fail();
   if (transformed && afterOrientation !== 1) fail();
+  const receipt = metadataReceipt(beforeMetadata, input.settings);
+  if (beforeProfile.byteLength > 0) {
+    (input.settings.removeColorProfile
+      ? receipt.removedCategories
+      : receipt.preservedCategories
+    ).push('color-profile');
+  }
+  return {
+    applied: true,
+    mediaKind: 'image',
+    ...receipt,
+    orientationNormalized: transformed
+  };
 }
 
 interface ProbeStream {
@@ -586,13 +766,36 @@ function assertNoChaptersOrTags(result: ProbeResult): void {
   }
 }
 
+function hasRemovableContainerTags(result: ProbeResult): boolean {
+  const allowedFormatTags = new Set(['major_brand', 'minor_version', 'compatible_brands']);
+  for (const [key, value] of Object.entries(result.format?.tags ?? {})) {
+    const normalized = key.toLowerCase();
+    if (!allowedFormatTags.has(normalized) && !(normalized === 'encoder' && value === 'Lavf')) {
+      return true;
+    }
+  }
+  for (const stream of result.streams ?? []) {
+    const expectedHandler = stream.codec_type === 'video' ? 'VideoHandler' : 'SoundHandler';
+    for (const [key, value] of Object.entries(stream.tags ?? {})) {
+      const normalized = key.toLowerCase();
+      if (normalized === 'language' && value === 'und') continue;
+      if (normalized === 'handler_name' && value === expectedHandler) continue;
+      if (normalized === 'vendor_id' && (value === 'FFMP' || value === '[0][0][0][0]')) continue;
+      if (normalized === 'duration' && /^\d{2}:\d{2}:\d{2}\.\d{9}$/.test(value)) continue;
+      return true;
+    }
+  }
+  return false;
+}
+
 async function sanitizeVideo(
   runner: MediaCommandRunner,
+  readinessRunner: MediaCommandRunner,
   input: MediaSanitizationInput
-): Promise<void> {
+): Promise<MediaSanitizationReceiptDto> {
   const muxer = videoMuxers[input.mimeType];
   if (!muxer) fail();
-  await Promise.all([requireExifTool(runner), requireVideoTools(runner)]);
+  await assertMediaToolsReady('video', readinessRunner);
   const [beforeProbe, beforeMetadata] = await Promise.all([
     probe(runner, input.inputPath),
     metadata(runner, input.inputPath)
@@ -686,9 +889,21 @@ async function sanitizeVideo(
     timeoutMs: TOOL_TIMEOUT_MS,
     maxBufferBytes: TOOL_OUTPUT_LIMIT
   });
+  const receipt = metadataReceipt(beforeMetadata, input.settings);
+  if (hasRemovableContainerTags(beforeProbe)) receipt.removedCategories.push('container-tags');
+  if ((beforeProbe.chapters?.length ?? 0) > 0) receipt.removedCategories.push('chapters');
+  return {
+    applied: true,
+    mediaKind: 'video',
+    ...receipt,
+    orientationNormalized: null
+  };
 }
 
-export function createMediaSanitizer(runner: MediaCommandRunner): MediaSanitizer {
+export function createMediaSanitizer(
+  runner: MediaCommandRunner,
+  readinessRunner: MediaCommandRunner = runner
+): MediaSanitizer {
   return async (input) => {
     if (
       !Number.isSafeInteger(input.maxOutputBytes) ||
@@ -702,14 +917,15 @@ export function createMediaSanitizer(runner: MediaCommandRunner): MediaSanitizer
     const intermediates: string[] = [];
     try {
       if (input.mediaKind === 'image' && imageTypes.has(input.mimeType)) {
-        await sanitizeImage(runner, input, intermediates);
+        return await sanitizeImage(runner, readinessRunner, input, intermediates);
       } else if (input.mediaKind === 'video' && input.mimeType in videoMuxers) {
-        await sanitizeVideo(runner, input);
+        return await sanitizeVideo(runner, readinessRunner, input);
       } else {
         fail();
       }
-    } catch {
+    } catch (error) {
       await rm(input.outputPath, { force: true }).catch(() => undefined);
+      if (error instanceof MediaPrerequisiteError) throw error;
       fail();
     } finally {
       await Promise.all(
@@ -719,4 +935,7 @@ export function createMediaSanitizer(runner: MediaCommandRunner): MediaSanitizer
   };
 }
 
-export const sanitizeMedia: MediaSanitizer = createMediaSanitizer(runMediaCommand);
+export const sanitizeMedia: MediaSanitizer = createMediaSanitizer(
+  runMediaCommand,
+  runMediaProbeCommand
+);

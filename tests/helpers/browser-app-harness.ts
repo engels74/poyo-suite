@@ -1,5 +1,5 @@
 import { Database } from 'bun:sqlite';
-import { cp, mkdir, rm, stat } from 'node:fs/promises';
+import { chmod, cp, mkdir, rm, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { ensureAppPaths, resolveAppPaths } from '../../src/lib/server/platform/app-paths';
 import { openDatabase } from '../../src/lib/server/platform/database';
@@ -11,6 +11,111 @@ import { createTemporaryDirectory } from './temporary-directory';
 const host = '127.0.0.1';
 const cleanupBoundMs = 5_000;
 const startScript = join(process.cwd(), 'scripts', 'start.ts');
+
+export type BrowserMediaToolName = 'exiftool' | 'imagemagick' | 'ffmpeg' | 'ffprobe';
+export type BrowserMediaToolShimState = 'ready' | 'missing' | 'outdated' | 'error';
+
+export interface BrowserMediaToolShimController {
+  setTool: (name: BrowserMediaToolName, state: BrowserMediaToolShimState) => Promise<void>;
+  setTools: (
+    states: Partial<Record<BrowserMediaToolName, BrowserMediaToolShimState>>
+  ) => Promise<void>;
+}
+
+const mediaToolExecutables: Record<BrowserMediaToolName, string> = {
+  exiftool: 'exiftool',
+  imagemagick: 'magick',
+  ffmpeg: 'ffmpeg',
+  ffprobe: 'ffprobe'
+};
+
+const mediaToolVersions: Record<
+  BrowserMediaToolName,
+  { ready: string; outdated: string; error: string }
+> = {
+  exiftool: { ready: '13.55', outdated: '13.54', error: 'unparseable exiftool version' },
+  imagemagick: {
+    ready: 'Version: ImageMagick 7.1.2-27 Q16-HDRI',
+    outdated: 'Version: ImageMagick 7.0.11-0 Q16-HDRI',
+    error: 'unparseable imagemagick version'
+  },
+  ffmpeg: {
+    ready: 'ffmpeg version 8.1.2 Copyright fixture',
+    outdated: 'ffmpeg version 8.0.2 Copyright fixture',
+    error: 'unparseable ffmpeg version'
+  },
+  ffprobe: {
+    ready: 'ffprobe version 8.1.2 Copyright fixture',
+    outdated: 'ffprobe version 8.0.2 Copyright fixture',
+    error: 'unparseable ffprobe version'
+  }
+};
+
+function mediaToolShimScript(
+  name: BrowserMediaToolName,
+  state: Exclude<BrowserMediaToolShimState, 'missing'>,
+  realExecutable: string | null
+): string {
+  const versionArgument = name === 'exiftool' ? '-ver' : '-version';
+  const versionOutput = mediaToolVersions[name][state];
+  return `#!${process.execPath}
+const args = Bun.argv.slice(2);
+if (args.length === 1 && args[0] === ${JSON.stringify(versionArgument)}) {
+  process.stdout.write(${JSON.stringify(`${versionOutput}\n`)});
+  process.exit(0);
+}
+const realExecutable = ${JSON.stringify(realExecutable)};
+if (!realExecutable) process.exit(127);
+const result = Bun.spawnSync({
+  cmd: [realExecutable, ...args],
+  stdin: 'inherit',
+  stdout: 'inherit',
+  stderr: 'inherit'
+});
+process.exit(result.exitCode);
+`;
+}
+
+async function createMediaToolShims(
+  directory: string,
+  initial: Partial<Record<BrowserMediaToolName, BrowserMediaToolShimState>>
+): Promise<BrowserMediaToolShimController> {
+  await mkdir(directory, { recursive: true });
+  const realExecutables = Object.fromEntries(
+    Object.entries(mediaToolExecutables).map(([name, executable]) => [name, Bun.which(executable)])
+  ) as Record<BrowserMediaToolName, string | null>;
+
+  async function setTool(
+    name: BrowserMediaToolName,
+    state: BrowserMediaToolShimState
+  ): Promise<void> {
+    const executable = join(directory, mediaToolExecutables[name]);
+    if (state === 'missing') {
+      await rm(executable, { force: true });
+      return;
+    }
+    await Bun.write(executable, mediaToolShimScript(name, state, realExecutables[name]));
+    await chmod(executable, 0o755);
+  }
+
+  async function setTools(
+    states: Partial<Record<BrowserMediaToolName, BrowserMediaToolShimState>>
+  ): Promise<void> {
+    await Promise.all(
+      Object.entries(states).map(([name, state]) => setTool(name as BrowserMediaToolName, state))
+    );
+  }
+
+  await setTools(
+    Object.fromEntries(
+      (Object.keys(mediaToolExecutables) as BrowserMediaToolName[]).map((name) => [
+        name,
+        initial[name] ?? 'ready'
+      ])
+    )
+  );
+  return { setTool, setTools };
+}
 
 export interface StageTracker {
   currentStage?: string;
@@ -269,6 +374,7 @@ export interface BrowserAppHarness {
   temporaryPath: string;
   syntheticKey: string;
   mock: Awaited<ReturnType<typeof startStudioMockPoyoServer>>;
+  mediaTools: BrowserMediaToolShimController | null;
   startApp: () => Promise<void>;
   stopApp: () => Promise<void>;
   processPid: () => number | null;
@@ -282,6 +388,8 @@ export interface BrowserAppHarnessOptions {
   freshOnboarding?: boolean;
   /** Explicitly seed onboarding completion for fixtures that are not exercising first-run setup. */
   completedOnboarding?: boolean;
+  /** Use isolated executable shims for deterministic media-tool readiness browser tests. */
+  mediaToolShims?: Partial<Record<BrowserMediaToolName, BrowserMediaToolShimState>>;
 }
 
 export async function startBrowserAppHarness(
@@ -342,6 +450,10 @@ export async function startBrowserAppHarness(
   const runningMock = acquiredMock;
   const url = `http://${host}:${port}`;
   const deploymentRoot = join(temporary.path, 'deployment');
+  const mediaToolShimDirectory = join(temporary.path, 'media-tool-shims');
+  const mediaTools = options.mediaToolShims
+    ? await createMediaToolShims(mediaToolShimDirectory, options.mediaToolShims)
+    : null;
   const isolatedEnvironment = {
     HOME: join(temporary.path, 'home'),
     XDG_DATA_HOME: join(temporary.path, 'xdg'),
@@ -460,6 +572,7 @@ export async function startBrowserAppHarness(
       {
         ...inheritedEnvironment,
         ...isolatedEnvironment,
+        ...(mediaTools ? { PATH: mediaToolShimDirectory } : {}),
         HOST: host,
         ORIGIN: url,
         PORT: String(port),
@@ -587,6 +700,7 @@ export async function startBrowserAppHarness(
     temporaryPath: temporary.path,
     syntheticKey,
     mock: runningMock,
+    mediaTools,
     startApp,
     stopApp,
     processPid: () => (active?.exitCode === null ? active.pid : null),

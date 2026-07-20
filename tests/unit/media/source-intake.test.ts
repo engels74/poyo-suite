@@ -18,6 +18,7 @@ import { jobHttpError } from '../../../src/lib/server/jobs/http';
 import { readVerifiedManagedSourceBlob } from '../../../src/lib/server/jobs/managed-source-upload';
 import { syncDirectory as syncFilesystemDirectory } from '../../../src/lib/server/media/filesystem-boundary';
 import { ManagedSourceRepository } from '../../../src/lib/server/media/managed-sources';
+import { MediaPrerequisiteError } from '../../../src/lib/server/media/media-sanitizer';
 import {
   intakeLocalSource as intakeWithPrivacy,
   neutralSourceUploadName,
@@ -34,6 +35,13 @@ const unsanitizedMedia = {
   ...DEFAULT_MEDIA_PRIVACY_SETTINGS,
   sanitizeLocalMedia: false
 };
+const imageReceipt = {
+  applied: true,
+  mediaKind: 'image',
+  removedCategories: ['xmp'],
+  preservedCategories: [],
+  orientationNormalized: false
+} as const;
 
 afterEach(async () => {
   await Promise.all(cleanups.splice(0).map((cleanup) => cleanup()));
@@ -127,6 +135,13 @@ describe('local source intake', () => {
     expect((await stat(source.localPath)).size).toBe(png.byteLength);
     expect(source.checksum).toHaveLength(64);
     expect(source.signature).toStartWith('89504e47');
+    expect(source.sanitization).toEqual({
+      applied: false,
+      mediaKind: 'image',
+      removedCategories: [],
+      preservedCategories: [],
+      orientationNormalized: null
+    });
     expect(await realpath((await repository.register(source)).localPath)).toBe(source.localPath);
     expect(await realpath((await repository.resolveAvailable(source.id, 'image')).localPath)).toBe(
       source.localPath
@@ -149,6 +164,7 @@ describe('local source intake', () => {
         sanitizer: async ({ inputPath, outputPath }) => {
           expect(await Bun.file(inputPath).bytes()).toEqual(raw);
           await writeFile(outputPath, sanitized, { flag: 'wx', mode: 0o600 });
+          return imageReceipt;
         }
       }
     );
@@ -156,6 +172,7 @@ describe('local source intake', () => {
     expect(source.sizeBytes).toBe(sanitized.byteLength);
     expect(source.checksum).toBe(expectedChecksum);
     expect(await Bun.file(source.localPath).bytes()).toEqual(sanitized);
+    expect(source.sanitization).toEqual(imageReceipt);
     expect(await readdir(paths.temporary)).toEqual([]);
   });
 
@@ -185,6 +202,7 @@ describe('local source intake', () => {
             flag: 'wx',
             mode: 0o600
           });
+          return imageReceipt;
         }
       })
     ).rejects.toMatchObject({ code: 'source_sanitization_failed', status: 422 });
@@ -197,6 +215,7 @@ describe('local source intake', () => {
         mediaPrivacy: { ...DEFAULT_MEDIA_PRIVACY_SETTINGS },
         sanitizer: async ({ outputPath }) => {
           await symlink(outside, outputPath);
+          return imageReceipt;
         }
       })
     ).rejects.toMatchObject({ code: 'source_sanitization_failed', status: 422 });
@@ -228,6 +247,7 @@ describe('local source intake', () => {
           const [bucket] = await readdir(paths.uploads);
           destination = join(paths.uploads, bucket as string, `${id}.png`);
           await writeFile(destination, collision, { flag: 'wx', mode: 0o600 });
+          return imageReceipt;
         }
       });
     } catch (error) {
@@ -246,6 +266,50 @@ describe('local source intake', () => {
     });
     expect(await readdir(paths.temporary)).toEqual([]);
     expect(await Bun.file(destination).bytes()).toEqual(collision);
+  });
+
+  test('UPLOAD-01C2 preserves bounded prerequisite detail through cleanup and HTTP mapping', async () => {
+    const { paths } = await fixture();
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    let captured: unknown;
+    try {
+      await intakeLocalSource(uploadRequest(png, 'image/png', 'http://127.0.0.1:5173'), paths, {
+        mediaPrivacy: { ...DEFAULT_MEDIA_PRIVACY_SETTINGS },
+        sanitizer: async () => {
+          throw new MediaPrerequisiteError({
+            name: 'imagemagick',
+            label: 'ImageMagick',
+            minimumVersion: '7.1',
+            detectedVersion: '7.0',
+            status: 'outdated'
+          });
+        }
+      });
+    } catch (error) {
+      captured = error;
+    }
+
+    expect(captured).toMatchObject({
+      code: 'source_media_prerequisite_failed',
+      status: 422,
+      tool: { name: 'imagemagick', status: 'outdated' }
+    });
+    const response = jobHttpError(captured);
+    expect(response.status).toBe(422);
+    expect(await response.json()).toEqual({
+      error: {
+        code: 'source_media_prerequisite_failed',
+        message: 'ImageMagick 7.0 is below the required version 7.1.',
+        tool: {
+          name: 'imagemagick',
+          label: 'ImageMagick',
+          minimumVersion: '7.1',
+          detectedVersion: '7.0',
+          status: 'outdated'
+        }
+      }
+    });
+    expect(await readdir(paths.temporary)).toEqual([]);
   });
 
   test('UPLOAD-01E registration failure removes the published file before a row exists', async () => {

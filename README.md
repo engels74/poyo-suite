@@ -47,7 +47,9 @@ The project is independent and is not an official Poyo.ai client.
 - [ExifTool 13.55+](https://exiftool.org/), [FFmpeg/ffprobe 8.1+](https://ffmpeg.org/), and
   [ImageMagick 7.1+](https://imagemagick.org/) on the server `PATH` for privacy-preserving local
   image and video intake. The application invokes these tools directly with bounded argument-array
-  subprocesses; no shell integration is used.
+  subprocesses; no shell integration is used. Welcome, Settings, and Studio report which image and
+  video protections are ready. After installing or updating a tool, restart Studio so its server
+  process receives the updated `PATH`, then reload the page.
 - A Poyo API key for connectivity or generation. No paid request is needed to install, build,
   or run the automated test suite.
 
@@ -98,7 +100,11 @@ preserved byte-for-byte by default, and video streams are remuxed without re-enc
 playback-critical color signalling is checked. Poyo receives the verified managed bytes under a
 generated neutral filename, never the user's original filename. Missing tools, unsupported stream
 layouts, timeouts, or failed privacy/media verification reject the intake without falling back to
-the original. These controls apply only to local files handled by the app; Poyo fetches remote URLs
+the original. A tool problem blocks only the affected protected image or video upload; onboarding,
+remote-URL sources, and the other media kind remain available. Each successful local upload returns
+a privacy receipt listing only the metadata categories verified as removed or preserved—never the
+original values. When sanitization is disabled, the receipt explicitly states that no cleanup was
+applied. These controls apply only to local files handled by the app; Poyo fetches remote URLs
 directly. Metadata removal does not anonymize visible people, landmarks, text, watermarks, or audio.
 
 ### Delete local data

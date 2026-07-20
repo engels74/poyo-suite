@@ -45,7 +45,14 @@ test('managed-source refresh upload is blocked before the upload reaches Poyo', 
     checksum,
     signature,
     createdAt: '2026-07-19T00:00:00.000Z',
-    localPath
+    localPath,
+    sanitization: {
+      applied: false,
+      mediaKind: 'image',
+      removedCategories: [],
+      preservedCategories: [],
+      orientationNormalized: null
+    }
   });
 
   const settings = new SettingsRepository(database);
