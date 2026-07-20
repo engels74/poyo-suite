@@ -354,7 +354,7 @@ const setupStepLabels: Record<SetupStep, string> = {
       </div>
     {:else if step === 'mediaPrivacy'}
       <div class="mt-4">
-        <MediaPrivacyControls bind:mediaPrivacy disabled={busy} />
+        <MediaPrivacyControls bind:mediaPrivacy mediaTools={data.mediaTools} disabled={busy} />
       </div>
     {:else if step === 'apiKey'}
       <div class="mt-3 flex flex-wrap items-center gap-2">

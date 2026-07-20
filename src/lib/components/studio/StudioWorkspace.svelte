@@ -13,6 +13,11 @@ import type {
   StudioRoleInput
 } from '$lib/features/generation/contracts';
 import type { Estimate, TaskCharge } from '$lib/features/pricing/contracts';
+import type {
+  MediaSanitizationCategory,
+  MediaSanitizationReceiptDto,
+  MediaToolReadinessDto
+} from '$lib/features/settings/contracts';
 import {
   type BrowserMediaMetadata,
   mediaMetadataLabel,
@@ -111,8 +116,19 @@ interface UploadProgressState {
 interface SourceUploadResult {
   source?: { id: string; name: string; mediaKind: 'image' | 'video'; sizeBytes: number };
   upload?: { url: string; expiresAt: string };
+  sanitization?: MediaSanitizationReceiptDto;
   error?: { message?: string };
 }
+
+const sanitizationCategoryLabels: Record<MediaSanitizationCategory, string> = {
+  exif: 'EXIF',
+  iptc: 'IPTC',
+  xmp: 'XMP',
+  'photoshop-8bim': 'Photoshop/8BIM',
+  'color-profile': 'Color profile',
+  'container-tags': 'Container tags',
+  chapters: 'Chapters'
+};
 
 let { data }: Props = $props();
 
@@ -174,6 +190,7 @@ let remoteDrafts = $state<Record<string, string>>({});
 let uploadingRole = $state<string | null>(null);
 let uploadError = $state<Record<string, string>>({});
 let uploadProgress = $state<Record<string, UploadProgressState>>({});
+let sanitizationReceipts = $state<Record<string, MediaSanitizationReceiptDto>>({});
 let inspectorWidth = $state(380);
 let inspectorCollapsed = $state(false);
 let setupOpen = $state(false);
@@ -321,6 +338,57 @@ let resolvedGuided = $derived(
 let currentGuided = $derived(valuesWithRoleInputs(selectedEntry, resolvedGuided, roleInputs));
 let hasApiKey = $derived(data.apiKey.status === 'configured');
 let allRoleInputs = $derived(Object.values(roleInputs).flat());
+let selectedMediaKinds = $derived(
+  [...new Set(selectedEntry.inputRoles.map((role) => role.mediaKind))].filter(
+    (mediaKind): mediaKind is 'image' | 'video' => mediaKind !== 'audio'
+  )
+);
+let selectedMediaReady = $derived(
+  selectedMediaKinds.every((mediaKind) => mediaKindReady(mediaKind))
+);
+let selectedUnreadyTools = $derived.by(() => {
+  const relevantNames = new Set(
+    selectedMediaKinds.flatMap((mediaKind) => relevantTools(mediaKind).map((tool) => tool.name))
+  );
+  return data.mediaTools.tools.filter(
+    (tool) => relevantNames.has(tool.name) && tool.status !== 'ready'
+  );
+});
+
+function mediaKindReady(mediaKind: 'image' | 'video'): boolean {
+  return mediaKind === 'image' ? data.mediaTools.imageReady : data.mediaTools.videoReady;
+}
+
+function relevantTools(mediaKind: 'image' | 'video'): MediaToolReadinessDto[] {
+  const names =
+    mediaKind === 'image'
+      ? new Set(['exiftool', 'imagemagick'])
+      : new Set(['exiftool', 'ffmpeg', 'ffprobe']);
+  return data.mediaTools.tools.filter((tool) => names.has(tool.name));
+}
+
+function studioToolIssue(tool: MediaToolReadinessDto): string {
+  if (tool.status === 'missing') {
+    return `${tool.label} ${tool.minimumVersion}+ is not available to the Studio server. Install it on the machine running Poyo Local Studio, then restart Studio and reload.`;
+  }
+  if (tool.status === 'outdated') {
+    return `${tool.label} ${tool.detectedVersion ?? 'an older version'} was found; ${tool.minimumVersion}+ is required. Update it on the machine running Poyo Local Studio, then restart Studio and reload.`;
+  }
+  return `Studio could not verify ${tool.label}. Resolve the local command error, then restart Studio and reload.`;
+}
+
+function sanitizationSummary(receipt: MediaSanitizationReceiptDto): string {
+  if (!receipt.applied) return 'No metadata cleanup applied';
+  if (!receipt.removedCategories.length) {
+    return 'Privacy check complete · No selected metadata was found';
+  }
+  const count = receipt.removedCategories.length;
+  return `Privacy cleanup complete · ${count} metadata ${count === 1 ? 'category' : 'categories'} removed`;
+}
+
+function categoryList(categories: readonly MediaSanitizationCategory[]): string {
+  return categories.map((category) => sanitizationCategoryLabels[category]).join(', ');
+}
 
 function fieldsHaveIssues(fields: readonly FieldDefinition[]): boolean {
   return fields.some(
@@ -502,6 +570,7 @@ function switchEntry(next: StudioEntry): void {
   guided = initialGuidedValues(next);
   automaticFields = initialAutomaticFields(next);
   roleInputs = {};
+  sanitizationReceipts = {};
   sizeMode = inferSizeMode(next, guided);
   expertText = '';
   preview = null;
@@ -772,6 +841,13 @@ function addRemote(role: string): void {
 async function uploadFiles(role: string, files: FileList | null): Promise<void> {
   const definition = selectedEntry.inputRoles.find((item) => item.role === role);
   if (!definition || !files?.length || definition.mediaKind === 'audio') return;
+  if (data.sanitizeLocalMedia && !mediaKindReady(definition.mediaKind)) {
+    uploadError[role] =
+      `${roleLabel(role)} local uploads need media protection tools that are not ready. ` +
+      'Review the readiness details above, then restart Studio and reload after resolving them.';
+    uploadProgress[role] = { phase: 'error', percent: null, message: 'Upload not started.' };
+    return;
+  }
   const selectedFiles = Array.from(files);
   const selectionIssues = validateLocalFileSelection(
     definition,
@@ -822,7 +898,13 @@ async function uploadFiles(role: string, files: FileList | null): Promise<void> 
         }
       );
       const result = response.body;
-      if (response.status < 200 || response.status >= 300 || !result.source || !result.upload)
+      if (
+        response.status < 200 ||
+        response.status >= 300 ||
+        !result.source ||
+        !result.upload ||
+        !result.sanitization
+      )
         throw new Error(result.error?.message ?? 'Local source upload failed.');
       addRoleInput(role, {
         id: result.source.id,
@@ -845,6 +927,7 @@ async function uploadFiles(role: string, files: FileList | null): Promise<void> 
             }
           : { metadataProbe: 'unavailable' as const })
       });
+      sanitizationReceipts[result.source.id] = result.sanitization;
       applyObservedDuration(role, metadata);
       completedBytes += file.size;
     }
@@ -912,6 +995,7 @@ function applyObservedDuration(role: string, metadata: BrowserMediaMetadata | nu
 function removeRoleInput(role: string, id: string): void {
   const remaining = (roleInputs[role] ?? []).filter((item) => item.id !== id);
   roleInputs[role] = remaining;
+  delete sanitizationReceipts[id];
   if (!remaining.length) {
     const fieldKey = observedDurationField(role);
     if (fieldKey) delete guided[fieldKey];
@@ -1662,6 +1746,46 @@ onMount(() => {
 });
 </script>
 
+{#snippet sanitizationReceipt(receipt: MediaSanitizationReceiptDto | undefined)}
+  {#if receipt}
+    <div
+      class="col-span-full mt-1 rounded border border-border bg-muted/50 px-2.5 py-2"
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+    >
+      <div class="flex items-start gap-2">
+        <AppIcon name="shield" size={14} class="mt-0.5 text-muted-foreground" />
+        <div class="min-w-0 flex-1">
+          <p class="font-semibold">{sanitizationSummary(receipt)}</p>
+          {#if receipt.applied}
+            <details class="mt-1.5 text-[0.6875rem] leading-4 text-muted-foreground">
+              <summary class="focus-ring w-fit cursor-pointer rounded font-semibold text-foreground">
+                What changed
+              </summary>
+              <div class="mt-1.5 grid gap-1">
+                {#if receipt.removedCategories.length}
+                  <p>Removed: {categoryList(receipt.removedCategories)}.</p>
+                {/if}
+                {#if receipt.preservedCategories.length}
+                  <p>Preserved: {categoryList(receipt.preservedCategories)}.</p>
+                {/if}
+                {#if receipt.orientationNormalized !== null}
+                  <p>
+                    {receipt.orientationNormalized
+                      ? 'Image orientation normalized.'
+                      : 'Image orientation was already standard.'}
+                  </p>
+                {/if}
+              </div>
+            </details>
+          {/if}
+        </div>
+      </div>
+    </div>
+  {/if}
+{/snippet}
+
 {#snippet inspectorContent(mobile: boolean)}
   {@const surface = mobile ? 'mobile' : 'desktop'}
   <div class="flex min-h-full flex-col">
@@ -1911,6 +2035,70 @@ onMount(() => {
             class="mt-1 text-sm font-semibold"
           >Required media</h2>
           {#if selectedEntry.inputRoles.length}
+            {#if selectedMediaKinds.length}
+              <div
+                class="mt-3 rounded border px-3 py-2.5 {data.sanitizeLocalMedia
+                  ? selectedMediaReady
+                    ? 'border-success/30 bg-success/10'
+                    : 'border-warning/30 bg-warning/10'
+                  : 'border-border bg-muted/50'}"
+              >
+                <div class="flex items-start gap-2.5">
+                  <AppIcon
+                    name="shield"
+                    size={16}
+                    class={data.sanitizeLocalMedia && selectedMediaReady
+                      ? 'mt-0.5 text-success'
+                      : 'mt-0.5 text-muted-foreground'}
+                  />
+                  <div class="min-w-0 flex-1">
+                    <p class="text-xs font-semibold">
+                      {data.sanitizeLocalMedia
+                        ? selectedMediaReady
+                          ? 'Local media protection ready'
+                          : 'Some local uploads need setup'
+                        : 'Local media protection is off'}
+                    </p>
+                    <p class="mt-1 text-[0.6875rem] leading-4 text-muted-foreground">
+                      {data.sanitizeLocalMedia
+                        ? selectedMediaReady
+                          ? 'Protection is ready for the local media used by this workflow.'
+                          : 'Only affected local file controls are unavailable. Remote URLs still work.'
+                        : 'Local files can be uploaded, but no metadata cleanup will be applied.'}
+                    </p>
+                    <div class="mt-2 flex flex-wrap gap-1.5">
+                      {#each selectedMediaKinds as mediaKind (mediaKind)}
+                        <Badge
+                          tone={data.sanitizeLocalMedia
+                            ? mediaKindReady(mediaKind)
+                              ? 'success'
+                              : 'warning'
+                            : 'neutral'}
+                        >
+                          {mediaKind === 'image' ? 'Image' : 'Video'} · {data.sanitizeLocalMedia
+                            ? mediaKindReady(mediaKind)
+                              ? 'Ready'
+                              : 'Needs setup'
+                            : 'No cleanup'}
+                        </Badge>
+                      {/each}
+                    </div>
+                  </div>
+                </div>
+                {#if data.sanitizeLocalMedia && selectedUnreadyTools.length}
+                  <details class="mt-2 border-t border-border/70 pt-2 text-[0.6875rem]">
+                    <summary class="focus-ring w-fit cursor-pointer rounded font-semibold">
+                      Readiness details
+                    </summary>
+                    <ul class="mt-2 grid list-none gap-2 p-0">
+                      {#each selectedUnreadyTools as tool (tool.name)}
+                        <li class="leading-4 text-foreground">{studioToolIssue(tool)}</li>
+                      {/each}
+                    </ul>
+                  </details>
+                {/if}
+              </div>
+            {/if}
             <div class="mt-3 grid gap-4">
               {#each selectedEntry.inputRoles as role (role.role)}
                 <div class="rounded-[var(--radius)] bg-muted px-3 py-3">
@@ -1926,7 +2114,7 @@ onMount(() => {
                   {#if (roleInputs[role.role] ?? []).length}
                     <ul class="mt-3 grid list-none gap-2 p-0">
                       {#each roleInputs[role.role] ?? [] as input, index (input.id)}
-                        <li class="flex items-center gap-2 rounded bg-background px-2.5 py-2 text-xs">
+                        <li class="grid grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-2 rounded bg-background px-2.5 py-2 text-xs">
                           <span class="grid size-5 shrink-0 place-items-center rounded bg-stage text-stage-foreground">{index + 1}</span>
                           <span class="min-w-0 flex-1">
                             <span class="block truncate">{input.name}</span>
@@ -1940,13 +2128,18 @@ onMount(() => {
                           </span>
                           <Badge tone={input.source === 'uploaded' ? 'success' : 'neutral'}>{input.source}</Badge>
                           <button type="button" class="focus-ring rounded px-1 text-muted-foreground hover:text-destructive" aria-label={`Remove ${input.name}`} onclick={() => removeRoleInput(role.role, input.id)}>Remove</button>
+                          {@render sanitizationReceipt(sanitizationReceipts[input.id])}
                         </li>
                       {/each}
                     </ul>
                   {/if}
                   <div class="mt-3 grid gap-2">
                     {#if role.mediaKind !== 'audio'}
-                      <label class="focus-ring flex min-h-9 cursor-pointer items-center justify-center gap-2 rounded-[var(--radius)] border border-border bg-background px-3 text-xs font-semibold shadow-[var(--shadow-xs)] hover:bg-muted">
+                      <label
+                        class="focus-ring flex min-h-9 items-center justify-center gap-2 rounded-[var(--radius)] border border-border bg-background px-3 text-xs font-semibold shadow-[var(--shadow-xs)] {uploadingRole !== null || !hasApiKey || (data.sanitizeLocalMedia && !mediaKindReady(role.mediaKind))
+                          ? 'cursor-not-allowed opacity-50'
+                          : 'cursor-pointer hover:bg-muted'}"
+                      >
                         <AppIcon name="upload" size={15} />
                         {uploadingRole === role.role ? 'Uploading…' : 'Add local file'}
                         <input
@@ -1954,7 +2147,7 @@ onMount(() => {
                           type="file"
                           accept={mediaAccept(role)}
                           multiple={role.max !== 1}
-                          disabled={uploadingRole !== null || !hasApiKey}
+                          disabled={uploadingRole !== null || !hasApiKey || (data.sanitizeLocalMedia && !mediaKindReady(role.mediaKind))}
                           onchange={(event) => void uploadFiles(role.role, event.currentTarget.files)}
                         />
                       </label>
@@ -1988,7 +2181,7 @@ onMount(() => {
                       <p class="mt-1 text-[0.6875rem] leading-4 text-muted-foreground">{uploadProgress[role.role]?.message}</p>
                     </div>
                   {/if}
-                  {#if uploadError[role.role]}<p class="mt-2 text-xs leading-5 text-destructive">{uploadError[role.role]}</p>{/if}
+                  {#if uploadError[role.role]}<p class="mt-2 text-xs leading-5 text-destructive" role="alert">{uploadError[role.role]}</p>{/if}
                 </div>
               {/each}
             </div>

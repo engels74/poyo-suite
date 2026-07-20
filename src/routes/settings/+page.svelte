@@ -441,7 +441,11 @@ function applyCleanup(): void {
         </section>
 
         <section id="media-privacy" class="py-6" aria-label="Media privacy settings">
-          <MediaPrivacyControls bind:mediaPrivacy={draft.mediaPrivacy} disabled={pending !== null} />
+          <MediaPrivacyControls
+            bind:mediaPrivacy={draft.mediaPrivacy}
+            mediaTools={data.mediaTools}
+            disabled={pending !== null}
+          />
         </section>
 
         <section id="jobs" class="py-6" aria-labelledby="jobs-heading">

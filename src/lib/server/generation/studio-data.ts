@@ -15,6 +15,7 @@ import { studioReuseEntry } from '../library/repository';
 import { getPlatformServices } from '../platform/runtime';
 import { PresetRepository } from '../presets/repository';
 import { ModelPreferenceRepository } from '../registry/preferences-repository';
+import { readMediaPrivacySettings } from '../settings/media-privacy-settings';
 
 type StudioRegistryEntry =
   | (typeof IMAGE_REGISTRY_ENTRIES)[number]
@@ -155,6 +156,8 @@ export async function loadStudioData(
     balance: latestBalance(platform.database),
     outstandingProjection: jobs.repository.outstandingProjection(),
     apiKey: await platform.apiKey.status(),
+    mediaTools: await platform.mediaTools.getReadiness(),
+    sanitizeLocalMedia: readMediaPrivacySettings(platform.settings).sanitizeLocalMedia,
     preset: preset?.values.modality === modality ? preset : null
   };
 }

@@ -13,6 +13,7 @@ export const load: PageServerLoad = async () => {
   return {
     settings: service.dto(platform.paths, await platform.apiKey.status()),
     onboarding: await loadOnboardingState(platform),
-    connectivity: platform.apiKey.connectivityStatus()
+    connectivity: platform.apiKey.connectivityStatus(),
+    mediaTools: await platform.mediaTools.getReadiness()
   };
 };

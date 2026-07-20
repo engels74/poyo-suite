@@ -1,6 +1,7 @@
 import type { PresetRecord } from '../presets/types';
 import type { OutstandingSpendProjection, TaskCharge } from '../pricing/contracts';
 import type { ImageRegistryEntry, VideoRegistryEntry } from '../registry/types';
+import type { MediaToolsReadinessDto } from '../settings/contracts';
 
 export type StudioEntry = ImageRegistryEntry | VideoRegistryEntry;
 
@@ -50,6 +51,8 @@ export interface StudioLoadData {
   balance: StudioBalanceSnapshot | null;
   outstandingProjection: OutstandingSpendProjection;
   apiKey: StudioApiKeyStatus;
+  mediaTools: MediaToolsReadinessDto;
+  sanitizeLocalMedia: boolean;
   preset: PresetRecord | null;
 }
 

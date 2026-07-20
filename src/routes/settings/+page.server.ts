@@ -21,6 +21,7 @@ export const load: PageServerLoad = async () => {
     publicIpv4Guard: platform.publicIpv4.readSettings(),
     publicIpv4Status: await platform.publicIpv4.status(),
     connectivity: platform.apiKey.connectivityStatus(),
+    mediaTools: await platform.mediaTools.getReadiness(),
     balance: latestBalance(platform.database),
     storage: await new LibraryRepository(platform.database).storageStatistics(platform.paths),
     registry: platform.database
