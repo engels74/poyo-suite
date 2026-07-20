@@ -11,7 +11,7 @@ const routeChecks = [
   ['/studio/image', 'Image Studio'],
   ['/studio/video', 'Video Studio'],
   ['/jobs', 'Jobs'],
-  ['/library', 'Library'],
+  ['/gallery', 'Gallery'],
   ['/models', 'Models'],
   ['/presets', 'Presets'],
   ['/settings', 'Settings'],
@@ -191,6 +191,16 @@ try {
     if (!body.includes('Poyo Local Studio') || !body.includes(marker)) {
       throw new Error(`Production route ${pathname} did not contain its application markers.`);
     }
+  }
+  const legacyLibrary = await fetch(new URL('/library?view=list&q=cobalt', url), {
+    redirect: 'manual',
+    signal: AbortSignal.timeout(requestTimeoutMs)
+  });
+  if (
+    legacyLibrary.status !== 308 ||
+    legacyLibrary.headers.get('location') !== '/gallery?view=list&q=cobalt'
+  ) {
+    throw new Error('Legacy Library route did not preserve its query in a permanent redirect.');
   }
   if (mock.ipRequests.length === 0) {
     throw new Error('Production smoke did not resolve public IPv4 through the loopback fixture.');

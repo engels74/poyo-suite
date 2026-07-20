@@ -19,7 +19,7 @@ const requiredRoutes = [
   '/studio/image',
   '/studio/video',
   '/jobs',
-  '/library',
+  '/gallery',
   '/models',
   '/presets',
   '/settings',
@@ -39,7 +39,7 @@ describe('studio shell navigation', () => {
       '/studio/image',
       '/studio/video',
       '/jobs',
-      '/library',
+      '/gallery',
       '/models',
       '/presets'
     ]);
@@ -48,14 +48,15 @@ describe('studio shell navigation', () => {
       '/studio/image',
       '/studio/video',
       '/jobs',
-      '/library'
+      '/gallery'
     ]);
     expect(moreNavigation.map((item) => item.href)).toEqual(['/models', '/presets', '/settings']);
   });
 
   test('resolves active routes and route titles deterministically', () => {
     expect(isPathActive('/jobs/abc', '/jobs')).toBe(true);
-    expect(isPathActive('/library', '/')).toBe(false);
+    expect(isPathActive('/gallery', '/')).toBe(false);
+    expect(isPathActive('/gallery/output', '/gallery')).toBe(true);
     expect(isStudioPath('/studio/image')).toBe(true);
     expect(isStudioPath('/models')).toBe(false);
     expect(getRouteTitle('/settings/diagnostics')).toBe('Diagnostics');
@@ -69,6 +70,16 @@ describe('studio shell navigation', () => {
       expect(source).toContain('<title>');
       expect(source).not.toContain('<h1');
     }
+  });
+
+  test('retains permanent compatibility redirects for legacy Library URLs', async () => {
+    const overviewRedirect = await Bun.file('src/routes/library/+page.server.ts').text();
+    const detailRedirect = await Bun.file('src/routes/library/[jobId]/+page.server.ts').text();
+
+    expect(overviewRedirect).toContain(`redirect(308, \`/gallery\${url.search}\`)`);
+    expect(detailRedirect).toContain(
+      `redirect(308, \`/jobs/\${encodeURIComponent(params.jobId)}\`)`
+    );
   });
 
   test('renders poll-blocked dashboard guidance from the existing failure domain', async () => {

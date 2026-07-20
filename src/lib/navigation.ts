@@ -49,9 +49,9 @@ const jobs: NavigationItem = {
   description: 'Durable generation queue and history'
 };
 
-const library: NavigationItem = {
-  label: 'Library',
-  href: '/library',
+const gallery: NavigationItem = {
+  label: 'Gallery',
+  href: '/gallery',
   icon: 'library',
   description: 'Verified local images and videos'
 };
@@ -80,11 +80,11 @@ const settings: NavigationItem = {
 export const navigationGroups: readonly NavigationGroup[] = [
   { label: 'Home', items: [dashboard] },
   { label: 'Create', items: [imageStudio, videoStudio] },
-  { label: 'Manage', items: [jobs, library] },
+  { label: 'Manage', items: [jobs, gallery] },
   { label: 'Discover', items: [models, presets] }
 ];
 
-export const mobileNavigation = [dashboard, imageStudio, videoStudio, jobs, library] as const;
+export const mobileNavigation = [dashboard, imageStudio, videoStudio, jobs, gallery] as const;
 export const moreNavigation = [models, presets, settings] as const;
 
 export const settingsNavigation = [
@@ -102,7 +102,7 @@ const routeTitles = new Map<string, string>([
   ['/studio/image', 'Image Studio'],
   ['/studio/video', 'Video Studio'],
   ['/jobs', 'Jobs'],
-  ['/library', 'Library'],
+  ['/gallery', 'Gallery'],
   ['/models', 'Models'],
   ['/presets', 'Presets'],
   ['/settings', 'Settings'],

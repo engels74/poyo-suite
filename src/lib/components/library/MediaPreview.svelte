@@ -10,6 +10,7 @@ interface Props {
   class?: string;
   controls?: boolean;
   viewable?: boolean;
+  preload?: 'none' | 'metadata' | 'auto';
   /** `cover` fills the frame (may crop); `contain` preserves the full asset with letterboxing. */
   fit?: 'cover' | 'contain';
 }
@@ -21,6 +22,7 @@ let {
   class: className = '',
   controls = false,
   viewable = false,
+  preload = 'metadata',
   fit = 'cover'
 }: Props = $props();
 
@@ -70,7 +72,7 @@ $effect(() => {
       class={`size-full ${fitClass}`}
       {src}
       aria-label={alt}
-      preload="metadata"
+      {preload}
       {controls}
       playsinline
     ></video>

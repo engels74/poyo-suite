@@ -633,7 +633,7 @@ async function assertPrimaryRoutesAccessible(page: Page, baseUrl: string): Promi
     '/studio/image',
     '/studio/video',
     '/jobs',
-    '/library',
+    '/gallery',
     '/models',
     '/presets',
     '/settings',
@@ -1818,8 +1818,8 @@ serial('E2E-01..15 production studios, recovery, library, settings and accessibi
     );
     await page.getByText('7 tracked jobs').waitFor();
 
-    await page.goto(`${harness.url}/library`);
-    await page.getByRole('heading', { name: 'Generation groups' }).waitFor();
+    await page.goto(`${harness.url}/gallery`);
+    await page.getByRole('heading', { name: 'Generation gallery' }).waitFor();
     await page.getByText('7 grouped generations').waitFor();
     await page.getByRole('link', { name: 'List view' }).click();
     await page.waitForURL(/view=list/);
@@ -1833,11 +1833,18 @@ serial('E2E-01..15 production studios, recovery, library, settings and accessibi
     await page.waitForURL(/favorite=true/);
     expect(await page.getByText('1 grouped generation').count()).toBe(1);
 
-    await page.goto(`${harness.url}/library`);
+    await page.goto(`${harness.url}/gallery`);
     const comparisonGroup = page.locator('article').filter({
       hasText: 'Two cobalt paper sculptures for a related-output comparison'
     });
-    await comparisonGroup.getByRole('link', { name: 'GPT-4o Image', exact: true }).click();
+    await comparisonGroup
+      .getByRole('button', { name: 'View image GPT-4o Image', exact: true })
+      .filter({ hasText: 'GPT-4o Image' })
+      .click();
+    await page
+      .getByRole('dialog', { name: 'GPT-4o Image' })
+      .getByRole('link', { name: 'Open job' })
+      .click();
     await page.getByRole('heading', { name: 'Compare related outputs' }).waitFor();
     const imageDetailUrl = page.url();
     const promptContent = page.locator('#job-prompt');
@@ -1886,7 +1893,7 @@ serial('E2E-01..15 production studios, recovery, library, settings and accessibi
     expect((await promptContent.getAttribute('class'))?.split(' ')).toContain('line-clamp-4');
     await promptToggle.click();
 
-    const videoLibraryHref = new URL(`/library/${videoJobId}`, harness.url);
+    const videoJobUrl = new URL(`/jobs/${videoJobId}`, harness.url);
     await page.evaluate(() => Reflect.set(window, '__jobDetailNavigationSentinel', 'preserved'));
     await page.evaluate((href) => {
       const link = document.createElement('a');
@@ -1894,9 +1901,9 @@ serial('E2E-01..15 production studios, recovery, library, settings and accessibi
       link.textContent = 'Navigate directly to another job';
       link.dataset.testid = 'direct-job-navigation';
       document.body.append(link);
-    }, videoLibraryHref.toString());
+    }, videoJobUrl.toString());
     await page.getByTestId('direct-job-navigation').click();
-    await page.waitForURL((url) => url.pathname === videoLibraryHref.pathname);
+    await page.waitForURL((url) => url.pathname === videoJobUrl.pathname);
     expect(await page.evaluate(() => Reflect.get(window, '__jobDetailNavigationSentinel'))).toBe(
       'preserved'
     );

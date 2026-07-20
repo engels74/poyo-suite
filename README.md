@@ -35,7 +35,7 @@ The project is independent and is not an official Poyo.ai client.
   backoff, and stream safe updates to browsers with Server-Sent Events.
 - Local source intake, Poyo URL/base64/stream uploads, and atomic output downloads with size,
   content-type, signature, and SHA-256 verification.
-- Dashboard, Jobs, Library, Models, Presets, Settings, and redacted Diagnostics routes.
+- Dashboard, Jobs, Gallery, Models, Presets, Settings, and redacted Diagnostics routes.
 - Indefinite local retention by default; age, storage-size, and free-space cleanup remain
   opt-in, with exclusions and preview/confirmation for manual bulk cleanup.
 
@@ -117,7 +117,7 @@ does not anonymize visible people, landmarks, text, watermarks, or audio.
 
 Deletion is explicit and browser-based:
 
-- Each verified output can remove its local file, local metadata, or both from its job/library view.
+- Each verified output can remove its local file, local metadata, or both from its job detail view.
 - Settings can preview and confirm bounded bulk cleanup, with favorites and pinned outputs excluded
   by default.
 - Settings can clear the entire application-owned structured-log directory after queued writes

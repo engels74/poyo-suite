@@ -17,10 +17,9 @@ import StatusBadge from './StatusBadge.svelte';
 
 interface Props {
   job: JobDetailDto;
-  context: 'jobs' | 'library';
 }
 
-let { job, context }: Props = $props();
+let { job }: Props = $props();
 let pending = $state<string | null>(null);
 let feedback = $state('');
 let tags = $state(untrack(() => job.tags.join(', ')));
@@ -182,7 +181,7 @@ function removeOutput(outputId: string): void {
 </script>
 
 <div class="route-shell">
-  <a href={context === 'jobs' ? '/jobs' : '/library'} class="focus-ring inline-flex items-center gap-1 rounded text-xs font-semibold text-muted-foreground hover:text-foreground">← Back to {context}</a>
+  <a href="/jobs" class="focus-ring inline-flex items-center gap-1 rounded text-xs font-semibold text-muted-foreground hover:text-foreground">← Back to jobs</a>
   <header class="mt-4 flex flex-wrap items-start justify-between gap-4 border-b border-border pb-5">
     <div class="min-w-0">
       <p class="eyebrow-label">{job.provider} · {job.workflow}</p>

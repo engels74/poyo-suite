@@ -7,5 +7,5 @@ let { data }: { data: PageData } = $props();
 
 <svelte:head><title>{data.job.displayName} · Jobs · Poyo Local Studio</title></svelte:head>
 {#key data.job.id}
-  <JobDetailView job={data.job} context="jobs" />
+  <JobDetailView job={data.job} />
 {/key}
