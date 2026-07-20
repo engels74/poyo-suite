@@ -218,7 +218,7 @@ function terminalStatus(
   return remoteStatusRaw === 'cancelled' || remoteStatusRaw === 'canceled' ? 'cancelled' : 'failed';
 }
 
-function taskChargeFromParts(input: {
+export function taskChargeFromParts(input: {
   credits: number | null;
   remoteStatus: RemoteStatus;
   remoteStatusRaw: string | null;

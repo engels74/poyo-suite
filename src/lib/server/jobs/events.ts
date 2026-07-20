@@ -1,33 +1,9 @@
 import { safeJobEventAttention, sanitizeDurableJobEventPayload } from './event-attention';
-import type { OutstandingSpendProjection, TaskCharge } from '../../features/pricing/contracts';
-import type { JobRepository } from './repository';
+import type { OutstandingSpendProjection } from '../../features/pricing/contracts';
+import { taskChargeFromParts, type JobRepository } from './repository';
 import type { JobRecord } from './types';
 
 const encoder = new TextEncoder();
-function safeTaskCharge(job: JobRecord): TaskCharge | null {
-  if (
-    (job.remoteStatus !== 'finished' && job.remoteStatus !== 'failed') ||
-    job.actualCredits === null ||
-    !Number.isFinite(job.actualCredits) ||
-    job.actualCredits < 0 ||
-    !job.lastPolledAt
-  ) {
-    return null;
-  }
-  return {
-    classification: 'task-charge',
-    credits: job.actualCredits,
-    source: 'poyo-task',
-    terminalStatus:
-      job.remoteStatus === 'finished'
-        ? 'finished'
-        : job.remoteStatusRaw === 'cancelled' || job.remoteStatusRaw === 'canceled'
-          ? 'cancelled'
-          : 'failed',
-    settledAt: job.lastPolledAt
-  };
-}
-
 export function safeJobDto(job: JobRecord) {
   const attention = safeJobEventAttention(job.attentionCode);
   return {
@@ -44,7 +20,12 @@ export function safeJobDto(job: JobRecord) {
     progress: job.progress,
     estimatedCredits: job.estimatedCredits,
     actualCredits: job.actualCredits,
-    taskCharge: safeTaskCharge(job),
+    taskCharge: taskChargeFromParts({
+      credits: job.actualCredits,
+      remoteStatus: job.remoteStatus,
+      remoteStatusRaw: job.remoteStatusRaw,
+      settledAt: job.lastPolledAt
+    }),
     retryOfJobId: job.retryOfJobId,
     nextPollAt: job.nextPollAt,
     lastPolledAt: job.lastPolledAt,
