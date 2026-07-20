@@ -1,4 +1,5 @@
 import type { StudioJobDto } from './contracts';
+import type { OutstandingSpendProjection, TaskCharge } from '../pricing/contracts';
 
 export type StudioSessionJobs = Record<string, StudioJobDto>;
 export type StudioResultCandidateState = 'loading' | 'viewable' | 'empty' | 'transient';
@@ -13,6 +14,8 @@ export interface StudioJobEventUpdate {
   observedAt: string;
   attentionCode?: string | null;
   ipGuardReason?: 'match' | 'unavailable' | 'misconfigured' | null;
+  payload?: { taskCharge?: TaskCharge } | null;
+  outstandingProjection?: OutstandingSpendProjection;
 }
 
 export function mergeStudioJobEventAttention(
@@ -65,6 +68,7 @@ export function applyStudioJobEvent(
 ): StudioSessionJobs {
   const current = jobs[update.jobId];
   if (!current) return jobs;
+  const taskCharge = update.payload?.taskCharge;
   return upsertStudioSessionJob(jobs, {
     ...current,
     localPhase: update.localPhase,
@@ -72,6 +76,7 @@ export function applyStudioJobEvent(
     failureDomain: update.failureDomain,
     ...mergeStudioJobEventAttention(current, update),
     progress: update.progress,
+    ...(taskCharge ? { actualCredits: taskCharge.credits, taskCharge } : {}),
     updatedAt: update.observedAt,
     completedAt:
       update.localPhase === 'complete' && update.remoteStatus !== 'failed'

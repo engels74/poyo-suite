@@ -1,26 +1,22 @@
 import { RegistryValidationError } from '$lib/features/registry/normalize';
-import { normalizeRegistryRequest } from '$lib/features/registry/normalize-registry';
-import type {
-  ExpertOverride,
-  GuidedImageRequest,
-  GuidedVideoRequest
-} from '$lib/features/registry/types';
+import { getJobRuntime } from '$lib/server/jobs/runtime';
 import { readSameOriginJson, RequestSecurityError } from '$lib/server/platform/request-security';
+import { getPlatformServices } from '$lib/server/platform/runtime';
+import {
+  normalizeEstimatedRegistryRequest,
+  type RegistryPreviewRequest
+} from '$lib/server/pricing/estimate-request';
 import type { RequestHandler } from './$types';
-type PreviewBody = {
-  entryKey: string;
-  values: GuidedImageRequest | GuidedVideoRequest;
-  expertOverrides?: ExpertOverride[];
-};
 export const POST: RequestHandler = async ({ request }) => {
   try {
-    const body = await readSameOriginJson<PreviewBody>(request, { maxBytes: 256 * 1024 });
-    const preview = normalizeRegistryRequest(
-      body.entryKey,
-      body.values,
-      body.expertOverrides ?? []
+    const body = await readSameOriginJson<RegistryPreviewRequest>(request, {
+      maxBytes: 256 * 1024
+    });
+    const platform = await getPlatformServices();
+    const runtime = await getJobRuntime();
+    return Response.json(
+      normalizeEstimatedRegistryRequest(body, platform.pricing, runtime.repository)
     );
-    return Response.json(preview);
   } catch (error) {
     if (error instanceof RequestSecurityError)
       return Response.json(

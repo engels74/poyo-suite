@@ -117,7 +117,7 @@ describe('durable coordinator and media lifecycle', () => {
     await coordinator.recoverOnce();
     await coordinator.recoverOnce();
     expect(gatewayCalls).toBe(1);
-    expect(balanceAttempts).toBe(1);
+    expect(balanceAttempts).toBe(0);
     expect(fixture.repository.get(job.id)).toMatchObject({
       localPhase: 'requires_attention',
       attentionCode: 'public_ipv4_guard_match'
@@ -158,6 +158,88 @@ describe('durable coordinator and media lifecycle', () => {
     });
   });
 
+  test('samples balance before transmit evidence and preserves unknown truth after dispatch', async () => {
+    const fixture = await createJobFixture();
+    cleanups.push(fixture.cleanup);
+    const job = createTestJob(fixture.repository, 'balance-before-transmit');
+    const order: string[] = [];
+    let balanceStarted = (): void => undefined;
+    const balanceEntered = new Promise<void>((resolve) => {
+      balanceStarted = resolve;
+    });
+    let failBalance = (): void => undefined;
+    const balanceBlocked = new Promise<void>((resolve) => {
+      failBalance = resolve;
+    });
+    const markSubmissionTransmitted = fixture.repository.markSubmissionTransmitted.bind(
+      fixture.repository
+    );
+    fixture.repository.markSubmissionTransmitted = (jobId, token) => {
+      order.push('transmitted');
+      return markSubmissionTransmitted(jobId, token);
+    };
+    const coordinator = new JobCoordinator({
+      repository: fixture.repository,
+      poyo: gateway({
+        submit: async (_request, options) => {
+          await options?.beforeDispatch?.();
+          order.push('dispatch');
+          throw new PoyoError({
+            category: 'network',
+            technicalCode: 'socket_drop_after_dispatch',
+            message: 'The submit outcome is unknown after dispatch.',
+            retryable: true,
+            operation: 'submit'
+          });
+        },
+        getBalance: async () => {
+          order.push('balance-started');
+          balanceStarted();
+          await balanceBlocked;
+          order.push('balance-failed');
+          throw new Error('Balance sampling failed before dispatch.');
+        }
+      }),
+      downloader: new OutputDownloader({ repository: fixture.repository, paths: fixture.paths }),
+      workerId: 'balance-before-transmit-worker'
+    });
+
+    const submission = coordinator.submit(job.id);
+    await balanceEntered;
+
+    expect(
+      fixture.database
+        .query<
+          { state: string; sent_at: string | null; transport_evidence_json: string | null },
+          [string]
+        >('SELECT state,sent_at,transport_evidence_json FROM submission_intents WHERE job_id=?')
+        .get(job.id)
+    ).toEqual({ state: 'sending', sent_at: null, transport_evidence_json: null });
+    expect(
+      fixture.database
+        .query<{ count: number }, [string]>(
+          "SELECT COUNT(*) count FROM job_events WHERE job_id=? AND event_type='submission.transmitted'"
+        )
+        .get(job.id)?.count
+    ).toBe(0);
+
+    failBalance();
+    await submission;
+
+    expect(order).toEqual(['balance-started', 'balance-failed', 'transmitted', 'dispatch']);
+    expect(
+      fixture.database
+        .query<{ state: string; sent_at: string | null }, [string]>(
+          'SELECT state,sent_at FROM submission_intents WHERE job_id=?'
+        )
+        .get(job.id)
+    ).toEqual({ state: 'unknown', sent_at: expect.any(String) });
+    expect(fixture.repository.get(job.id)).toMatchObject({
+      localPhase: 'requires_attention',
+      attentionCode: 'submission_unknown'
+    });
+  });
+
   test('lost submission ownership before dispatch preserves established job truth', async () => {
     const fixture = await createJobFixture();
     cleanups.push(fixture.cleanup);
@@ -186,7 +268,7 @@ describe('durable coordinator and media lifecycle', () => {
         },
         getBalance: async () => {
           balanceAttempts += 1;
-          throw new Error('Balance refresh is not needed when dispatch never started.');
+          throw new Error('Balance sampling failed before the final submission claim check.');
         }
       }),
       downloader: new OutputDownloader({ repository: fixture.repository, paths: fixture.paths }),
@@ -198,7 +280,7 @@ describe('durable coordinator and media lifecycle', () => {
     expect({ rejectionSucceeded, upstreamDispatches, balanceAttempts }).toEqual({
       rejectionSucceeded: true,
       upstreamDispatches: 0,
-      balanceAttempts: 0
+      balanceAttempts: 1
     });
     expect(fixture.repository.get(job.id)).toMatchObject({
       localPhase: 'requires_attention',

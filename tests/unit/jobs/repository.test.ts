@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import { PRICING_SIGNATURE_VERSION } from '../../../src/lib/features/pricing/contracts';
 import { seedImageRegistry } from '../../../src/lib/server/registry/repository';
+import type { CreateJobRequest } from '../../../src/lib/server/jobs/types';
 import { createJobFixture, createTestJob } from '../../helpers/job-fixture';
 
 const cleanups: Array<() => Promise<void>> = [];
@@ -132,6 +134,140 @@ describe('durable job repository invariants', () => {
         }
       })
     ).toThrow('different immutable request');
+  });
+
+  test('persists one bounded safe estimate envelope with the created job', async () => {
+    const fixture = await createJobFixture();
+    cleanups.push(fixture.cleanup);
+    seedImageRegistry(fixture.database);
+    const job = fixture.repository.create({
+      actionId: '019b0000-0000-7000-8000-000000000105',
+      entryKey: 'seedream-5.0-pro:text-to-image',
+      workflow: 'text-to-image',
+      publicModelId: 'seedream-5.0-pro',
+      guidedRequest: { prompt: 'private prompt' },
+      normalizedPayload: { model: 'seedream-5.0-pro', input: { prompt: 'private prompt', n: 2 } },
+      estimatedCredits: 16,
+      estimateEnvelope: {
+        signatureVersion: PRICING_SIGNATURE_VERSION,
+        signature:
+          'version=pricing-signature-v1|registry=image-2026-07-20.1|model=seedream-5.0-pro|workflow=text-to-image|unit=per-output|quantity=2',
+        registryVersion: 'image-2026-07-20.1',
+        pricingHash: 'a'.repeat(64),
+        basis: { unit: 'per-output', creditsPerUnit: 8, units: 2 },
+        provenance: 'published',
+        sourceVerifiedAt: '2026-07-20T00:00:00.000Z',
+        credits: 16
+      }
+    });
+    expect(job.estimatedCredits).toBe(16);
+    const created = fixture.repository.eventsAfter(0).find((event) => event.jobId === job.id);
+    expect(created?.payload).toEqual({
+      estimate: {
+        signatureVersion: PRICING_SIGNATURE_VERSION,
+        signature:
+          'version=pricing-signature-v1|registry=image-2026-07-20.1|model=seedream-5.0-pro|workflow=text-to-image|unit=per-output|quantity=2',
+        registryVersion: 'image-2026-07-20.1',
+        pricingHash: 'a'.repeat(64),
+        basis: { unit: 'per-output', creditsPerUnit: 8, units: 2 },
+        provenance: 'published',
+        sourceVerifiedAt: '2026-07-20T00:00:00.000Z',
+        credits: 16
+      },
+      __poyoStudioEvent: { version: 1, attentionCode: null, payloadWasNull: false }
+    });
+    expect(JSON.stringify(created?.payload)).not.toContain('private prompt');
+  });
+
+  test('excludes server-derived estimate provenance from paid-action identity', async () => {
+    const fixture = await createJobFixture();
+    cleanups.push(fixture.cleanup);
+    const request = {
+      actionId: '019b0000-0000-7000-8000-000000000106',
+      workflow: 'text-to-image',
+      publicModelId: 'provider/model',
+      guidedRequest: { prompt: 'same paid intent' },
+      normalizedPayload: { model: 'provider/model', input: { prompt: 'same paid intent' } },
+      estimatedCredits: 8,
+      estimateEnvelope: {
+        signatureVersion: PRICING_SIGNATURE_VERSION,
+        signature:
+          'version=pricing-signature-v1|registry=fixture|model=provider%2Fmodel|workflow=text-to-image|unit=per-output|quantity=1',
+        registryVersion: null,
+        pricingHash: 'a'.repeat(64),
+        basis: { unit: 'per-output' as const, creditsPerUnit: 8, units: 1 },
+        provenance: 'published' as const,
+        sourceVerifiedAt: '2026-07-20T00:00:00.000Z',
+        credits: 8
+      }
+    } satisfies CreateJobRequest;
+    const first = fixture.repository.create(request);
+    const replay = fixture.repository.create({
+      ...request,
+      estimatedCredits: 9,
+      estimateEnvelope: {
+        ...request.estimateEnvelope,
+        pricingHash: 'b'.repeat(64),
+        basis: { unit: 'per-output', creditsPerUnit: 9, units: 1 },
+        sourceVerifiedAt: '2026-07-21T00:00:00.000Z',
+        credits: 9
+      }
+    });
+    expect(replay.id).toBe(first.id);
+    expect(replay.estimatedCredits).toBe(8);
+    const created = fixture.repository
+      .eventsAfter(0)
+      .filter((event) => event.jobId === first.id && event.eventType === 'job.created');
+    expect(created).toHaveLength(1);
+    expect(created[0]?.payload).toMatchObject({
+      estimate: { pricingHash: 'a'.repeat(64), credits: 8 }
+    });
+    expect(() =>
+      fixture.repository.create({
+        ...request,
+        normalizedPayload: {
+          model: 'provider/model',
+          input: { prompt: 'a truly changed paid request' }
+        },
+        estimatedCredits: 9,
+        estimateEnvelope: {
+          ...request.estimateEnvelope,
+          pricingHash: 'c'.repeat(64),
+          basis: { unit: 'per-output', creditsPerUnit: 9, units: 1 },
+          credits: 9
+        }
+      })
+    ).toThrow('different immutable request');
+  });
+
+  test('rejects noncanonical estimate signatures before persistence', async () => {
+    const fixture = await createJobFixture();
+    cleanups.push(fixture.cleanup);
+    expect(() =>
+      fixture.repository.create({
+        actionId: '019b0000-0000-7000-8000-000000000107',
+        workflow: 'text-to-image',
+        publicModelId: 'provider/model',
+        guidedRequest: { prompt: 'private paid request' },
+        normalizedPayload: { model: 'provider/model', input: { prompt: 'private paid request' } },
+        estimatedCredits: 8,
+        estimateEnvelope: {
+          signatureVersion: PRICING_SIGNATURE_VERSION,
+          signature: 'prompt=private paid request',
+          registryVersion: null,
+          pricingHash: 'a'.repeat(64),
+          basis: { unit: 'per-output', creditsPerUnit: 8, units: 1 },
+          provenance: 'published',
+          sourceVerifiedAt: '2026-07-20T00:00:00.000Z',
+          credits: 8
+        }
+      })
+    ).toThrow('Estimate envelope is invalid.');
+    expect(
+      fixture.database
+        .query<{ count: number }, []>('SELECT COUNT(*) count FROM submission_intents')
+        .get()?.count
+    ).toBe(0);
   });
 
   test('JOB-03 freezes and exactly replays a current ambiguous paid intent', async () => {

@@ -1,4 +1,5 @@
 import type { PoyoSubmitRequest } from '../../server/poyo/types';
+import type { Estimate } from '../pricing/contracts';
 
 export type ImageWorkflow = 'text-to-image' | 'image-to-image' | 'image-edit';
 export type VideoWorkflow =
@@ -217,6 +218,7 @@ export interface NormalizedPreview {
   guidedInput: Record<string, unknown>;
   expertDiff: Array<{ key: string; status: 'verified' | 'unverified'; value: unknown }>;
   warnings: string[];
+  estimate?: Estimate;
 }
 export interface RegistryManifest<TEntry = ImageRegistryEntry> {
   version: string;

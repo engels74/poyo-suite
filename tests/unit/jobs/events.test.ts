@@ -305,7 +305,9 @@ describe('durable job SSE protocol', () => {
     const events = replay.chunks.map((chunk) => decodeEventChunk(chunk).data) as Array<
       Record<string, unknown>
     >;
-    expect(events.find((event) => event.eventType === 'job.created')?.payload).toBeNull();
+    expect(events.find((event) => event.eventType === 'job.created')?.payload).toMatchObject({
+      estimate: { credits: null, signature: null, registryVersion: null, pricingHash: null }
+    });
     expect(events.find((event) => event.eventType === 'payload.object')?.payload).toEqual({
       marker: 'kept',
       nested: { count: 1 }

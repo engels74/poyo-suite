@@ -1,0 +1,534 @@
+[
+  {
+    "modelId": "seedance-2-mini",
+    "reason": "unknown-unit"
+  },
+  {
+    "modelId": "seedance-2-mini",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "seedance-2-mini",
+    "reason": "unknown-unit"
+  },
+  {
+    "modelId": "seedance-2-mini",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "kling-3.0-turbo/standard",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "kling-3.0-turbo/pro",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "omni-flash",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "omni-flash",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "omni-flash",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "omni-flash",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "omni-flash",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "omni-flash",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "omni-flash",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "omni-flash",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "omni-flash",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "omni-flash",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "kling-avatar-2.0/standard",
+    "reason": "no-registry-model"
+  },
+  {
+    "modelId": "kling-avatar-2.0/pro",
+    "reason": "no-registry-model"
+  },
+  {
+    "modelId": "happy-horse-1.1",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "happy-horse-1.1",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "happy-horse",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "happy-horse",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "seedance-2",
+    "reason": "unknown-unit"
+  },
+  {
+    "modelId": "seedance-2",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "seedance-2",
+    "reason": "unknown-unit"
+  },
+  {
+    "modelId": "seedance-2",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "seedance-2",
+    "reason": "unknown-unit"
+  },
+  {
+    "modelId": "seedance-2",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "seedance-2",
+    "reason": "unknown-unit"
+  },
+  {
+    "modelId": "seedance-2",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "seedance-2-fast",
+    "reason": "unknown-unit"
+  },
+  {
+    "modelId": "seedance-2-fast",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "seedance-2-fast",
+    "reason": "unknown-unit"
+  },
+  {
+    "modelId": "seedance-2-fast",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "kling-o3-image",
+    "reason": "multiple-compatible-tiers"
+  },
+  {
+    "modelId": "kling-o3-image",
+    "reason": "multiple-compatible-tiers"
+  },
+  {
+    "modelId": "kling-o3-image-edit",
+    "reason": "multiple-compatible-tiers"
+  },
+  {
+    "modelId": "kling-o3-image-edit",
+    "reason": "multiple-compatible-tiers"
+  },
+  {
+    "modelId": "wan-2.7-image",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "wan-2.7-image-pro",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "sora-2-official",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "sora-2-official",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "sora-2-official",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "sora-2-official",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "sora-2-official",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "sora-2-pro-official",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "sora-2-pro-official",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "sora-2-pro-official",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "sora-2-beta",
+    "reason": "no-registry-model"
+  },
+  {
+    "modelId": "hailuo-2.3",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "hailuo-2.3",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "hailuo-2.3",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "kling-1.6/standard",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "kling-1.6/pro",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "kling-2.1/pro",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "kling-2.1/pro",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "kling-2.5-turbo-pro",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "kling-2.5-turbo-pro",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "wan2.5-image-to-video",
+    "reason": "multiple-compatible-tiers"
+  },
+  {
+    "modelId": "wan2.5-image-to-video",
+    "reason": "multiple-compatible-tiers"
+  },
+  {
+    "modelId": "wan2.5-image-to-video",
+    "reason": "multiple-compatible-tiers"
+  },
+  {
+    "modelId": "runway-gen-4.5",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "runway-gen-4.5",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "seedream-5.0-lite",
+    "reason": "multiple-compatible-tiers"
+  },
+  {
+    "modelId": "seedream-5.0-lite",
+    "reason": "multiple-compatible-tiers"
+  },
+  {
+    "modelId": "kling-3.0/standard",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "kling-3.0/standard",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "kling-3.0/pro",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "kling-3.0/pro",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "kling-3.0/4K",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "kling-o3/standard",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "kling-o3/standard",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "kling-o3/pro",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "kling-o3/pro",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "kling-o3/4K",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "seedance-1.5-pro",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "seedance-1.5-pro",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "seedance-1.5-pro",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "seedance-1.5-pro",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "seedance-1.5-pro",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "seedance-1.5-pro",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "seedance-1.5-pro",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "seedance-1.5-pro",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "seedance-1.5-pro",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "seedance-1.5-pro",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "seedance-1.5-pro",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "seedance-1.5-pro",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "seedance-1.5-pro",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "seedance-1.5-pro",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "seedance-1.5-pro",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "seedance-1.5-pro",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "seedance-1.5-pro",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "seedance-1.5-pro",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "grok-imagine-image",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "grok-imagine-image",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "grok-imagine-image",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "grok-imagine-image-quality",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "grok-imagine-image-quality",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "grok-imagine-image-quality",
+    "reason": "unknown-unit"
+  },
+  {
+    "modelId": "hailuo-02",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "hailuo-02",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "seedance-1.0-pro",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "seedance-1.0-pro",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "seedance-1.0-pro",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "seedance-1.0-pro",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "z-image",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "kling-2.6",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "kling-2.6",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "kling-2.6",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "kling-2.6",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "flux-dev",
+    "reason": "unknown-unit"
+  },
+  {
+    "modelId": "flux-schnell",
+    "reason": "unknown-unit"
+  },
+  {
+    "modelId": "nano-banana-2",
+    "reason": "unsupported-workflow-dimension"
+  },
+  {
+    "modelId": "nano-banana-pro",
+    "reason": "unsupported-workflow-dimension"
+  },
+  {
+    "modelId": "veo3.1-lite",
+    "reason": "unsupported-workflow-dimension"
+  },
+  {
+    "modelId": "veo3.1-fast",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "veo3.1-fast",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "veo3.1-fast",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "veo3.1-quality",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "veo3.1-quality",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "veo3.1-quality",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "veo3.1-fast-official",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "veo3.1-fast-official",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "veo3.1-fast-official",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "veo3.1-fast-official",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "veo3.1-lite-official",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "veo3.1-lite-official",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "veo3.1-lite-official",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "veo3.1-lite-official",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "veo3.1-quality-official",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "veo3.1-quality-official",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "veo3.1-quality-official",
+    "reason": "missing-discriminator"
+  },
+  {
+    "modelId": "veo3.1-quality-official",
+    "reason": "missing-discriminator"
+  }
+]

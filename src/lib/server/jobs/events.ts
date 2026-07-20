@@ -1,8 +1,33 @@
 import { safeJobEventAttention, sanitizeDurableJobEventPayload } from './event-attention';
+import type { OutstandingSpendProjection, TaskCharge } from '../../features/pricing/contracts';
 import type { JobRepository } from './repository';
 import type { JobRecord } from './types';
 
 const encoder = new TextEncoder();
+function safeTaskCharge(job: JobRecord): TaskCharge | null {
+  if (
+    (job.remoteStatus !== 'finished' && job.remoteStatus !== 'failed') ||
+    job.actualCredits === null ||
+    !Number.isFinite(job.actualCredits) ||
+    job.actualCredits < 0 ||
+    !job.lastPolledAt
+  ) {
+    return null;
+  }
+  return {
+    classification: 'task-charge',
+    credits: job.actualCredits,
+    source: 'poyo-task',
+    terminalStatus:
+      job.remoteStatus === 'finished'
+        ? 'finished'
+        : job.remoteStatusRaw === 'cancelled' || job.remoteStatusRaw === 'canceled'
+          ? 'cancelled'
+          : 'failed',
+    settledAt: job.lastPolledAt
+  };
+}
+
 export function safeJobDto(job: JobRecord) {
   const attention = safeJobEventAttention(job.attentionCode);
   return {
@@ -19,6 +44,7 @@ export function safeJobDto(job: JobRecord) {
     progress: job.progress,
     estimatedCredits: job.estimatedCredits,
     actualCredits: job.actualCredits,
+    taskCharge: safeTaskCharge(job),
     retryOfJobId: job.retryOfJobId,
     nextPollAt: job.nextPollAt,
     lastPolledAt: job.lastPolledAt,
@@ -28,11 +54,15 @@ export function safeJobDto(job: JobRecord) {
     completedAt: job.completedAt
   };
 }
-function safeJobEvent(event: ReturnType<JobRepository['eventsAfter']>[number]) {
+function safeJobEvent(
+  event: ReturnType<JobRepository['eventsAfter']>[number],
+  outstandingProjection?: OutstandingSpendProjection
+) {
   const sanitized = sanitizeDurableJobEventPayload(event.payload);
-  return sanitized.attention
+  const safe = sanitized.attention
     ? { ...event, ...sanitized.attention, payload: sanitized.payload }
     : { ...event, payload: sanitized.payload };
+  return outstandingProjection ? { ...safe, outstandingProjection } : safe;
 }
 function encode(event: string, id: number, data: unknown): Uint8Array {
   return encoder.encode(`event: ${event}\nid: ${id}\ndata: ${JSON.stringify(data)}\n\n`);
@@ -62,16 +92,24 @@ export function initialJobEvents(
         encode('snapshot', snapshot.watermark, {
           watermark: snapshot.watermark,
           connection: 'connected',
-          jobs: snapshot.jobs.map(safeJobDto)
+          jobs: snapshot.jobs.map(safeJobDto),
+          outstandingProjection: repository.outstandingProjection()
         })
       ]
     };
   }
   const events = repository.eventsAfter(parsed);
+  const projection = repository.outstandingProjection();
   return {
     mode: 'replay',
     cursor: events.at(-1)?.eventId ?? parsed,
-    chunks: events.map((event) => encode('job', event.eventId, safeJobEvent(event)))
+    chunks: events.map((event, index) =>
+      encode(
+        'job',
+        event.eventId,
+        safeJobEvent(event, index === events.length - 1 ? projection : undefined)
+      )
+    )
   };
 }
 export function createJobEventStream(
@@ -88,8 +126,16 @@ export function createJobEventStream(
       if (initial.chunks.length === 0) controller.enqueue(encoder.encode(': connected\n\n'));
       for (const chunk of initial.chunks) controller.enqueue(chunk);
       const poll = () => {
-        for (const event of repository.eventsAfter(cursor)) {
-          controller.enqueue(encode('job', event.eventId, safeJobEvent(event)));
+        const events = repository.eventsAfter(cursor);
+        const projection = events.length ? repository.outstandingProjection() : undefined;
+        for (const [index, event] of events.entries()) {
+          controller.enqueue(
+            encode(
+              'job',
+              event.eventId,
+              safeJobEvent(event, index === events.length - 1 ? projection : undefined)
+            )
+          );
           cursor = event.eventId;
         }
       };

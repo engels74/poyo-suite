@@ -1,4 +1,5 @@
 import type { PresetRecord } from '../presets/types';
+import type { OutstandingSpendProjection, TaskCharge } from '../pricing/contracts';
 import type { ImageRegistryEntry, VideoRegistryEntry } from '../registry/types';
 
 export type StudioEntry = ImageRegistryEntry | VideoRegistryEntry;
@@ -47,6 +48,7 @@ export interface StudioLoadData {
   entries: StudioEntry[];
   preferences: StudioModelPreference[];
   balance: StudioBalanceSnapshot | null;
+  outstandingProjection: OutstandingSpendProjection;
   apiKey: StudioApiKeyStatus;
   preset: PresetRecord | null;
 }
@@ -82,6 +84,7 @@ export interface StudioJobDto {
   progress: number | null;
   estimatedCredits: number | null;
   actualCredits: number | null;
+  taskCharge?: TaskCharge | null;
   lastPolledAt: string | null;
   createdAt: string;
   updatedAt: string;

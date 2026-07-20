@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 import type { StudioJobDto } from '../../../src/lib/features/generation/contracts';
+import type { Estimate } from '../../../src/lib/features/pricing/contracts';
 import {
   applyBatchJob,
   batchItemCompatibilityIssues,
@@ -9,6 +10,8 @@ import {
   readStudioBatch,
   restoreBatchItemForRegistry,
   restoreBatchRoleInputs,
+  summarizeReadyBatchEstimates,
+  summarizeSettledBatchCharges,
   writeStudioBatch,
   type StudioBatch
 } from '../../../src/lib/features/generation/studio-batch';
@@ -40,6 +43,18 @@ const request = {
   inputs: []
 };
 const sourceId = '019b0000-0000-7000-8000-000000000099';
+const estimate: Estimate = {
+  classification: 'estimate',
+  credits: 60,
+  signature:
+    'version=pricing-signature-v1|registry=video-2026-07-20.1|model=wan2.7-image-to-video|workflow=image-to-video|unit=per-second|duration=5|resolution=720p',
+  basis: { unit: 'per-second', creditsPerUnit: 12, units: 5 },
+  provenance: 'published',
+  sourceVerifiedAt: '2026-07-20T00:00:00.000Z',
+  expiresAt: '2026-07-21T00:00:00.000Z',
+  freshness: 'fresh',
+  availability: 'available'
+};
 
 function job(overrides: Partial<StudioJobDto> = {}): StudioJobDto {
   return {
@@ -70,7 +85,8 @@ describe('studio batch persistence and state', () => {
         displayName: 'Seedream 5 Pro',
         sizeMode: 'aspect-ratio',
         automaticFields: [],
-        request
+        request,
+        estimate
       },
       {
         itemId: 'item-1',
@@ -81,8 +97,89 @@ describe('studio batch persistence and state', () => {
     const batch: StudioBatch = { version: 1, modality: 'image', items: [item] };
     writeStudioBatch('image', batch);
     expect(readStudioBatch('image')).toEqual(batch);
+    expect(readStudioBatch('image')?.items[0]?.estimate).toEqual(estimate);
     expect(JSON.stringify(batch)).not.toContain('POYO_API_KEY');
     expect(JSON.stringify(batch)).not.toContain('/Users/');
+  });
+
+  test('BATCH-01 canonicalizes a legacy WAN item and removes retired ratio state', () => {
+    const item = createBatchItem(
+      {
+        modality: 'video',
+        displayName: 'Wan 2.7 Video',
+        sizeMode: 'aspect-ratio',
+        automaticFields: ['aspectRatio'],
+        request: {
+          ...request,
+          entryKey: 'wan2.7-image-to-video:frame-to-video',
+          values: {
+            prompt: 'Animate',
+            aspectRatio: '16:9',
+            resolution: '720p',
+            duration: 2,
+            audioUrl: 'https://assets.example/soundtrack.mp3'
+          }
+        }
+      },
+      {
+        itemId: 'wan-item-1',
+        actionId: request.actionId,
+        now: '2026-07-17T00:00:00.000Z'
+      }
+    );
+    localStorage.setItem(
+      'poyo-studio-batch:video',
+      JSON.stringify({ version: 1, modality: 'video', items: [item] })
+    );
+    const restored = readStudioBatch('video')?.items[0];
+    expect(restored).toMatchObject({
+      sizeMode: 'resolution',
+      automaticFields: [],
+      request: {
+        entryKey: 'wan2.7-image-to-video:image-to-video',
+        values: {
+          prompt: 'Animate',
+          resolution: '720p',
+          duration: 2,
+          audioUrl: 'https://assets.example/soundtrack.mp3'
+        }
+      }
+    });
+    if (!restored) throw new Error('Expected legacy WAN batch item to restore.');
+    expect(restoreBatchRoleInputs(restored).audio).toEqual([
+      expect.objectContaining({
+        role: 'audio',
+        source: 'remote',
+        mediaKind: 'audio',
+        url: 'https://assets.example/soundtrack.mp3'
+      })
+    ]);
+    localStorage.setItem(
+      'poyo-studio-batch:video',
+      JSON.stringify({
+        version: 1,
+        modality: 'video',
+        items: [
+          {
+            ...item,
+            request: {
+              ...item.request,
+              inputs: [
+                {
+                  role: 'audio',
+                  mediaKind: 'audio',
+                  source: 'uploaded',
+                  url: 'https://retained-source.invalid/audio',
+                  localSourceId: sourceId,
+                  metadata: {}
+                }
+              ]
+            }
+          }
+        ]
+      })
+    );
+    expect(readStudioBatch('video')).toBeNull();
   });
 
   test('BATCH-02 duplicates a draft with new stable IDs and no shared mutable values', () => {
@@ -224,6 +321,9 @@ describe('studio batch persistence and state', () => {
     for (const malformed of [
       { ...item, request: { ...item.request, inputs: [{}] } },
       { ...item, request: { ...item.request, expertOverrides: [{}] } },
+      { ...item, estimate: { ...estimate, rawTier: { secret: true } } },
+      { ...item, estimate: { ...estimate, credits: Number.POSITIVE_INFINITY } },
+      { ...item, estimate: { ...estimate, signature: 'prompt=private' } },
       { ...item, job: { id: 'truncated' } },
       { ...item, outputs: [{ outputId: 'truncated' }] }
     ]) {
@@ -232,6 +332,162 @@ describe('studio batch persistence and state', () => {
         JSON.stringify({ version: 1, modality: 'image', items: [malformed] })
       );
       expect(readStudioBatch('image')).toBeNull();
+    }
+  });
+
+  test('retains an estimate on duplication and replaces it after successful revalidation', async () => {
+    const item = createBatchItem(
+      {
+        modality: 'image',
+        displayName: 'Seedream 5 Pro',
+        sizeMode: 'aspect-ratio',
+        automaticFields: [],
+        request,
+        estimate: { ...estimate, freshness: 'stale' }
+      },
+      { itemId: 'item-1', actionId: request.actionId, now: '2026-07-17T00:00:00.000Z' }
+    );
+    const copy = duplicateBatchItem(item, {
+      itemId: 'item-2',
+      actionId: '019b0000-0000-7000-8000-000000000002',
+      now: '2026-07-17T01:00:00.000Z'
+    });
+    expect(copy.estimate).toEqual({ ...estimate, freshness: 'stale' });
+    const refreshed = createBatchItem(
+      { ...item, estimate },
+      { itemId: item.id, actionId: item.request.actionId, now: '2026-07-17T02:00:00.000Z' }
+    );
+    expect(refreshed.estimate).toEqual(estimate);
+
+    const workspace = await Bun.file('src/lib/components/studio/StudioWorkspace.svelte').text();
+    expect(workspace).toContain('const validated = await validateSubmissionSnapshot');
+    expect(workspace).toContain('estimate: validated.estimate ?? null');
+    expect(workspace).toContain('return result;');
+  });
+
+  test('totals normalized quantity for unique ready actions without submitted duplicates', () => {
+    const makeItem = (itemId: string, actionId: string, quantity: number, credits: number) =>
+      createBatchItem(
+        {
+          modality: 'image',
+          displayName: 'Seedream 5 Pro',
+          sizeMode: 'aspect-ratio',
+          automaticFields: [],
+          request: { ...request, actionId, values: { ...request.values, n: quantity } },
+          estimate: {
+            ...estimate,
+            credits,
+            basis: { unit: 'per-output', creditsPerUnit: credits / quantity, units: quantity }
+          }
+        },
+        { itemId, actionId, now: '2026-07-17T00:00:00.000Z' }
+      ) satisfies ReturnType<typeof createBatchItem>;
+    const readyA = makeItem('ready-a', '019b0000-0000-7000-8000-000000000011', 3, 24);
+    const readyADuplicate = { ...readyA, id: 'ready-a-duplicate' };
+    const readyB = makeItem('ready-b', '019b0000-0000-7000-8000-000000000012', 2, 16);
+    expect(summarizeReadyBatchEstimates([readyA, readyADuplicate, readyB])).toEqual({
+      itemCount: 2,
+      quantity: 5,
+      credits: 40
+    });
+
+    const submittedA = {
+      ...readyA,
+      id: 'submitted-a',
+      state: 'queued' as const,
+      job: job()
+    };
+    expect(summarizeReadyBatchEstimates([readyA, readyADuplicate, submittedA, readyB])).toEqual({
+      itemCount: 1,
+      quantity: 2,
+      credits: 16
+    });
+    expect(
+      summarizeReadyBatchEstimates([
+        readyB,
+        { ...makeItem('ready-c', '019b0000-0000-7000-8000-000000000013', 4, 0), estimate: null }
+      ])
+    ).toEqual({ itemCount: 2, quantity: 6, credits: null });
+  });
+
+  test('totals only settled Poyo task charges once per paid action', async () => {
+    const makeItem = (itemId: string, actionId: string) =>
+      createBatchItem(
+        {
+          modality: 'image',
+          displayName: 'Seedream 5 Pro',
+          sizeMode: 'aspect-ratio',
+          automaticFields: [],
+          request: { ...request, actionId }
+        },
+        { itemId, actionId, now: '2026-07-17T00:00:00.000Z' }
+      );
+    const actionA = '019b0000-0000-7000-8000-000000000021';
+    const actionB = '019b0000-0000-7000-8000-000000000022';
+    const chargedA = applyBatchJob(
+      makeItem('charged-a', actionA),
+      job({
+        id: 'job-a',
+        localPhase: 'complete',
+        remoteStatus: 'failed',
+        actualCredits: 2.25,
+        taskCharge: {
+          classification: 'task-charge',
+          credits: 2.25,
+          source: 'poyo-task',
+          terminalStatus: 'failed',
+          settledAt: '2026-07-17T00:01:00.000Z'
+        }
+      })
+    );
+    const chargedADuplicate = { ...chargedA, id: 'charged-a-duplicate' };
+    const chargedB = applyBatchJob(
+      makeItem('charged-b', actionB),
+      job({
+        id: 'job-b',
+        localPhase: 'complete',
+        remoteStatus: 'finished',
+        actualCredits: 1.125,
+        taskCharge: {
+          classification: 'task-charge',
+          credits: 1.125,
+          source: 'poyo-task',
+          terminalStatus: 'finished',
+          settledAt: '2026-07-17T00:02:00.000Z'
+        }
+      })
+    );
+    const terminalWithoutCharge = applyBatchJob(
+      makeItem('unsettled', '019b0000-0000-7000-8000-000000000023'),
+      job({
+        id: 'job-unsettled',
+        localPhase: 'complete',
+        remoteStatus: 'failed',
+        actualCredits: null,
+        taskCharge: null
+      })
+    );
+
+    expect(summarizeSettledBatchCharges([])).toEqual({ actionCount: 0, credits: 0 });
+    expect(
+      summarizeSettledBatchCharges([chargedA, chargedADuplicate, chargedB, terminalWithoutCharge])
+    ).toEqual({ actionCount: 2, credits: 3.375 });
+
+    const review = await Bun.file('src/lib/components/studio/BatchReview.svelte').text();
+    expect(review).toContain("'no settled Poyo task charges'");
+    expect(review).not.toContain('Actual batch total: {settledCharges.credits} credits');
+
+    const workspace = await Bun.file('src/lib/components/studio/StudioWorkspace.svelte').text();
+    for (const label of [
+      "return 'observed median'",
+      "return 'published + observed'",
+      "return 'published'",
+      "? 'generation remains enabled' : 'complete setup to generate'",
+      'Estimated credits:',
+      'Charged:',
+      'Outstanding projection:'
+    ]) {
+      expect(workspace).toContain(label);
     }
   });
 

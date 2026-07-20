@@ -8,7 +8,9 @@ import {
   VIDEO_REGISTRY_ENTRIES,
   VIDEO_REGISTRY_VERSION
 } from '../../features/registry/video-registry';
+import { canonicalizeVideoSelection } from '../../features/registry/video-selection';
 import { latestBalance } from '../account/balance';
+import { getJobRuntime } from '../jobs/runtime';
 import { studioReuseEntry } from '../library/repository';
 import { getPlatformServices } from '../platform/runtime';
 import { PresetRepository } from '../presets/repository';
@@ -23,6 +25,8 @@ function compatibleGuidedValues(
   values: Record<string, unknown>
 ): Record<string, unknown> {
   const keys = new Set(entry.fields.map((field) => field.key));
+  for (const role of entry.inputRoles)
+    if (role.mediaKind === 'audio' && role.requestKey) keys.add(role.requestKey);
   return Object.fromEntries(Object.entries(values).filter(([key]) => keys.has(key)));
 }
 
@@ -35,6 +39,7 @@ export async function loadStudioData(
   } = {}
 ): Promise<StudioLoadData> {
   const platform = await getPlatformServices();
+  const jobs = await getJobRuntime();
   const entries =
     modality === 'image'
       ? [...IMAGE_REGISTRY_ENTRIES]
@@ -60,6 +65,12 @@ export async function loadStudioData(
       )
       .get(options.fromJobId);
     if (job) {
+      const selection = job.entry_key
+        ? canonicalizeVideoSelection(job.entry_key, job.workflow)
+        : null;
+      const entry = selection
+        ? entries.find((candidate) => candidate.key === selection.entryKey)
+        : null;
       const inputRoles = platform.database
         .query<{ role: string; source_url: string | null; upload_url: string | null }, [string]>(
           'SELECT role,source_url,upload_url FROM job_inputs WHERE job_id=? ORDER BY role,input_order'
@@ -86,17 +97,16 @@ export async function loadStudioData(
       copiedValues = {
         version: 1,
         modality,
-        guided: JSON.parse(job.guided_request_json),
+        guided: entry
+          ? compatibleGuidedValues(entry, JSON.parse(job.guided_request_json))
+          : JSON.parse(job.guided_request_json),
         expertOverrides,
         inputRoles
       };
-      const entry = job.entry_key
-        ? entries.find((candidate) => candidate.key === job.entry_key)
-        : null;
       if (!preset && entry)
         preset = transientPreset(
           entry.key,
-          job.workflow,
+          entry.workflow,
           `Copy of ${entry.displayName}`,
           copiedValues
         );
@@ -143,6 +153,7 @@ export async function loadStudioData(
     entries,
     preferences: new ModelPreferenceRepository(platform.database).list(),
     balance: latestBalance(platform.database),
+    outstandingProjection: jobs.repository.outstandingProjection(),
     apiKey: await platform.apiKey.status(),
     preset: preset?.values.modality === modality ? preset : null
   };

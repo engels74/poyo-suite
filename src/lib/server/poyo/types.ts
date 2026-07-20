@@ -52,7 +52,7 @@ export interface PoyoStatusResult {
   taskId: string;
   statusRaw: string;
   status: PoyoTaskStatus;
-  creditsAmount: number;
+  creditsAmount: number | null;
   files: PoyoOutputFile[];
   createdTime: string;
   progress: number | null;

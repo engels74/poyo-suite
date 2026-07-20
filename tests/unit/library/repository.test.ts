@@ -348,7 +348,14 @@ describe('server-side jobs and grouped library repository', () => {
       );
 
     const history = (await new LibraryRepository(fixture.database).getJobDetail(job.id))?.history;
-    expect(history?.find((event) => event.eventType === 'job.created')?.payload).toBeNull();
+    expect(history?.find((event) => event.eventType === 'job.created')?.payload).toMatchObject({
+      estimate: {
+        credits: null,
+        signature: null,
+        registryVersion: 'image-2026-07-20.1',
+        pricingHash: null
+      }
+    });
     expect(history?.find((event) => event.eventType === 'submission.unknown')?.payload).toBeNull();
     expect(history?.find((event) => event.eventType === 'poll.policy_blocked')?.payload).toEqual({
       marker: 'retained',

@@ -3,7 +3,11 @@ import Badge from '$lib/components/ui/Badge.svelte';
 import Button from '$lib/components/ui/Button.svelte';
 import LinkButton from '$lib/components/ui/LinkButton.svelte';
 import Sheet from '$lib/components/ui/Sheet.svelte';
-import type { StudioBatchItem } from '$lib/features/generation/studio-batch';
+import {
+  summarizeReadyBatchEstimates,
+  summarizeSettledBatchCharges,
+  type StudioBatchItem
+} from '$lib/features/generation/studio-batch';
 
 interface Props {
   modality: 'image' | 'video';
@@ -41,6 +45,8 @@ let {
 let open = $state(false);
 let draftCount = $derived(items.filter((item) => item.state === 'draft').length);
 let settledCount = $derived(items.filter((item) => item.state === 'complete').length);
+let readyEstimate = $derived(summarizeReadyBatchEstimates(items));
+let settledCharges = $derived(summarizeSettledBatchCharges(items));
 
 function tone(item: StudioBatchItem): 'neutral' | 'info' | 'success' | 'warning' {
   if (item.state === 'complete') return 'success';
@@ -82,6 +88,19 @@ function summary(item: StudioBatchItem): string {
       <p>Local batch · sequential submission · each item remains an independent recoverable job.</p>
       <p class="mt-1">Each submitted item is a separate billed Poyo job. Exact credits appear only after completion.</p>
       <p class="mt-1">{settledCount} complete · {draftCount} ready to submit</p>
+      <p class="mt-1">
+        Estimated ready batch:
+        {readyEstimate.credits === null
+          ? 'unavailable'
+          : `${readyEstimate.credits} credits`}
+        · {readyEstimate.itemCount} item{readyEstimate.itemCount === 1 ? '' : 's'}
+      </p>
+      <p class="mt-1">
+        Actual batch total:
+        {settledCharges.actionCount === 0
+          ? 'no settled Poyo task charges'
+          : `${settledCharges.credits} credits · ${settledCharges.actionCount} settled Poyo task${settledCharges.actionCount === 1 ? '' : 's'}`}
+      </p>
     </div>
     <div class="min-h-0 flex-1 overflow-y-auto px-5 py-4">
       {#if items.length}
@@ -96,6 +115,17 @@ function summary(item: StudioBatchItem): string {
                 <Badge tone={tone(item)}>{item.state.replaceAll('_', ' ')}</Badge>
               </div>
               <p class="mt-2 line-clamp-2 text-xs leading-5 text-muted-foreground">{summary(item)}</p>
+              {#if item.job?.taskCharge}
+                <p class="mt-1 text-xs font-medium">
+                  Charged {item.job.taskCharge.credits} credits · Poyo task
+                </p>
+              {:else if item.estimate?.availability === 'available'}
+                <p class="mt-1 text-xs text-muted-foreground">
+                  Estimated credits: {item.estimate.credits} · {item.estimate.provenance} · {item.estimate.freshness}
+                </p>
+              {:else}
+                <p class="mt-1 text-xs text-muted-foreground">Estimated credits unavailable</p>
+              {/if}
               {#if item.job?.progress !== null && item.job?.progress !== undefined && item.state !== 'complete'}
                 <div class="mt-2">
                   <div class="flex justify-between text-[0.6875rem] text-muted-foreground"><span>Reported progress</span><span>{item.job.progress}%</span></div>

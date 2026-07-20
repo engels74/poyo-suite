@@ -6,6 +6,29 @@ import { createJobFixture } from '../../helpers/job-fixture';
 const actionId = '019b0000-0000-7000-8000-000000000010';
 
 describe('server-authoritative paid request preparation', () => {
+  test('JOB-10 rejects client-authored estimate metadata', async () => {
+    const fixture = await createJobFixture();
+    try {
+      seedImageRegistry(fixture.database);
+      await expect(
+        prepareJobCreateRequest(
+          fixture.database,
+          {
+            actionId,
+            entryKey: 'flux-schnell:text-to-image',
+            values: { prompt: 'A registry-owned request' },
+            estimate: { credits: 0 }
+          },
+          async () => {
+            throw new Error('No source should be resolved.');
+          }
+        )
+      ).rejects.toThrow('Unsupported job request field estimate.');
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
   test('JOB-10 derives model, workflow, payload, safety default and expected outputs from registry', async () => {
     const fixture = await createJobFixture();
     try {
@@ -58,11 +81,97 @@ describe('server-authoritative paid request preparation', () => {
       );
       expect(prepared.normalizedPayload).toMatchObject({
         model: 'seedream-5.0-pro',
-        input: { size: '1:1', resolution: '2K' }
+        input: { size: '1:1', resolution: '1K' }
       });
       expect(prepared.normalizedPayload.input).not.toHaveProperty('n');
       expect(prepared.guidedRequest).not.toHaveProperty('n');
       expect(prepared.expectedOutputCount).toBe(1);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  test('JOB-10 canonicalizes legacy WAN ingress and preserves remote image, video and audio roles', async () => {
+    const fixture = await createJobFixture();
+    try {
+      seedVideoRegistry(fixture.database);
+      const prepared = await prepareJobCreateRequest(
+        fixture.database,
+        {
+          actionId,
+          entryKey: 'wan2.7-image-to-video:frame-to-video',
+          values: {
+            prompt: 'Animate',
+            duration: 2,
+            resolution: '720p',
+            multiShots: true,
+            audioUrl: 'https://assets.example/soundtrack.mp3'
+          },
+          expertOverrides: [],
+          inputs: [
+            {
+              role: 'start-frame',
+              mediaKind: 'image',
+              source: 'remote',
+              url: 'https://assets.example/start.png'
+            },
+            {
+              role: 'start-frame',
+              mediaKind: 'image',
+              source: 'remote',
+              url: 'https://assets.example/end.png'
+            },
+            {
+              role: 'source-video',
+              mediaKind: 'video',
+              source: 'remote',
+              url: 'https://assets.example/motion.mp4'
+            }
+          ]
+        },
+        async () => {
+          throw new Error('No remote source should be resolved.');
+        }
+      );
+      expect(prepared).toMatchObject({
+        entryKey: 'wan2.7-image-to-video:image-to-video',
+        workflow: 'image-to-video',
+        publicModelId: 'wan2.7-image-to-video',
+        normalizedPayload: {
+          model: 'wan2.7-image-to-video',
+          input: {
+            image_urls: ['https://assets.example/start.png', 'https://assets.example/end.png'],
+            video_url: 'https://assets.example/motion.mp4',
+            audio_url: 'https://assets.example/soundtrack.mp3',
+            duration: 2,
+            resolution: '720p',
+            multi_shots: true,
+            enable_safety_checker: false
+          }
+        }
+      });
+      await expect(
+        prepareJobCreateRequest(
+          fixture.database,
+          {
+            actionId: '019b0000-0000-7000-8000-000000000011',
+            entryKey: 'wan2.7-image-to-video:frame-to-video',
+            values: { duration: 2, resolution: '720p', aspectRatio: '16:9' },
+            expertOverrides: [],
+            inputs: [
+              {
+                role: 'start-frame',
+                mediaKind: 'image',
+                source: 'remote',
+                url: 'https://assets.example/start.png'
+              }
+            ]
+          },
+          async () => {
+            throw new Error('No remote source should be resolved.');
+          }
+        )
+      ).rejects.toThrow('Unsupported guided field aspectRatio');
     } finally {
       await fixture.cleanup();
     }

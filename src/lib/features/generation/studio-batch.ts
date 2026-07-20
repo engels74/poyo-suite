@@ -1,4 +1,7 @@
 import type { ExpertOverride } from '../registry/types';
+import { canonicalizeVideoSelection } from '../registry/video-selection';
+import type { Estimate, TaskCharge } from '../pricing/contracts';
+import { isPricingSignature } from '../pricing/estimate';
 import type { StudioEntry, StudioJobDto, StudioOutputDto, StudioRoleInput } from './contracts';
 import {
   retainedSourceUrl,
@@ -26,6 +29,7 @@ export interface StudioBatchItem {
   sizeMode: SizeMode;
   automaticFields: AutomaticFieldKey[];
   request: StudioCreateJobRequest;
+  estimate: Estimate | null;
   state: StudioBatchItemState;
   job: StudioJobDto | null;
   outputs: StudioOutputDto[];
@@ -38,6 +42,17 @@ export interface StudioBatch {
   version: 1;
   modality: 'image' | 'video';
   items: StudioBatchItem[];
+}
+
+export interface ReadyBatchEstimateSummary {
+  itemCount: number;
+  quantity: number;
+  credits: number | null;
+}
+
+export interface SettledBatchChargeSummary {
+  actionCount: number;
+  credits: number;
 }
 
 interface BatchIds {
@@ -88,6 +103,73 @@ function nullableString(value: unknown, max = 4096): boolean {
 
 function nullableNumber(value: unknown): boolean {
   return value === null || (typeof value === 'number' && Number.isFinite(value));
+}
+
+function isIsoTimestamp(value: unknown): value is string {
+  return boundedString(value, 64) && Number.isFinite(Date.parse(value));
+}
+
+function isEstimate(value: unknown): value is Estimate {
+  if (!isRecord(value)) return false;
+  if (
+    Object.keys(value).sort().join(',') !==
+    'availability,basis,classification,credits,expiresAt,freshness,provenance,signature,sourceVerifiedAt'
+  ) {
+    return false;
+  }
+  const credits = value.credits;
+  const basis = value.basis;
+  const signature = value.signature;
+  const available = value.availability === 'available';
+  return (
+    value.classification === 'estimate' &&
+    (credits === null ||
+      (typeof credits === 'number' &&
+        Number.isFinite(credits) &&
+        credits >= 0 &&
+        credits <= 1_000_000_000)) &&
+    (signature === null || isPricingSignature(signature)) &&
+    (basis === null ||
+      (isRecord(basis) &&
+        Object.keys(basis).sort().join(',') === 'creditsPerUnit,unit,units' &&
+        (basis.unit === 'per-output' || basis.unit === 'per-second') &&
+        typeof basis.creditsPerUnit === 'number' &&
+        Number.isFinite(basis.creditsPerUnit) &&
+        basis.creditsPerUnit >= 0 &&
+        basis.creditsPerUnit <= 1_000_000_000 &&
+        typeof basis.units === 'number' &&
+        Number.isFinite(basis.units) &&
+        basis.units > 0 &&
+        basis.units <= 100_000_000)) &&
+    (value.provenance === 'published' ||
+      value.provenance === 'observed' ||
+      value.provenance === 'blend') &&
+    (value.sourceVerifiedAt === null || isIsoTimestamp(value.sourceVerifiedAt)) &&
+    (value.expiresAt === null || isIsoTimestamp(value.expiresAt)) &&
+    (value.freshness === 'fresh' || value.freshness === 'stale') &&
+    (available || value.availability === 'unavailable') &&
+    (available
+      ? credits !== null && signature !== null && basis !== null
+      : credits === null && signature === null && basis === null)
+  );
+}
+
+function isTaskCharge(value: unknown): value is TaskCharge {
+  if (!isRecord(value)) return false;
+  return (
+    Object.keys(value).sort().join(',') ===
+      'classification,credits,settledAt,source,terminalStatus' &&
+    value.classification === 'task-charge' &&
+    typeof value.credits === 'number' &&
+    Number.isFinite(value.credits) &&
+    value.credits >= 0 &&
+    value.credits <= 1_000_000_000 &&
+    value.source === 'poyo-task' &&
+    (value.terminalStatus === 'finished' ||
+      value.terminalStatus === 'failed' ||
+      value.terminalStatus === 'cancelled') &&
+    isIsoTimestamp(value.settledAt)
+  );
 }
 
 function isJsonValue(value: unknown, depth = 0): boolean {
@@ -157,6 +239,9 @@ function isJob(value: unknown): value is StudioJobDto {
     nullableNumber(value.progress) &&
     nullableNumber(value.estimatedCredits) &&
     nullableNumber(value.actualCredits) &&
+    (value.taskCharge === undefined ||
+      value.taskCharge === null ||
+      isTaskCharge(value.taskCharge)) &&
     nullableString(value.lastPolledAt, 128) &&
     boundedString(value.createdAt, 128) &&
     boundedString(value.updatedAt, 128) &&
@@ -190,6 +275,7 @@ function isBatchItem(value: unknown, modality: 'image' | 'video'): value is Stud
     !value.automaticFields.every((key) => AUTOMATIC_FIELDS.includes(key as AutomaticFieldKey)) ||
     !SIZE_MODES.includes(value.sizeMode as SizeMode) ||
     !ITEM_STATES.includes(value.state as StudioBatchItemState) ||
+    (value.estimate !== null && !isEstimate(value.estimate)) ||
     !Array.isArray(value.outputs) ||
     value.outputs.length > 20 ||
     !value.outputs.every(isOutput) ||
@@ -205,6 +291,11 @@ function isBatchItem(value: unknown, modality: 'image' | 'video'): value is Stud
     boundedString(request.entryKey, 256) &&
     isRecord(request.values) &&
     isJsonValue(request.values) &&
+    (request.values.audioUrl === undefined || isUrl(request.values.audioUrl)) &&
+    (request.values.referenceAudioUrls === undefined ||
+      (Array.isArray(request.values.referenceAudioUrls) &&
+        request.values.referenceAudioUrls.length <= 20 &&
+        request.values.referenceAudioUrls.every(isUrl))) &&
     Array.isArray(request.expertOverrides) &&
     request.expertOverrides.length <= 100 &&
     request.expertOverrides.every(isExpertOverride) &&
@@ -217,6 +308,16 @@ function isBatchItem(value: unknown, modality: 'image' | 'video'): value is Stud
 function safeStoredBatch(batch: StudioBatch): StudioBatch {
   const stored = clone(batch);
   for (const item of stored.items) {
+    if (stored.modality === 'video') {
+      const selection = canonicalizeVideoSelection(item.request.entryKey);
+      if (!selection) continue;
+      item.request.entryKey = selection.entryKey;
+      if (selection.migrated) {
+        delete item.request.values.aspectRatio;
+        item.automaticFields = item.automaticFields.filter((field) => field !== 'aspectRatio');
+        item.sizeMode = 'resolution';
+      }
+    }
     for (const input of item.request.inputs) {
       if (input.source !== 'uploaded' || !input.localSourceId) continue;
       input.url = retainedSourceUrl(input.localSourceId);
@@ -234,7 +335,7 @@ export function createBatchItem(
   input: Pick<
     StudioBatchItem,
     'modality' | 'displayName' | 'sizeMode' | 'automaticFields' | 'request'
-  >,
+  > & { estimate?: Estimate | null },
   ids: BatchIds
 ): StudioBatchItem {
   const request = clone(input.request);
@@ -246,6 +347,7 @@ export function createBatchItem(
     sizeMode: input.sizeMode,
     automaticFields: [...input.automaticFields],
     request,
+    estimate: input.estimate ? clone(input.estimate) : null,
     state: 'draft',
     job: null,
     outputs: [],
@@ -262,10 +364,75 @@ export function duplicateBatchItem(item: StudioBatchItem, ids: BatchIds): Studio
       displayName: item.displayName,
       sizeMode: item.sizeMode,
       automaticFields: item.automaticFields,
-      request: item.request
+      request: item.request,
+      estimate: item.estimate
     },
     ids
   );
+}
+
+function normalizedBatchQuantity(item: StudioBatchItem): number {
+  if (item.estimate?.basis?.unit === 'per-output') return item.estimate.basis.units;
+  const quantity = item.request.values.n;
+  return typeof quantity === 'number' &&
+    Number.isSafeInteger(quantity) &&
+    quantity > 0 &&
+    quantity <= 10_000
+    ? quantity
+    : 1;
+}
+
+export function summarizeReadyBatchEstimates(
+  items: readonly StudioBatchItem[]
+): ReadyBatchEstimateSummary {
+  const submittedActions = new Set(
+    items
+      .filter((item) => item.state !== 'draft' || item.job !== null)
+      .map((item) => item.request.actionId)
+  );
+  const seen = new Set<string>();
+  let itemCount = 0;
+  let quantity = 0;
+  let credits = 0;
+  let unavailable = false;
+  for (const item of items) {
+    const actionId = item.request.actionId;
+    if (
+      item.state !== 'draft' ||
+      item.job !== null ||
+      submittedActions.has(actionId) ||
+      seen.has(actionId)
+    ) {
+      continue;
+    }
+    seen.add(actionId);
+    itemCount += 1;
+    quantity += normalizedBatchQuantity(item);
+    if (item.estimate?.availability === 'available' && item.estimate.credits !== null) {
+      credits += item.estimate.credits;
+    } else {
+      unavailable = true;
+    }
+  }
+  return { itemCount, quantity, credits: unavailable ? null : credits };
+}
+
+export function summarizeSettledBatchCharges(
+  items: readonly StudioBatchItem[]
+): SettledBatchChargeSummary {
+  const actions = new Set<string>();
+  let credits = 0;
+  for (const item of items) {
+    const charge = item.job?.taskCharge;
+    const actionId = item.request.actionId;
+    if (!charge || actions.has(actionId)) continue;
+    actions.add(actionId);
+    credits += charge.credits;
+  }
+  return {
+    actionCount: actions.size,
+    credits: Math.round(credits * 1_000_000) / 1_000_000
+  };
 }
 
 export function batchStateForJob(job: StudioJobDto): StudioBatchItemState {
@@ -328,6 +495,11 @@ export function batchItemCompatibilityIssues(item: StudioBatchItem, entry: Studi
   if (modes.length && !modes.includes(item.sizeMode))
     issues.push('The saved size mode is no longer supported.');
   const fields = new Map(entry.fields.map((field) => [field.key, field]));
+  const audioValueKeys = new Set<string>(
+    entry.inputRoles.flatMap((role) =>
+      role.mediaKind === 'audio' && role.requestKey ? [role.requestKey] : []
+    )
+  );
   const hasDimensions = entry.fields.some((field) => field.kind === 'dimensions');
   for (const key of item.automaticFields) {
     if (!fields.has(key)) issues.push(`Automatic ${key} is no longer supported.`);
@@ -337,6 +509,7 @@ export function batchItemCompatibilityIssues(item: StudioBatchItem, entry: Studi
     if (
       !field &&
       key !== 'enableSafetyChecker' &&
+      !audioValueKeys.has(key) &&
       !(hasDimensions && (key === 'width' || key === 'height'))
     ) {
       issues.push(`The saved ${key} option is no longer supported.`);
@@ -438,6 +611,22 @@ export function restoreBatchRoleInputs(item: StudioBatchItem): Record<string, St
     };
     roles[input.role] = [...(roles[input.role] ?? []), restored];
   }
+  const audioValues = [
+    ['audio', item.request.values.audioUrl],
+    ['reference-audio', item.request.values.referenceAudioUrls]
+  ] as const;
+  for (const [role, value] of audioValues) {
+    const urls = typeof value === 'string' ? [value] : Array.isArray(value) ? value : [];
+    if (!urls.length || roles[role]?.length) continue;
+    roles[role] = urls.map((url, index) => ({
+      id: `${item.id}-${role}-${index}`,
+      role,
+      source: 'remote',
+      url,
+      name: new URL(url).hostname,
+      mediaKind: 'audio'
+    }));
+  }
   return roles;
 }
 
@@ -448,8 +637,24 @@ export function readStudioBatch(modality: 'image' | 'video'): StudioBatch | null
     const parsed: unknown = JSON.parse(raw);
     if (!isRecord(parsed) || parsed.version !== 1 || parsed.modality !== modality) return null;
     if (!Array.isArray(parsed.items) || parsed.items.length > MAX_ITEMS) return null;
-    if (!parsed.items.every((item) => isBatchItem(item, modality))) return null;
-    return clone(parsed as unknown as StudioBatch);
+    const batch = clone(parsed as unknown as StudioBatch);
+    for (const item of batch.items) {
+      if (item.estimate === undefined) item.estimate = null;
+    }
+    if (modality === 'video') {
+      for (const item of batch.items) {
+        const selection = canonicalizeVideoSelection(item.request?.entryKey);
+        if (!selection) return null;
+        item.request.entryKey = selection.entryKey;
+        if (selection.migrated) {
+          delete item.request.values.aspectRatio;
+          item.automaticFields = item.automaticFields.filter((field) => field !== 'aspectRatio');
+          item.sizeMode = 'resolution';
+        }
+      }
+    }
+    if (!batch.items.every((item) => isBatchItem(item, modality))) return null;
+    return batch;
   } catch {
     return null;
   }

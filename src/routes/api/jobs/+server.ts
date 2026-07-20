@@ -11,6 +11,7 @@ import { runtimeJobCreateDelay } from '$lib/server/jobs/runtime-settings';
 import { maintenanceGate } from '$lib/server/platform/maintenance-gate';
 import { readSameOriginJson } from '$lib/server/platform/request-security';
 import { getPlatformServices } from '$lib/server/platform/runtime';
+import { withEstimatedJobCreateRequest } from '$lib/server/pricing/estimate-request';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async ({ url }) => {
@@ -40,7 +41,8 @@ export const POST: RequestHandler = async ({ request }) => {
       input,
       createManagedSourceResolver(platform)
     );
-    const job = runtime.repository.create(prepared);
+    const estimated = withEstimatedJobCreateRequest(prepared, platform.pricing, runtime.repository);
+    const job = runtime.repository.create(estimated);
     void maintenanceGate
       .trackDetached('jobs.reconcile-created', () => runtime.coordinator.reconcile(job.id))
       .catch(() => undefined);

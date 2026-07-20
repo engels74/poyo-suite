@@ -19,7 +19,7 @@ type BalanceRow = {
 export function latestBalance(database: Database): BalanceSnapshotDto | null {
   const row = database
     .query<BalanceRow, []>(
-      'SELECT email,credits,source,fetched_at FROM balance_snapshots ORDER BY fetched_at DESC,id DESC LIMIT 1'
+      "SELECT email,credits,source,fetched_at FROM balance_snapshots WHERE source NOT LIKE 'cost:v1:%' ORDER BY fetched_at DESC,id DESC LIMIT 1"
     )
     .get();
   return row

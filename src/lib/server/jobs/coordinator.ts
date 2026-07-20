@@ -12,11 +12,12 @@ import type { JobRepository } from './repository';
 import type { JobRecord, WorkClaim } from './types';
 
 const SUBMISSION_CLAIM_LOST_BEFORE_DISPATCH = 'submission_claim_lost_before_dispatch';
+const COST_BALANCE_TIMEOUT_MS = 2_500;
 
 export interface JobPoyoGateway {
   submit(request: PoyoSubmitRequest, options?: PoyoRequestOptions): Promise<PoyoSubmitResult>;
   getStatus(taskId: string): Promise<PoyoStatusResult>;
-  getBalance(): Promise<PoyoBalanceResult>;
+  getBalance(options?: PoyoRequestOptions): Promise<PoyoBalanceResult>;
 }
 export interface JobRuntimeSettings {
   pollDelayMs: number;
@@ -100,6 +101,21 @@ export class JobCoordinator {
       this.options.repository.recordBalance(balance.email, balance.creditsAmount, source);
     } catch {}
   }
+  private async sampleCostBalance(
+    jobId: string,
+    actionId: string,
+    phase: 'before' | 'after'
+  ): Promise<void> {
+    if (!this.options.repository.beginCostBalanceSample(jobId, actionId, phase)) return;
+    try {
+      const balance = await this.options.poyo.getBalance({ timeoutMs: COST_BALANCE_TIMEOUT_MS });
+      if (!this.options.repository.recordCostBalanceSample(jobId, actionId, phase, balance)) {
+        this.options.repository.recordCostBalanceFailure(jobId, actionId, phase);
+      }
+    } catch {
+      this.options.repository.recordCostBalanceFailure(jobId, actionId, phase);
+    }
+  }
   private async withSubmissionSlot<T>(operation: () => Promise<T>): Promise<T> {
     const previous = this.submissionTail;
     let release = (): void => undefined;
@@ -114,22 +130,19 @@ export class JobCoordinator {
     }
   }
   async submit(jobId: string): Promise<JobRecord> {
-    const result = await this.withSubmissionSlot(() => this.submitAtQueueHead(jobId));
-    if (result.balanceSource) await this.refreshBalance(result.balanceSource);
-    return result.job;
+    return this.withSubmissionSlot(() => this.submitAtQueueHead(jobId));
   }
-  private async submitAtQueueHead(
-    jobId: string
-  ): Promise<{ job: JobRecord; balanceSource: string | null }> {
+  private async submitAtQueueHead(jobId: string): Promise<JobRecord> {
     const claim = this.options.repository.claimSubmission(
       jobId,
       this.workerId,
       this.submissionLeaseMs
     );
-    if (!claim) return { job: this.requireJob(jobId), balanceSource: null };
+    if (!claim) return this.requireJob(jobId);
     try {
       const result = await this.options.poyo.submit(claim.payload, {
-        beforeDispatch: () => {
+        beforeDispatch: async () => {
+          await this.sampleCostBalance(jobId, claim.actionId, 'before');
           if (!this.options.repository.markSubmissionTransmitted(jobId, claim.token)) {
             throw new PoyoError({
               category: 'submission',
@@ -142,13 +155,13 @@ export class JobCoordinator {
         }
       });
       this.options.repository.acknowledgeSubmission(jobId, claim.token, result);
-      return { job: this.requireJob(jobId), balanceSource: 'after_submission' };
+      return this.requireJob(jobId);
     } catch (error) {
       if (
         error instanceof PoyoError &&
         error.technicalCode === SUBMISSION_CLAIM_LOST_BEFORE_DISPATCH
       ) {
-        return { job: this.requireJob(jobId), balanceSource: null };
+        return this.requireJob(jobId);
       }
       if (error instanceof PoyoError && error.category === 'policy') {
         const rejected = this.options.repository.rejectUntransmittedPolicy(
@@ -170,7 +183,7 @@ export class JobCoordinator {
           claim.token,
           error instanceof PoyoError ? error.technicalCode : 'transport_unknown'
         );
-      return { job: this.requireJob(jobId), balanceSource: 'submission_error' };
+      return this.requireJob(jobId);
     }
   }
   async poll(jobId: string, manual = false): Promise<JobRecord> {
@@ -182,11 +195,15 @@ export class JobCoordinator {
       const settings = this.settings();
       const status = await this.options.poyo.getStatus(job.poyoTaskId);
       const updated = this.options.repository.applyStatus(jobId, status, settings.pollDelayMs);
+      const wasTerminal = job.remoteStatus === 'finished' || job.remoteStatus === 'failed';
+      const isTerminal = updated.remoteStatus === 'finished' || updated.remoteStatus === 'failed';
+      if (!wasTerminal && isTerminal) {
+        const actionId = this.options.repository.paidActionId(jobId);
+        if (actionId) await this.sampleCostBalance(jobId, actionId, 'after');
+      }
       if (updated.remoteStatus === 'finished') {
         if (settings.automaticDownloads) await this.downloadPending(jobId);
-        else await this.refreshBalance('remote_completion');
       }
-      if (updated.remoteStatus === 'failed') await this.refreshBalance('remote_failure');
       return updated;
     } catch (error) {
       if (error instanceof PoyoError && error.category === 'policy') {
@@ -223,7 +240,6 @@ export class JobCoordinator {
       }
     }
     this.options.repository.finishIfDownloaded(jobId);
-    await this.refreshBalance('after_completion');
   }
   async retryDownload(outputId: string): Promise<void> {
     const output = this.options.repository.output(outputId);

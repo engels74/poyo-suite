@@ -40,6 +40,8 @@ describe('Poyo response parsing', () => {
       ['not_started', 'not_started'],
       ['running', 'running'],
       ['failed', 'failed'],
+      ['cancelled', 'failed'],
+      ['canceled', 'failed'],
       ['new_upstream_state', 'unknown']
     ] as const;
     for (const [raw, expected] of states) {
@@ -54,6 +56,17 @@ describe('Poyo response parsing', () => {
       });
       expect(parsed.status).toBe(expected);
     }
+    expect(
+      parseStatusResponse({
+        task_id: 'task-null-charge',
+        status: 'cancelled',
+        credits_amount: null,
+        files: [],
+        created_time: '2026-07-15T10:00:00Z',
+        progress: 100,
+        error_message: 'Cancelled before a charge was reported'
+      })
+    ).toMatchObject({ status: 'failed', statusRaw: 'cancelled', creditsAmount: null });
   });
 
   test('PYO-02 parses balance, submit, and upload envelopes', () => {
@@ -112,5 +125,15 @@ describe('Poyo response parsing', () => {
       })
     ).toThrow('0-100');
     expect(() => parseSubmitResponse({ code: 200, data: {} })).toThrow('status');
+    expect(() =>
+      parseStatusResponse({
+        task_id: 'task',
+        status: 'running',
+        credits_amount: -1,
+        files: [],
+        created_time: 'now',
+        progress: 10
+      })
+    ).toThrow('negative credits_amount');
   });
 });

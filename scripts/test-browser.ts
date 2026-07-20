@@ -22,9 +22,11 @@ const build = Bun.spawnSync({
 });
 if (build.exitCode !== 0) process.exit(build.exitCode);
 
-const result = Bun.spawnSync({
-  cmd: [process.execPath, 'test', '--max-concurrency', '1', ...suites[mode]],
-  stdout: 'inherit',
-  stderr: 'inherit'
-});
-process.exit(result.exitCode);
+for (const file of suites[mode]) {
+  const result = Bun.spawnSync({
+    cmd: [process.execPath, 'test', '--max-concurrency', '1', file],
+    stdout: 'inherit',
+    stderr: 'inherit'
+  });
+  if (result.exitCode !== 0) process.exit(result.exitCode);
+}

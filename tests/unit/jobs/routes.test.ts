@@ -65,6 +65,31 @@ describe('job HTTP boundaries', () => {
     expect(route).toContain('prepareJobCreateRequest');
     expect(route).not.toContain('CreateJobRequest');
     expect(route).not.toContain('normalizedPayload: input');
+    const prepareIndex = route.indexOf('await prepareJobCreateRequest');
+    const pricingIndex = route.indexOf('withEstimatedJobCreateRequest(prepared');
+    const createIndex = route.indexOf('runtime.repository.create');
+    expect(pricingIndex).toBeGreaterThan(prepareIndex);
+    expect(createIndex).toBeGreaterThan(pricingIndex);
+    expect(route).toContain(
+      'withEstimatedJobCreateRequest(prepared, platform.pricing, runtime.repository)'
+    );
+    expect(route).not.toContain('refreshForTest');
+  });
+
+  test('request preview adds a cache-only estimate after authoritative normalization', async () => {
+    const route = await Bun.file('src/routes/api/requests/preview/+server.ts').text();
+    const helper = await Bun.file('src/lib/server/pricing/estimate-request.ts').text();
+    const normalizeIndex = helper.indexOf('normalizeRegistryRequest');
+    const currentIndex = helper.indexOf('pricing.current()');
+    const estimateIndex = helper.indexOf('estimateNormalizedRegistryRequest');
+    expect(normalizeIndex).toBeGreaterThan(-1);
+    expect(currentIndex).toBeGreaterThan(normalizeIndex);
+    expect(estimateIndex).toBeGreaterThan(normalizeIndex);
+    expect(route).toContain(
+      'normalizeEstimatedRegistryRequest(body, platform.pricing, runtime.repository)'
+    );
+    expect(helper).toContain('return { ...preview, estimate }');
+    expect(route).not.toContain('refreshForTest');
   });
 
   test('UPLOAD-08 source intake and verified snapshot complete before any Poyo client exists', async () => {

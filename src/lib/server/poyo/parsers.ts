@@ -58,6 +58,7 @@ function requiredHttpUrl(value: unknown, operation: PoyoOperation, field: string
 }
 
 export function normalizeTaskStatus(status: string): PoyoTaskStatus {
+  if (status === 'cancelled' || status === 'canceled') return 'failed';
   if (
     status === 'not_started' ||
     status === 'running' ||
@@ -116,11 +117,18 @@ export function parseStatusResponse(payload: unknown): PoyoStatusResult {
   if (!Array.isArray(files)) {
     throw malformedResponseError('status', 'Poyo returned an invalid files field.');
   }
+  const creditsAmount =
+    data.credits_amount === null
+      ? null
+      : finiteNumber(data.credits_amount, 'status', 'credits_amount');
+  if (creditsAmount !== null && creditsAmount < 0) {
+    throw malformedResponseError('status', 'Poyo returned a negative credits_amount field.');
+  }
   return {
     taskId: requiredString(data.task_id, 'status', 'task_id'),
     statusRaw,
     status: normalizeTaskStatus(statusRaw),
-    creditsAmount: finiteNumber(data.credits_amount, 'status', 'credits_amount'),
+    creditsAmount,
     files: files.map(parseOutputFile),
     createdTime: requiredString(data.created_time, 'status', 'created_time'),
     progress: typeof progress === 'number' ? progress : null,

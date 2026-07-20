@@ -1,0 +1,1352 @@
+[
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=flux-2-flex-edit|workflow=image-edit|unit=per-output|resolution=1k",
+    "mediaKind": "image",
+    "dimensions": {
+      "resolution": "1k"
+    },
+    "unit": "per-output",
+    "creditsPerUnit": 18,
+    "estimateSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=flux-2-flex-edit|workflow=image-edit|unit=per-output|quantity=1|resolution=1k",
+    "registryVersion": "image-2026-07-20.1",
+    "modelId": "flux-2-flex-edit",
+    "workflow": "image-edit",
+    "normalizedInput": {
+      "resolution": "1k",
+      "n": 1
+    },
+    "expectedCredits": 18
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=flux-2-flex-edit|workflow=image-edit|unit=per-output|resolution=2k",
+    "mediaKind": "image",
+    "dimensions": {
+      "resolution": "2k"
+    },
+    "unit": "per-output",
+    "creditsPerUnit": 27,
+    "estimateSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=flux-2-flex-edit|workflow=image-edit|unit=per-output|quantity=1|resolution=2k",
+    "registryVersion": "image-2026-07-20.1",
+    "modelId": "flux-2-flex-edit",
+    "workflow": "image-edit",
+    "normalizedInput": {
+      "resolution": "2k",
+      "n": 1
+    },
+    "expectedCredits": 27
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=flux-2-flex|workflow=text-to-image|unit=per-output|resolution=1k",
+    "mediaKind": "image",
+    "dimensions": {
+      "resolution": "1k"
+    },
+    "unit": "per-output",
+    "creditsPerUnit": 18,
+    "estimateSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=flux-2-flex|workflow=text-to-image|unit=per-output|quantity=1|resolution=1k",
+    "registryVersion": "image-2026-07-20.1",
+    "modelId": "flux-2-flex",
+    "workflow": "text-to-image",
+    "normalizedInput": {
+      "resolution": "1k",
+      "n": 1
+    },
+    "expectedCredits": 18
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=flux-2-flex|workflow=text-to-image|unit=per-output|resolution=2k",
+    "mediaKind": "image",
+    "dimensions": {
+      "resolution": "2k"
+    },
+    "unit": "per-output",
+    "creditsPerUnit": 27,
+    "estimateSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=flux-2-flex|workflow=text-to-image|unit=per-output|quantity=1|resolution=2k",
+    "registryVersion": "image-2026-07-20.1",
+    "modelId": "flux-2-flex",
+    "workflow": "text-to-image",
+    "normalizedInput": {
+      "resolution": "2k",
+      "n": 1
+    },
+    "expectedCredits": 27
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=flux-2-pro-edit|workflow=image-edit|unit=per-output|resolution=1k",
+    "mediaKind": "image",
+    "dimensions": {
+      "resolution": "1k"
+    },
+    "unit": "per-output",
+    "creditsPerUnit": 6,
+    "estimateSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=flux-2-pro-edit|workflow=image-edit|unit=per-output|quantity=1|resolution=1k",
+    "registryVersion": "image-2026-07-20.1",
+    "modelId": "flux-2-pro-edit",
+    "workflow": "image-edit",
+    "normalizedInput": {
+      "resolution": "1k",
+      "n": 1
+    },
+    "expectedCredits": 6
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=flux-2-pro-edit|workflow=image-edit|unit=per-output|resolution=2k",
+    "mediaKind": "image",
+    "dimensions": {
+      "resolution": "2k"
+    },
+    "unit": "per-output",
+    "creditsPerUnit": 9,
+    "estimateSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=flux-2-pro-edit|workflow=image-edit|unit=per-output|quantity=1|resolution=2k",
+    "registryVersion": "image-2026-07-20.1",
+    "modelId": "flux-2-pro-edit",
+    "workflow": "image-edit",
+    "normalizedInput": {
+      "resolution": "2k",
+      "n": 1
+    },
+    "expectedCredits": 9
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=flux-2-pro|workflow=text-to-image|unit=per-output|resolution=1k",
+    "mediaKind": "image",
+    "dimensions": {
+      "resolution": "1k"
+    },
+    "unit": "per-output",
+    "creditsPerUnit": 6,
+    "estimateSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=flux-2-pro|workflow=text-to-image|unit=per-output|quantity=1|resolution=1k",
+    "registryVersion": "image-2026-07-20.1",
+    "modelId": "flux-2-pro",
+    "workflow": "text-to-image",
+    "normalizedInput": {
+      "resolution": "1k",
+      "n": 1
+    },
+    "expectedCredits": 6
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=flux-2-pro|workflow=text-to-image|unit=per-output|resolution=2k",
+    "mediaKind": "image",
+    "dimensions": {
+      "resolution": "2k"
+    },
+    "unit": "per-output",
+    "creditsPerUnit": 9,
+    "estimateSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=flux-2-pro|workflow=text-to-image|unit=per-output|quantity=1|resolution=2k",
+    "registryVersion": "image-2026-07-20.1",
+    "modelId": "flux-2-pro",
+    "workflow": "text-to-image",
+    "normalizedInput": {
+      "resolution": "2k",
+      "n": 1
+    },
+    "expectedCredits": 9
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=flux-kontext-max-edit|workflow=image-edit|unit=per-output",
+    "mediaKind": "image",
+    "dimensions": {},
+    "unit": "per-output",
+    "creditsPerUnit": 16,
+    "estimateSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=flux-kontext-max-edit|workflow=image-edit|unit=per-output|quantity=1",
+    "registryVersion": "image-2026-07-20.1",
+    "modelId": "flux-kontext-max-edit",
+    "workflow": "image-edit",
+    "normalizedInput": {
+      "n": 1
+    },
+    "expectedCredits": 16
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=flux-kontext-max|workflow=text-to-image|unit=per-output",
+    "mediaKind": "image",
+    "dimensions": {},
+    "unit": "per-output",
+    "creditsPerUnit": 16,
+    "estimateSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=flux-kontext-max|workflow=text-to-image|unit=per-output|quantity=1",
+    "registryVersion": "image-2026-07-20.1",
+    "modelId": "flux-kontext-max",
+    "workflow": "text-to-image",
+    "normalizedInput": {
+      "n": 1
+    },
+    "expectedCredits": 16
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=flux-kontext-pro-edit|workflow=image-edit|unit=per-output",
+    "mediaKind": "image",
+    "dimensions": {},
+    "unit": "per-output",
+    "creditsPerUnit": 8,
+    "estimateSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=flux-kontext-pro-edit|workflow=image-edit|unit=per-output|quantity=1",
+    "registryVersion": "image-2026-07-20.1",
+    "modelId": "flux-kontext-pro-edit",
+    "workflow": "image-edit",
+    "normalizedInput": {
+      "n": 1
+    },
+    "expectedCredits": 8
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=flux-kontext-pro|workflow=text-to-image|unit=per-output",
+    "mediaKind": "image",
+    "dimensions": {},
+    "unit": "per-output",
+    "creditsPerUnit": 8,
+    "estimateSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=flux-kontext-pro|workflow=text-to-image|unit=per-output|quantity=1",
+    "registryVersion": "image-2026-07-20.1",
+    "modelId": "flux-kontext-pro",
+    "workflow": "text-to-image",
+    "normalizedInput": {
+      "n": 1
+    },
+    "expectedCredits": 8
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=gpt-4o-image|workflow=text-to-image|unit=per-output",
+    "mediaKind": "image",
+    "dimensions": {},
+    "unit": "per-output",
+    "creditsPerUnit": 4,
+    "estimateSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=gpt-4o-image|workflow=text-to-image|unit=per-output|quantity=1",
+    "registryVersion": "image-2026-07-20.1",
+    "modelId": "gpt-4o-image",
+    "workflow": "text-to-image",
+    "normalizedInput": {
+      "n": 1
+    },
+    "expectedCredits": 4
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=gpt-image-1.5|workflow=text-to-image|unit=per-output",
+    "mediaKind": "image",
+    "dimensions": {},
+    "unit": "per-output",
+    "creditsPerUnit": 2,
+    "estimateSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=gpt-image-1.5|workflow=text-to-image|unit=per-output|quantity=1",
+    "registryVersion": "image-2026-07-20.1",
+    "modelId": "gpt-image-1.5",
+    "workflow": "text-to-image",
+    "normalizedInput": {
+      "n": 1
+    },
+    "expectedCredits": 2
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=gpt-image-2|workflow=text-to-image|unit=per-output|quality=high|resolution=1k",
+    "mediaKind": "image",
+    "dimensions": {
+      "resolution": "1k",
+      "quality": "high"
+    },
+    "unit": "per-output",
+    "creditsPerUnit": 33.76,
+    "estimateSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=gpt-image-2|workflow=text-to-image|unit=per-output|quality=high|quantity=1|resolution=1k",
+    "registryVersion": "image-2026-07-20.1",
+    "modelId": "gpt-image-2",
+    "workflow": "text-to-image",
+    "normalizedInput": {
+      "resolution": "1k",
+      "quality": "high",
+      "n": 1
+    },
+    "expectedCredits": 33.76
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=gpt-image-2|workflow=text-to-image|unit=per-output|quality=high|resolution=2k",
+    "mediaKind": "image",
+    "dimensions": {
+      "resolution": "2k",
+      "quality": "high"
+    },
+    "unit": "per-output",
+    "creditsPerUnit": 35.52,
+    "estimateSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=gpt-image-2|workflow=text-to-image|unit=per-output|quality=high|quantity=1|resolution=2k",
+    "registryVersion": "image-2026-07-20.1",
+    "modelId": "gpt-image-2",
+    "workflow": "text-to-image",
+    "normalizedInput": {
+      "resolution": "2k",
+      "quality": "high",
+      "n": 1
+    },
+    "expectedCredits": 35.52
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=gpt-image-2|workflow=text-to-image|unit=per-output|quality=high|resolution=4k",
+    "mediaKind": "image",
+    "dimensions": {
+      "resolution": "4k",
+      "quality": "high"
+    },
+    "unit": "per-output",
+    "creditsPerUnit": 64.16,
+    "estimateSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=gpt-image-2|workflow=text-to-image|unit=per-output|quality=high|quantity=1|resolution=4k",
+    "registryVersion": "image-2026-07-20.1",
+    "modelId": "gpt-image-2",
+    "workflow": "text-to-image",
+    "normalizedInput": {
+      "resolution": "4k",
+      "quality": "high",
+      "n": 1
+    },
+    "expectedCredits": 64.16
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=gpt-image-2|workflow=text-to-image|unit=per-output|quality=low|resolution=1k",
+    "mediaKind": "image",
+    "dimensions": {
+      "resolution": "1k",
+      "quality": "low"
+    },
+    "unit": "per-output",
+    "creditsPerUnit": 2,
+    "estimateSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=gpt-image-2|workflow=text-to-image|unit=per-output|quality=low|quantity=1|resolution=1k",
+    "registryVersion": "image-2026-07-20.1",
+    "modelId": "gpt-image-2",
+    "workflow": "text-to-image",
+    "normalizedInput": {
+      "resolution": "1k",
+      "quality": "low",
+      "n": 1
+    },
+    "expectedCredits": 2
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=gpt-image-2|workflow=text-to-image|unit=per-output|quality=low|resolution=2k",
+    "mediaKind": "image",
+    "dimensions": {
+      "resolution": "2k",
+      "quality": "low"
+    },
+    "unit": "per-output",
+    "creditsPerUnit": 4,
+    "estimateSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=gpt-image-2|workflow=text-to-image|unit=per-output|quality=low|quantity=1|resolution=2k",
+    "registryVersion": "image-2026-07-20.1",
+    "modelId": "gpt-image-2",
+    "workflow": "text-to-image",
+    "normalizedInput": {
+      "resolution": "2k",
+      "quality": "low",
+      "n": 1
+    },
+    "expectedCredits": 4
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=gpt-image-2|workflow=text-to-image|unit=per-output|quality=low|resolution=4k",
+    "mediaKind": "image",
+    "dimensions": {
+      "resolution": "4k",
+      "quality": "low"
+    },
+    "unit": "per-output",
+    "creditsPerUnit": 8,
+    "estimateSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=gpt-image-2|workflow=text-to-image|unit=per-output|quality=low|quantity=1|resolution=4k",
+    "registryVersion": "image-2026-07-20.1",
+    "modelId": "gpt-image-2",
+    "workflow": "text-to-image",
+    "normalizedInput": {
+      "resolution": "4k",
+      "quality": "low",
+      "n": 1
+    },
+    "expectedCredits": 8
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=gpt-image-2|workflow=text-to-image|unit=per-output|quality=medium|resolution=1k",
+    "mediaKind": "image",
+    "dimensions": {
+      "resolution": "1k",
+      "quality": "medium"
+    },
+    "unit": "per-output",
+    "creditsPerUnit": 8.48,
+    "estimateSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=gpt-image-2|workflow=text-to-image|unit=per-output|quality=medium|quantity=1|resolution=1k",
+    "registryVersion": "image-2026-07-20.1",
+    "modelId": "gpt-image-2",
+    "workflow": "text-to-image",
+    "normalizedInput": {
+      "resolution": "1k",
+      "quality": "medium",
+      "n": 1
+    },
+    "expectedCredits": 8.48
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=gpt-image-2|workflow=text-to-image|unit=per-output|quality=medium|resolution=2k",
+    "mediaKind": "image",
+    "dimensions": {
+      "resolution": "2k",
+      "quality": "medium"
+    },
+    "unit": "per-output",
+    "creditsPerUnit": 8.96,
+    "estimateSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=gpt-image-2|workflow=text-to-image|unit=per-output|quality=medium|quantity=1|resolution=2k",
+    "registryVersion": "image-2026-07-20.1",
+    "modelId": "gpt-image-2",
+    "workflow": "text-to-image",
+    "normalizedInput": {
+      "resolution": "2k",
+      "quality": "medium",
+      "n": 1
+    },
+    "expectedCredits": 8.96
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=gpt-image-2|workflow=text-to-image|unit=per-output|quality=medium|resolution=4k",
+    "mediaKind": "image",
+    "dimensions": {
+      "resolution": "4k",
+      "quality": "medium"
+    },
+    "unit": "per-output",
+    "creditsPerUnit": 16.16,
+    "estimateSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=gpt-image-2|workflow=text-to-image|unit=per-output|quality=medium|quantity=1|resolution=4k",
+    "registryVersion": "image-2026-07-20.1",
+    "modelId": "gpt-image-2",
+    "workflow": "text-to-image",
+    "normalizedInput": {
+      "resolution": "4k",
+      "quality": "medium",
+      "n": 1
+    },
+    "expectedCredits": 16.16
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=kling-o1-image-edit|workflow=image-edit|unit=per-output",
+    "mediaKind": "image",
+    "dimensions": {},
+    "unit": "per-output",
+    "creditsPerUnit": 3.5,
+    "estimateSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=kling-o1-image-edit|workflow=image-edit|unit=per-output|quantity=1",
+    "registryVersion": "image-2026-07-20.1",
+    "modelId": "kling-o1-image-edit",
+    "workflow": "image-edit",
+    "normalizedInput": {
+      "n": 1
+    },
+    "expectedCredits": 3.5
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=nano-banana-2-lite-edit|workflow=image-edit|unit=per-output",
+    "mediaKind": "image",
+    "dimensions": {},
+    "unit": "per-output",
+    "creditsPerUnit": 5,
+    "estimateSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=nano-banana-2-lite-edit|workflow=image-edit|unit=per-output|quantity=1",
+    "registryVersion": "image-2026-07-20.1",
+    "modelId": "nano-banana-2-lite-edit",
+    "workflow": "image-edit",
+    "normalizedInput": {
+      "n": 1
+    },
+    "expectedCredits": 5
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=nano-banana-2-lite|workflow=text-to-image|unit=per-output",
+    "mediaKind": "image",
+    "dimensions": {},
+    "unit": "per-output",
+    "creditsPerUnit": 5,
+    "estimateSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=nano-banana-2-lite|workflow=text-to-image|unit=per-output|quantity=1",
+    "registryVersion": "image-2026-07-20.1",
+    "modelId": "nano-banana-2-lite",
+    "workflow": "text-to-image",
+    "normalizedInput": {
+      "n": 1
+    },
+    "expectedCredits": 5
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=nano-banana-2-new|workflow=text-to-image|unit=per-output|resolution=1k",
+    "mediaKind": "image",
+    "dimensions": {
+      "resolution": "1k"
+    },
+    "unit": "per-output",
+    "creditsPerUnit": 5,
+    "estimateSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=nano-banana-2-new|workflow=text-to-image|unit=per-output|quantity=1|resolution=1k",
+    "registryVersion": "image-2026-07-20.1",
+    "modelId": "nano-banana-2-new",
+    "workflow": "text-to-image",
+    "normalizedInput": {
+      "resolution": "1k",
+      "n": 1
+    },
+    "expectedCredits": 5
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=nano-banana-2-new|workflow=text-to-image|unit=per-output|resolution=2k",
+    "mediaKind": "image",
+    "dimensions": {
+      "resolution": "2k"
+    },
+    "unit": "per-output",
+    "creditsPerUnit": 8,
+    "estimateSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=nano-banana-2-new|workflow=text-to-image|unit=per-output|quantity=1|resolution=2k",
+    "registryVersion": "image-2026-07-20.1",
+    "modelId": "nano-banana-2-new",
+    "workflow": "text-to-image",
+    "normalizedInput": {
+      "resolution": "2k",
+      "n": 1
+    },
+    "expectedCredits": 8
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=nano-banana-2-new|workflow=text-to-image|unit=per-output|resolution=4k",
+    "mediaKind": "image",
+    "dimensions": {
+      "resolution": "4k"
+    },
+    "unit": "per-output",
+    "creditsPerUnit": 12,
+    "estimateSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=nano-banana-2-new|workflow=text-to-image|unit=per-output|quantity=1|resolution=4k",
+    "registryVersion": "image-2026-07-20.1",
+    "modelId": "nano-banana-2-new",
+    "workflow": "text-to-image",
+    "normalizedInput": {
+      "resolution": "4k",
+      "n": 1
+    },
+    "expectedCredits": 12
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=nano-banana-2-official|workflow=text-to-image|unit=per-output|resolution=0.5k",
+    "mediaKind": "image",
+    "dimensions": {
+      "resolution": "0.5k"
+    },
+    "unit": "per-output",
+    "creditsPerUnit": 7,
+    "estimateSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=nano-banana-2-official|workflow=text-to-image|unit=per-output|quantity=1|resolution=0.5k",
+    "registryVersion": "image-2026-07-20.1",
+    "modelId": "nano-banana-2-official",
+    "workflow": "text-to-image",
+    "normalizedInput": {
+      "resolution": "0.5k",
+      "n": 1
+    },
+    "expectedCredits": 7
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=nano-banana-2-official|workflow=text-to-image|unit=per-output|resolution=1k",
+    "mediaKind": "image",
+    "dimensions": {
+      "resolution": "1k"
+    },
+    "unit": "per-output",
+    "creditsPerUnit": 10,
+    "estimateSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=nano-banana-2-official|workflow=text-to-image|unit=per-output|quantity=1|resolution=1k",
+    "registryVersion": "image-2026-07-20.1",
+    "modelId": "nano-banana-2-official",
+    "workflow": "text-to-image",
+    "normalizedInput": {
+      "resolution": "1k",
+      "n": 1
+    },
+    "expectedCredits": 10
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=nano-banana-2-official|workflow=text-to-image|unit=per-output|resolution=2k",
+    "mediaKind": "image",
+    "dimensions": {
+      "resolution": "2k"
+    },
+    "unit": "per-output",
+    "creditsPerUnit": 15,
+    "estimateSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=nano-banana-2-official|workflow=text-to-image|unit=per-output|quantity=1|resolution=2k",
+    "registryVersion": "image-2026-07-20.1",
+    "modelId": "nano-banana-2-official",
+    "workflow": "text-to-image",
+    "normalizedInput": {
+      "resolution": "2k",
+      "n": 1
+    },
+    "expectedCredits": 15
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=nano-banana-2-official|workflow=text-to-image|unit=per-output|resolution=4k",
+    "mediaKind": "image",
+    "dimensions": {
+      "resolution": "4k"
+    },
+    "unit": "per-output",
+    "creditsPerUnit": 20,
+    "estimateSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=nano-banana-2-official|workflow=text-to-image|unit=per-output|quantity=1|resolution=4k",
+    "registryVersion": "image-2026-07-20.1",
+    "modelId": "nano-banana-2-official",
+    "workflow": "text-to-image",
+    "normalizedInput": {
+      "resolution": "4k",
+      "n": 1
+    },
+    "expectedCredits": 20
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=nano-banana-2|workflow=text-to-image|unit=per-output|resolution=4k",
+    "mediaKind": "image",
+    "dimensions": {
+      "resolution": "4k"
+    },
+    "unit": "per-output",
+    "creditsPerUnit": 14,
+    "estimateSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=nano-banana-2|workflow=text-to-image|unit=per-output|quantity=1|resolution=4k",
+    "registryVersion": "image-2026-07-20.1",
+    "modelId": "nano-banana-2",
+    "workflow": "text-to-image",
+    "normalizedInput": {
+      "resolution": "4k",
+      "n": 1
+    },
+    "expectedCredits": 14
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=nano-banana-pro|workflow=text-to-image|unit=per-output|resolution=4k",
+    "mediaKind": "image",
+    "dimensions": {
+      "resolution": "4k"
+    },
+    "unit": "per-output",
+    "creditsPerUnit": 35,
+    "estimateSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=nano-banana-pro|workflow=text-to-image|unit=per-output|quantity=1|resolution=4k",
+    "registryVersion": "image-2026-07-20.1",
+    "modelId": "nano-banana-pro",
+    "workflow": "text-to-image",
+    "normalizedInput": {
+      "resolution": "4k",
+      "n": 1
+    },
+    "expectedCredits": 35
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=nano-banana|workflow=text-to-image|unit=per-output",
+    "mediaKind": "image",
+    "dimensions": {},
+    "unit": "per-output",
+    "creditsPerUnit": 5,
+    "estimateSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=nano-banana|workflow=text-to-image|unit=per-output|quantity=1",
+    "registryVersion": "image-2026-07-20.1",
+    "modelId": "nano-banana",
+    "workflow": "text-to-image",
+    "normalizedInput": {
+      "n": 1
+    },
+    "expectedCredits": 5
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=seedream-4-edit|workflow=image-edit|unit=per-output",
+    "mediaKind": "image",
+    "dimensions": {},
+    "unit": "per-output",
+    "creditsPerUnit": 5,
+    "estimateSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=seedream-4-edit|workflow=image-edit|unit=per-output|quantity=1",
+    "registryVersion": "image-2026-07-20.1",
+    "modelId": "seedream-4-edit",
+    "workflow": "image-edit",
+    "normalizedInput": {
+      "n": 1
+    },
+    "expectedCredits": 5
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=seedream-4.5|workflow=text-to-image|unit=per-output",
+    "mediaKind": "image",
+    "dimensions": {},
+    "unit": "per-output",
+    "creditsPerUnit": 5,
+    "estimateSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=seedream-4.5|workflow=text-to-image|unit=per-output|quantity=1",
+    "registryVersion": "image-2026-07-20.1",
+    "modelId": "seedream-4.5",
+    "workflow": "text-to-image",
+    "normalizedInput": {
+      "n": 1
+    },
+    "expectedCredits": 5
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=seedream-4|workflow=text-to-image|unit=per-output",
+    "mediaKind": "image",
+    "dimensions": {},
+    "unit": "per-output",
+    "creditsPerUnit": 5,
+    "estimateSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=seedream-4|workflow=text-to-image|unit=per-output|quantity=1",
+    "registryVersion": "image-2026-07-20.1",
+    "modelId": "seedream-4",
+    "workflow": "text-to-image",
+    "normalizedInput": {
+      "n": 1
+    },
+    "expectedCredits": 5
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=seedream-5.0-pro-edit|workflow=image-edit|unit=per-output",
+    "mediaKind": "image",
+    "dimensions": {},
+    "unit": "per-output",
+    "creditsPerUnit": 15,
+    "estimateSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=seedream-5.0-pro-edit|workflow=image-edit|unit=per-output|quantity=1",
+    "registryVersion": "image-2026-07-20.1",
+    "modelId": "seedream-5.0-pro-edit",
+    "workflow": "image-edit",
+    "normalizedInput": {
+      "n": 1
+    },
+    "expectedCredits": 15
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=seedream-5.0-pro|workflow=text-to-image|unit=per-output",
+    "mediaKind": "image",
+    "dimensions": {},
+    "unit": "per-output",
+    "creditsPerUnit": 15,
+    "estimateSignature": "version=pricing-signature-v1|registry=image-2026-07-20.1|model=seedream-5.0-pro|workflow=text-to-image|unit=per-output|quantity=1",
+    "registryVersion": "image-2026-07-20.1",
+    "modelId": "seedream-5.0-pro",
+    "workflow": "text-to-image",
+    "normalizedInput": {
+      "n": 1
+    },
+    "expectedCredits": 15
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=grok-imagine-video-1.5|workflow=image-to-video|unit=per-output",
+    "mediaKind": "video",
+    "dimensions": {},
+    "unit": "per-output",
+    "creditsPerUnit": 2,
+    "estimateSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=grok-imagine-video-1.5|workflow=image-to-video|unit=per-output|quantity=1",
+    "registryVersion": "video-2026-07-20.1",
+    "modelId": "grok-imagine-video-1.5",
+    "workflow": "image-to-video",
+    "normalizedInput": {
+      "n": 1
+    },
+    "expectedCredits": 2
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=grok-imagine-video-1.5|workflow=image-to-video|unit=per-second|resolution=480p",
+    "mediaKind": "video",
+    "dimensions": {
+      "resolution": "480p"
+    },
+    "unit": "per-second",
+    "creditsPerUnit": 14.5,
+    "estimateSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=grok-imagine-video-1.5|workflow=image-to-video|unit=per-second|duration=5|resolution=480p",
+    "registryVersion": "video-2026-07-20.1",
+    "modelId": "grok-imagine-video-1.5",
+    "workflow": "image-to-video",
+    "normalizedInput": {
+      "resolution": "480p",
+      "duration": 5
+    },
+    "expectedCredits": 72.5
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=grok-imagine-video-1.5|workflow=image-to-video|unit=per-second|resolution=720p",
+    "mediaKind": "video",
+    "dimensions": {
+      "resolution": "720p"
+    },
+    "unit": "per-second",
+    "creditsPerUnit": 25,
+    "estimateSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=grok-imagine-video-1.5|workflow=image-to-video|unit=per-second|duration=5|resolution=720p",
+    "registryVersion": "video-2026-07-20.1",
+    "modelId": "grok-imagine-video-1.5",
+    "workflow": "image-to-video",
+    "normalizedInput": {
+      "resolution": "720p",
+      "duration": 5
+    },
+    "expectedCredits": 125
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=happy-horse|workflow=video-edit|unit=per-second|resolution=1080p",
+    "mediaKind": "video",
+    "dimensions": {
+      "resolution": "1080p"
+    },
+    "unit": "per-second",
+    "creditsPerUnit": 64,
+    "estimateSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=happy-horse|workflow=video-edit|unit=per-second|duration=5|resolution=1080p",
+    "registryVersion": "video-2026-07-20.1",
+    "modelId": "happy-horse",
+    "workflow": "video-edit",
+    "normalizedInput": {
+      "resolution": "1080p",
+      "duration": 5
+    },
+    "expectedCredits": 320
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=happy-horse|workflow=video-edit|unit=per-second|resolution=720p",
+    "mediaKind": "video",
+    "dimensions": {
+      "resolution": "720p"
+    },
+    "unit": "per-second",
+    "creditsPerUnit": 32,
+    "estimateSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=happy-horse|workflow=video-edit|unit=per-second|duration=5|resolution=720p",
+    "registryVersion": "video-2026-07-20.1",
+    "modelId": "happy-horse",
+    "workflow": "video-edit",
+    "normalizedInput": {
+      "resolution": "720p",
+      "duration": 5
+    },
+    "expectedCredits": 160
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=kling-2.1%2Fstandard|workflow=image-to-video|unit=per-output|duration=10",
+    "mediaKind": "video",
+    "dimensions": {
+      "duration": 10
+    },
+    "unit": "per-output",
+    "creditsPerUnit": 60,
+    "estimateSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=kling-2.1%2Fstandard|workflow=image-to-video|unit=per-output|duration=10|quantity=1",
+    "registryVersion": "video-2026-07-20.1",
+    "modelId": "kling-2.1/standard",
+    "workflow": "image-to-video",
+    "normalizedInput": {
+      "duration": 10,
+      "n": 1
+    },
+    "expectedCredits": 60
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=kling-2.1%2Fstandard|workflow=image-to-video|unit=per-output|duration=5",
+    "mediaKind": "video",
+    "dimensions": {
+      "duration": 5
+    },
+    "unit": "per-output",
+    "creditsPerUnit": 30,
+    "estimateSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=kling-2.1%2Fstandard|workflow=image-to-video|unit=per-output|duration=5|quantity=1",
+    "registryVersion": "video-2026-07-20.1",
+    "modelId": "kling-2.1/standard",
+    "workflow": "image-to-video",
+    "normalizedInput": {
+      "duration": 5,
+      "n": 1
+    },
+    "expectedCredits": 30
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=kling-2.6-motion-control|workflow=motion-control|unit=per-second|resolution=1080p",
+    "mediaKind": "video",
+    "dimensions": {
+      "resolution": "1080p"
+    },
+    "unit": "per-second",
+    "creditsPerUnit": 12,
+    "estimateSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=kling-2.6-motion-control|workflow=motion-control|unit=per-second|duration=5|resolution=1080p",
+    "registryVersion": "video-2026-07-20.1",
+    "modelId": "kling-2.6-motion-control",
+    "workflow": "motion-control",
+    "normalizedInput": {
+      "resolution": "1080p",
+      "duration": 5
+    },
+    "expectedCredits": 60
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=kling-2.6-motion-control|workflow=motion-control|unit=per-second|resolution=720p",
+    "mediaKind": "video",
+    "dimensions": {
+      "resolution": "720p"
+    },
+    "unit": "per-second",
+    "creditsPerUnit": 8,
+    "estimateSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=kling-2.6-motion-control|workflow=motion-control|unit=per-second|duration=5|resolution=720p",
+    "registryVersion": "video-2026-07-20.1",
+    "modelId": "kling-2.6-motion-control",
+    "workflow": "motion-control",
+    "normalizedInput": {
+      "resolution": "720p",
+      "duration": 5
+    },
+    "expectedCredits": 40
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=kling-3.0-motion-control|workflow=motion-control|unit=per-second|resolution=1080p",
+    "mediaKind": "video",
+    "dimensions": {
+      "resolution": "1080p"
+    },
+    "unit": "per-second",
+    "creditsPerUnit": 15,
+    "estimateSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=kling-3.0-motion-control|workflow=motion-control|unit=per-second|duration=5|resolution=1080p",
+    "registryVersion": "video-2026-07-20.1",
+    "modelId": "kling-3.0-motion-control",
+    "workflow": "motion-control",
+    "normalizedInput": {
+      "resolution": "1080p",
+      "duration": 5
+    },
+    "expectedCredits": 75
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=kling-3.0-motion-control|workflow=motion-control|unit=per-second|resolution=720p",
+    "mediaKind": "video",
+    "dimensions": {
+      "resolution": "720p"
+    },
+    "unit": "per-second",
+    "creditsPerUnit": 9,
+    "estimateSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=kling-3.0-motion-control|workflow=motion-control|unit=per-second|duration=5|resolution=720p",
+    "registryVersion": "video-2026-07-20.1",
+    "modelId": "kling-3.0-motion-control",
+    "workflow": "motion-control",
+    "normalizedInput": {
+      "resolution": "720p",
+      "duration": 5
+    },
+    "expectedCredits": 45
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=veo3.1-lite|workflow=text-to-video|unit=per-output|resolution=1080p",
+    "mediaKind": "video",
+    "dimensions": {
+      "resolution": "1080p"
+    },
+    "unit": "per-output",
+    "creditsPerUnit": 20,
+    "estimateSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=veo3.1-lite|workflow=text-to-video|unit=per-output|quantity=1|resolution=1080p",
+    "registryVersion": "video-2026-07-20.1",
+    "modelId": "veo3.1-lite",
+    "workflow": "text-to-video",
+    "normalizedInput": {
+      "resolution": "1080p",
+      "n": 1
+    },
+    "expectedCredits": 20
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=veo3.1-lite|workflow=text-to-video|unit=per-output|resolution=720p",
+    "mediaKind": "video",
+    "dimensions": {
+      "resolution": "720p"
+    },
+    "unit": "per-output",
+    "creditsPerUnit": 20,
+    "estimateSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=veo3.1-lite|workflow=text-to-video|unit=per-output|quantity=1|resolution=720p",
+    "registryVersion": "video-2026-07-20.1",
+    "modelId": "veo3.1-lite",
+    "workflow": "text-to-video",
+    "normalizedInput": {
+      "resolution": "720p",
+      "n": 1
+    },
+    "expectedCredits": 20
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=wan-animate-move|workflow=character-animation|unit=per-second|resolution=480p",
+    "mediaKind": "video",
+    "dimensions": {
+      "resolution": "480p"
+    },
+    "unit": "per-second",
+    "creditsPerUnit": 7,
+    "estimateSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=wan-animate-move|workflow=character-animation|unit=per-second|duration=5|resolution=480p",
+    "registryVersion": "video-2026-07-20.1",
+    "modelId": "wan-animate-move",
+    "workflow": "character-animation",
+    "normalizedInput": {
+      "resolution": "480p",
+      "duration": 5
+    },
+    "expectedCredits": 35
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=wan-animate-move|workflow=character-animation|unit=per-second|resolution=580p",
+    "mediaKind": "video",
+    "dimensions": {
+      "resolution": "580p"
+    },
+    "unit": "per-second",
+    "creditsPerUnit": 12,
+    "estimateSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=wan-animate-move|workflow=character-animation|unit=per-second|duration=5|resolution=580p",
+    "registryVersion": "video-2026-07-20.1",
+    "modelId": "wan-animate-move",
+    "workflow": "character-animation",
+    "normalizedInput": {
+      "resolution": "580p",
+      "duration": 5
+    },
+    "expectedCredits": 60
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=wan-animate-move|workflow=character-animation|unit=per-second|resolution=720p",
+    "mediaKind": "video",
+    "dimensions": {
+      "resolution": "720p"
+    },
+    "unit": "per-second",
+    "creditsPerUnit": 15,
+    "estimateSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=wan-animate-move|workflow=character-animation|unit=per-second|duration=5|resolution=720p",
+    "registryVersion": "video-2026-07-20.1",
+    "modelId": "wan-animate-move",
+    "workflow": "character-animation",
+    "normalizedInput": {
+      "resolution": "720p",
+      "duration": 5
+    },
+    "expectedCredits": 75
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=wan-animate-replace|workflow=character-replacement|unit=per-second|resolution=480p",
+    "mediaKind": "video",
+    "dimensions": {
+      "resolution": "480p"
+    },
+    "unit": "per-second",
+    "creditsPerUnit": 7,
+    "estimateSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=wan-animate-replace|workflow=character-replacement|unit=per-second|duration=5|resolution=480p",
+    "registryVersion": "video-2026-07-20.1",
+    "modelId": "wan-animate-replace",
+    "workflow": "character-replacement",
+    "normalizedInput": {
+      "resolution": "480p",
+      "duration": 5
+    },
+    "expectedCredits": 35
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=wan-animate-replace|workflow=character-replacement|unit=per-second|resolution=580p",
+    "mediaKind": "video",
+    "dimensions": {
+      "resolution": "580p"
+    },
+    "unit": "per-second",
+    "creditsPerUnit": 12,
+    "estimateSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=wan-animate-replace|workflow=character-replacement|unit=per-second|duration=5|resolution=580p",
+    "registryVersion": "video-2026-07-20.1",
+    "modelId": "wan-animate-replace",
+    "workflow": "character-replacement",
+    "normalizedInput": {
+      "resolution": "580p",
+      "duration": 5
+    },
+    "expectedCredits": 60
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=wan-animate-replace|workflow=character-replacement|unit=per-second|resolution=720p",
+    "mediaKind": "video",
+    "dimensions": {
+      "resolution": "720p"
+    },
+    "unit": "per-second",
+    "creditsPerUnit": 15,
+    "estimateSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=wan-animate-replace|workflow=character-replacement|unit=per-second|duration=5|resolution=720p",
+    "registryVersion": "video-2026-07-20.1",
+    "modelId": "wan-animate-replace",
+    "workflow": "character-replacement",
+    "normalizedInput": {
+      "resolution": "720p",
+      "duration": 5
+    },
+    "expectedCredits": 75
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=wan2.2-image-to-video-fast|workflow=frame-to-video|unit=per-output|resolution=480p",
+    "mediaKind": "video",
+    "dimensions": {
+      "resolution": "480p"
+    },
+    "unit": "per-output",
+    "creditsPerUnit": 6,
+    "estimateSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=wan2.2-image-to-video-fast|workflow=frame-to-video|unit=per-output|quantity=1|resolution=480p",
+    "registryVersion": "video-2026-07-20.1",
+    "modelId": "wan2.2-image-to-video-fast",
+    "workflow": "frame-to-video",
+    "normalizedInput": {
+      "resolution": "480p",
+      "n": 1
+    },
+    "expectedCredits": 6
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=wan2.2-image-to-video-fast|workflow=frame-to-video|unit=per-output|resolution=720p",
+    "mediaKind": "video",
+    "dimensions": {
+      "resolution": "720p"
+    },
+    "unit": "per-output",
+    "creditsPerUnit": 12,
+    "estimateSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=wan2.2-image-to-video-fast|workflow=frame-to-video|unit=per-output|quantity=1|resolution=720p",
+    "registryVersion": "video-2026-07-20.1",
+    "modelId": "wan2.2-image-to-video-fast",
+    "workflow": "frame-to-video",
+    "normalizedInput": {
+      "resolution": "720p",
+      "n": 1
+    },
+    "expectedCredits": 12
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=wan2.6-text-to-video|workflow=text-to-video|unit=per-output|duration=10|resolution=1080p",
+    "mediaKind": "video",
+    "dimensions": {
+      "resolution": "1080p",
+      "duration": 10
+    },
+    "unit": "per-output",
+    "creditsPerUnit": 240,
+    "estimateSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=wan2.6-text-to-video|workflow=text-to-video|unit=per-output|duration=10|quantity=1|resolution=1080p",
+    "registryVersion": "video-2026-07-20.1",
+    "modelId": "wan2.6-text-to-video",
+    "workflow": "text-to-video",
+    "normalizedInput": {
+      "resolution": "1080p",
+      "duration": 10,
+      "n": 1
+    },
+    "expectedCredits": 240
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=wan2.6-text-to-video|workflow=text-to-video|unit=per-output|duration=10|resolution=720p",
+    "mediaKind": "video",
+    "dimensions": {
+      "resolution": "720p",
+      "duration": 10
+    },
+    "unit": "per-output",
+    "creditsPerUnit": 160,
+    "estimateSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=wan2.6-text-to-video|workflow=text-to-video|unit=per-output|duration=10|quantity=1|resolution=720p",
+    "registryVersion": "video-2026-07-20.1",
+    "modelId": "wan2.6-text-to-video",
+    "workflow": "text-to-video",
+    "normalizedInput": {
+      "resolution": "720p",
+      "duration": 10,
+      "n": 1
+    },
+    "expectedCredits": 160
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=wan2.6-text-to-video|workflow=text-to-video|unit=per-output|duration=15|resolution=1080p",
+    "mediaKind": "video",
+    "dimensions": {
+      "resolution": "1080p",
+      "duration": 15
+    },
+    "unit": "per-output",
+    "creditsPerUnit": 360,
+    "estimateSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=wan2.6-text-to-video|workflow=text-to-video|unit=per-output|duration=15|quantity=1|resolution=1080p",
+    "registryVersion": "video-2026-07-20.1",
+    "modelId": "wan2.6-text-to-video",
+    "workflow": "text-to-video",
+    "normalizedInput": {
+      "resolution": "1080p",
+      "duration": 15,
+      "n": 1
+    },
+    "expectedCredits": 360
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=wan2.6-text-to-video|workflow=text-to-video|unit=per-output|duration=15|resolution=720p",
+    "mediaKind": "video",
+    "dimensions": {
+      "resolution": "720p",
+      "duration": 15
+    },
+    "unit": "per-output",
+    "creditsPerUnit": 240,
+    "estimateSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=wan2.6-text-to-video|workflow=text-to-video|unit=per-output|duration=15|quantity=1|resolution=720p",
+    "registryVersion": "video-2026-07-20.1",
+    "modelId": "wan2.6-text-to-video",
+    "workflow": "text-to-video",
+    "normalizedInput": {
+      "resolution": "720p",
+      "duration": 15,
+      "n": 1
+    },
+    "expectedCredits": 240
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=wan2.6-text-to-video|workflow=text-to-video|unit=per-output|duration=5|resolution=1080p",
+    "mediaKind": "video",
+    "dimensions": {
+      "resolution": "1080p",
+      "duration": 5
+    },
+    "unit": "per-output",
+    "creditsPerUnit": 120,
+    "estimateSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=wan2.6-text-to-video|workflow=text-to-video|unit=per-output|duration=5|quantity=1|resolution=1080p",
+    "registryVersion": "video-2026-07-20.1",
+    "modelId": "wan2.6-text-to-video",
+    "workflow": "text-to-video",
+    "normalizedInput": {
+      "resolution": "1080p",
+      "duration": 5,
+      "n": 1
+    },
+    "expectedCredits": 120
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=wan2.6-text-to-video|workflow=text-to-video|unit=per-output|duration=5|resolution=720p",
+    "mediaKind": "video",
+    "dimensions": {
+      "resolution": "720p",
+      "duration": 5
+    },
+    "unit": "per-output",
+    "creditsPerUnit": 80,
+    "estimateSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=wan2.6-text-to-video|workflow=text-to-video|unit=per-output|duration=5|quantity=1|resolution=720p",
+    "registryVersion": "video-2026-07-20.1",
+    "modelId": "wan2.6-text-to-video",
+    "workflow": "text-to-video",
+    "normalizedInput": {
+      "resolution": "720p",
+      "duration": 5,
+      "n": 1
+    },
+    "expectedCredits": 80
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=wan2.7-edit-video|workflow=video-edit|unit=per-second|resolution=1080p",
+    "mediaKind": "video",
+    "dimensions": {
+      "resolution": "1080p"
+    },
+    "unit": "per-second",
+    "creditsPerUnit": 18,
+    "estimateSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=wan2.7-edit-video|workflow=video-edit|unit=per-second|duration=5|resolution=1080p",
+    "registryVersion": "video-2026-07-20.1",
+    "modelId": "wan2.7-edit-video",
+    "workflow": "video-edit",
+    "normalizedInput": {
+      "resolution": "1080p",
+      "duration": 5
+    },
+    "expectedCredits": 90
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=wan2.7-edit-video|workflow=video-edit|unit=per-second|resolution=720p",
+    "mediaKind": "video",
+    "dimensions": {
+      "resolution": "720p"
+    },
+    "unit": "per-second",
+    "creditsPerUnit": 12,
+    "estimateSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=wan2.7-edit-video|workflow=video-edit|unit=per-second|duration=5|resolution=720p",
+    "registryVersion": "video-2026-07-20.1",
+    "modelId": "wan2.7-edit-video",
+    "workflow": "video-edit",
+    "normalizedInput": {
+      "resolution": "720p",
+      "duration": 5
+    },
+    "expectedCredits": 60
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=wan2.7-image-to-video|workflow=image-to-video|unit=per-second|resolution=1080p",
+    "mediaKind": "video",
+    "dimensions": {
+      "resolution": "1080p"
+    },
+    "unit": "per-second",
+    "creditsPerUnit": 18,
+    "estimateSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=wan2.7-image-to-video|workflow=image-to-video|unit=per-second|duration=5|resolution=1080p",
+    "registryVersion": "video-2026-07-20.1",
+    "modelId": "wan2.7-image-to-video",
+    "workflow": "image-to-video",
+    "normalizedInput": {
+      "resolution": "1080p",
+      "duration": 5
+    },
+    "expectedCredits": 90
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=wan2.7-image-to-video|workflow=image-to-video|unit=per-second|resolution=720p",
+    "mediaKind": "video",
+    "dimensions": {
+      "resolution": "720p"
+    },
+    "unit": "per-second",
+    "creditsPerUnit": 12,
+    "estimateSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=wan2.7-image-to-video|workflow=image-to-video|unit=per-second|duration=5|resolution=720p",
+    "registryVersion": "video-2026-07-20.1",
+    "modelId": "wan2.7-image-to-video",
+    "workflow": "image-to-video",
+    "normalizedInput": {
+      "resolution": "720p",
+      "duration": 5
+    },
+    "expectedCredits": 60
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=wan2.7-reference-to-video|workflow=reference-to-video|unit=per-second|resolution=1080p",
+    "mediaKind": "video",
+    "dimensions": {
+      "resolution": "1080p"
+    },
+    "unit": "per-second",
+    "creditsPerUnit": 18,
+    "estimateSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=wan2.7-reference-to-video|workflow=reference-to-video|unit=per-second|duration=5|resolution=1080p",
+    "registryVersion": "video-2026-07-20.1",
+    "modelId": "wan2.7-reference-to-video",
+    "workflow": "reference-to-video",
+    "normalizedInput": {
+      "resolution": "1080p",
+      "duration": 5
+    },
+    "expectedCredits": 90
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=wan2.7-reference-to-video|workflow=reference-to-video|unit=per-second|resolution=720p",
+    "mediaKind": "video",
+    "dimensions": {
+      "resolution": "720p"
+    },
+    "unit": "per-second",
+    "creditsPerUnit": 12,
+    "estimateSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=wan2.7-reference-to-video|workflow=reference-to-video|unit=per-second|duration=5|resolution=720p",
+    "registryVersion": "video-2026-07-20.1",
+    "modelId": "wan2.7-reference-to-video",
+    "workflow": "reference-to-video",
+    "normalizedInput": {
+      "resolution": "720p",
+      "duration": 5
+    },
+    "expectedCredits": 60
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=wan2.7-text-to-video|workflow=text-to-video|unit=per-second|resolution=1080p",
+    "mediaKind": "video",
+    "dimensions": {
+      "resolution": "1080p"
+    },
+    "unit": "per-second",
+    "creditsPerUnit": 18,
+    "estimateSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=wan2.7-text-to-video|workflow=text-to-video|unit=per-second|duration=5|resolution=1080p",
+    "registryVersion": "video-2026-07-20.1",
+    "modelId": "wan2.7-text-to-video",
+    "workflow": "text-to-video",
+    "normalizedInput": {
+      "resolution": "1080p",
+      "duration": 5
+    },
+    "expectedCredits": 90
+  },
+  {
+    "tierSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=wan2.7-text-to-video|workflow=text-to-video|unit=per-second|resolution=720p",
+    "mediaKind": "video",
+    "dimensions": {
+      "resolution": "720p"
+    },
+    "unit": "per-second",
+    "creditsPerUnit": 12,
+    "estimateSignature": "version=pricing-signature-v1|registry=video-2026-07-20.1|model=wan2.7-text-to-video|workflow=text-to-video|unit=per-second|duration=5|resolution=720p",
+    "registryVersion": "video-2026-07-20.1",
+    "modelId": "wan2.7-text-to-video",
+    "workflow": "text-to-video",
+    "normalizedInput": {
+      "resolution": "720p",
+      "duration": 5
+    },
+    "expectedCredits": 60
+  }
+]

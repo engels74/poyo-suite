@@ -13,20 +13,46 @@ type BrowserHarness = Awaited<ReturnType<typeof startBrowserAppHarness>>;
 
 async function submitPaidGeneration(page: Page, prompt: string) {
   return page.evaluate(async (paidPrompt) => {
+    const actionId = crypto.randomUUID();
     const response = await fetch('/api/jobs', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        actionId: crypto.randomUUID(),
+        actionId,
         entryKey: 'flux-schnell:text-to-image',
         values: { prompt: paidPrompt },
         expertOverrides: [],
         inputs: []
-      })
+      }),
+      signal: AbortSignal.timeout(10_000)
     });
     const body = (await response.json()) as { job?: { id?: string } };
-    return { status: response.status, jobId: body.job?.id };
+    return { status: response.status, jobId: body.job?.id, actionId };
   }, prompt);
+}
+
+async function waitForPersistedJobState(
+  page: Page,
+  actionId: string,
+  ready: (job: { attentionCode?: string | null; poyoTaskId?: string | null }) => boolean,
+  failureMessage: string
+): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  const url = new URL('/api/jobs', page.url());
+  url.searchParams.set('actionId', actionId);
+  while (Date.now() < deadline) {
+    try {
+      const response = await page.request.get(url.toString(), { timeout: 1_000 });
+      if (response.ok()) {
+        const body = (await response.json()) as {
+          job?: { attentionCode?: string | null; poyoTaskId?: string | null };
+        };
+        if (body.job && ready(body.job)) return;
+      }
+    } catch {}
+    await Bun.sleep(25);
+  }
+  throw new Error(failureMessage);
 }
 
 async function continueThroughAppearanceAndDefaults(page: Page): Promise<void> {
@@ -89,6 +115,12 @@ async function exercisePublicIpv4Guard(harness: BrowserHarness, page: Page): Pro
   const guardedGeneration = await submitPaidGeneration(page, 'Guarded paid generation fixture');
   expect(guardedGeneration.status).toBe(202);
   expect(guardedGeneration.jobId).toBeTruthy();
+  await waitForPersistedJobState(
+    page,
+    guardedGeneration.actionId,
+    (job) => job.attentionCode === 'ip_guard_blocked',
+    'The guarded generation did not persist its IP-guard rejection.'
+  );
   await page.goto(`${harness.url}/jobs/${guardedGeneration.jobId}`);
   await page.getByText('Blocked by IP guard.', { exact: true }).waitFor();
   expect(harness.mock.requests.length).toBe(poyoCallsBeforeGeneration);
@@ -121,6 +153,12 @@ async function exercisePublicIpv4Guard(harness: BrowserHarness, page: Page): Pro
   const allowedGeneration = await submitPaidGeneration(page, 'Allowed paid generation fixture');
   expect(allowedGeneration.status).toBe(202);
   expect(allowedGeneration.jobId).toBeTruthy();
+  await waitForPersistedJobState(
+    page,
+    allowedGeneration.actionId,
+    (job) => Boolean(job.poyoTaskId),
+    'The allowed generation did not persist its Poyo task link.'
+  );
   await page.goto(`${harness.url}/jobs/${allowedGeneration.jobId}`);
   await page.getByText('Poyo task linked', { exact: true }).waitFor();
   expect(

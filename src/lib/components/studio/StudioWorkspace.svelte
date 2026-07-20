@@ -12,6 +12,7 @@ import type {
   StudioOutputDto,
   StudioRoleInput
 } from '$lib/features/generation/contracts';
+import type { Estimate, TaskCharge } from '$lib/features/pricing/contracts';
 import {
   type BrowserMediaMetadata,
   mediaMetadataLabel,
@@ -39,7 +40,6 @@ import {
 import {
   applyStudioJobEvent,
   compareStudioJobRecency,
-  mergeStudioJobEventAttention,
   mergeKnownStudioSnapshot,
   nextStudioResultCandidate,
   upsertStudioSessionJob,
@@ -165,6 +165,7 @@ let sessionJobs = $state<StudioSessionJobs>({});
 let resultJob = $state<StudioJobDto | null>(null);
 let connection = $state<'connecting' | 'connected' | 'reconnecting'>('connecting');
 let balance = $state(initialData.balance);
+let outstandingProjection = $state(initialData.outstandingProjection);
 let balanceRefreshing = $state(false);
 let favorites = $state(
   initialData.preferences.filter((item) => item.favorite).map((item) => item.entryKey)
@@ -201,7 +202,7 @@ let activeJobOwnsStage = $derived.by(() => {
   if (outputCandidateStates[activeJob.id] === 'viewable') return false;
   return !resultJob || compareStudioJobRecency(activeJob, resultJob) > 0;
 });
-let completedCredits = $state<number | null>(null);
+let completedTaskCharge = $state<TaskCharge | null>(null);
 let nowMs = $state(0);
 let batch = $state<StudioBatch>({
   version: 1,
@@ -215,6 +216,28 @@ const balanceStaleMs = 10 * 60_000;
 let balanceStale = $derived(
   balance !== null && nowMs > 0 && nowMs - new Date(balance.fetchedAt).getTime() > balanceStaleMs
 );
+let currentEstimate = $derived(preview?.estimate ?? null);
+let displayedTaskCharge = $derived(
+  activeJob && activeJob.id !== resultJob?.id
+    ? activeJob.taskCharge
+    : (completedTaskCharge ?? resultJob?.taskCharge ?? activeJob?.taskCharge ?? null)
+);
+
+function creditsLabel(value: number): string {
+  return value.toLocaleString(undefined, { maximumFractionDigits: 3 });
+}
+
+function estimateBasisLabel(estimate: Estimate): string {
+  if (!estimate.basis) return '';
+  const unit = estimate.basis.unit === 'per-output' ? 'output' : 'second';
+  return `${creditsLabel(estimate.basis.units)} ${unit}${estimate.basis.units === 1 ? '' : 's'} × ${creditsLabel(estimate.basis.creditsPerUnit)} cr`;
+}
+
+function estimateProvenanceLabel(estimate: Estimate): string {
+  if (estimate.provenance === 'observed') return 'observed median';
+  if (estimate.provenance === 'blend') return 'published + observed';
+  return 'published';
+}
 
 const pendingActionStorageKey = `poyo-studio-pending-action:${initialData.modality}`;
 interface PendingAction {
@@ -565,7 +588,7 @@ function captureSubmissionSnapshot(actionId: string): StudioSubmissionSnapshot |
 async function validateSubmissionSnapshot(
   snapshot: StudioSubmissionSnapshot,
   revision: number
-): Promise<boolean> {
+): Promise<NormalizedPreview | null> {
   if (revision === previewRevision) {
     previewState = 'validating';
     previewIssues = [];
@@ -588,13 +611,13 @@ async function validateSubmissionSnapshot(
             ? (result.error.issues ?? [result.error.message ?? 'The request is not valid.'])
             : ['The request is not valid.'];
       }
-      return false;
+      return null;
     }
     if (revision === previewRevision) {
       preview = result;
       previewState = 'valid';
     }
-    return true;
+    return result;
   } catch (error) {
     if (revision === previewRevision) {
       preview = null;
@@ -603,7 +626,7 @@ async function validateSubmissionSnapshot(
         error instanceof Error ? error.message : 'The request preview is unavailable.'
       ];
     }
-    return false;
+    return null;
   }
 }
 
@@ -675,6 +698,7 @@ async function loadResultCandidate(job: StudioJobDto): Promise<void> {
     const result = (await response.json()) as {
       outputs?: StudioOutputDto[];
       actualCredits?: number | null;
+      taskCharge?: TaskCharge | null;
     };
     if (!response.ok || !result.outputs?.some((output) => output.mediaUrl)) {
       outputCandidateStates = {
@@ -691,7 +715,7 @@ async function loadResultCandidate(job: StudioJobDto): Promise<void> {
       resultJob = accepted;
       outputs = result.outputs;
       selectedOutput = 0;
-      completedCredits = result.actualCredits ?? accepted.actualCredits ?? null;
+      completedTaskCharge = result.taskCharge ?? accepted.taskCharge ?? null;
       outputsError = '';
       if (hasApiKey) void refreshBalanceSnapshot();
     }
@@ -941,7 +965,8 @@ async function submit(): Promise<void> {
     return;
   }
   submitting = true;
-  if (!(await validateSubmissionSnapshot(snapshot, revision))) {
+  const validated = await validateSubmissionSnapshot(snapshot, revision);
+  if (!validated) {
     submitting = false;
     revealFirstInvalidSection();
     return;
@@ -1033,14 +1058,16 @@ async function addCurrentToBatch(): Promise<void> {
     automaticFields: [...automaticFieldKeys()],
     request: snapshot.request
   };
-  if (!(await validateSubmissionSnapshot(snapshot, revision))) {
+  const validated = await validateSubmissionSnapshot(snapshot, revision);
+  if (!validated) {
     revealFirstInvalidSection();
     return;
   }
   const item = createBatchItem(
     {
       modality: data.modality,
-      ...batchSnapshot
+      ...batchSnapshot,
+      estimate: validated.estimate ?? null
     },
     {
       itemId: existing?.id ?? crypto.randomUUID(),
@@ -1386,7 +1413,7 @@ function dismissResultPreview(): void {
   resultJob = null;
   outputs = null;
   outputsError = '';
-  completedCredits = null;
+  completedTaskCharge = null;
   selectedOutput = 0;
 }
 
@@ -1443,17 +1470,13 @@ function startResize(event: PointerEvent): void {
 
 function updateFromJobEvent(event: MessageEvent<string>): void {
   const update = JSON.parse(event.data) as StudioJobEventUpdate;
+  if (update.outstandingProjection) outstandingProjection = update.outstandingProjection;
   const batchItem = batch.items.find((item) => item.job?.id === update.jobId);
   if (batchItem?.job) {
-    applyJobToBatchItem(batchItem, {
-      ...batchItem.job,
-      localPhase: update.localPhase,
-      remoteStatus: update.remoteStatus,
-      failureDomain: update.failureDomain,
-      ...mergeStudioJobEventAttention(batchItem.job, update),
-      progress: update.progress,
-      updatedAt: update.observedAt
-    });
+    const updatedBatchJob = applyStudioJobEvent({ [batchItem.job.id]: batchItem.job }, update)[
+      batchItem.job.id
+    ];
+    if (updatedBatchJob) applyJobToBatchItem(batchItem, updatedBatchJob);
   }
   const previousJob = sessionJobs[update.jobId];
   sessionJobs = applyStudioJobEvent(sessionJobs, update);
@@ -1612,7 +1635,11 @@ onMount(() => {
     const message = event as MessageEvent<string>;
     if (!acceptDurableEvent(message)) return;
     connection = 'connected';
-    const snapshot = JSON.parse(message.data) as { jobs: StudioJobDto[] };
+    const snapshot = JSON.parse(message.data) as {
+      jobs: StudioJobDto[];
+      outstandingProjection?: StudioLoadData['outstandingProjection'];
+    };
+    if (snapshot.outstandingProjection) outstandingProjection = snapshot.outstandingProjection;
     for (const item of batch.items) {
       const matchingBatchJob = snapshot.jobs.find((job) => job.id === item.job?.id);
       if (matchingBatchJob) applyJobToBatchItem(item, matchingBatchJob);
@@ -2261,10 +2288,29 @@ onMount(() => {
                       ? 'Ready to generate'
                       : 'Complete setup'}
           </Badge>
+          <span
+            class="text-muted-foreground"
+            class:text-warning={currentEstimate?.freshness === 'stale'}
+          >
+            {#if currentEstimate?.availability === 'available' && currentEstimate.credits !== null}
+              <strong class="font-semibold text-foreground">Estimated credits:</strong>
+              {creditsLabel(currentEstimate.credits)} · {estimateBasisLabel(currentEstimate)} · {estimateProvenanceLabel(currentEstimate)} · {currentEstimate.freshness}
+            {:else}
+              <strong class="font-semibold text-foreground">Estimated credits:</strong>
+              unavailable · {preview ? 'generation remains enabled' : 'complete setup to generate'}
+            {/if}
+          </span>
+          {#if displayedTaskCharge}
+            <span class="text-muted-foreground">
+              <strong class="font-semibold text-foreground">Charged:</strong>
+              {creditsLabel(displayedTaskCharge.credits)} credits · Poyo task
+            </span>
+          {/if}
           <span class="text-muted-foreground">
-            {completedCredits !== null
-              ? `${completedCredits} credits charged`
-              : 'Exact credits appear after completion'}
+            <strong class="font-semibold text-foreground">Outstanding projection:</strong>
+            {outstandingProjection.credits === null
+              ? `unavailable · ${outstandingProjection.actionCount} action${outstandingProjection.actionCount === 1 ? '' : 's'}`
+              : `${creditsLabel(outstandingProjection.credits)} credits · ${outstandingProjection.actionCount} action${outstandingProjection.actionCount === 1 ? '' : 's'}`}
           </span>
           <span class="flex items-center gap-1.5">
             {#if balance}

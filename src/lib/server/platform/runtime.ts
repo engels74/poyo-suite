@@ -1,6 +1,7 @@
 import { env } from '$env/dynamic/private';
 import { StructuredLogger } from '../diagnostics/jsonl-logger';
 import { recoverSourceIntakeTemporaries } from '../media/source-intake';
+import { PublicPricingService } from '../pricing/public-pricing';
 import { seedImageRegistry, seedVideoRegistry } from '../registry/repository';
 import { ApiKeyManager } from '../settings/api-key-manager';
 import { SecretMetadataRepository } from '../settings/secret-metadata-repository';
@@ -20,6 +21,7 @@ export interface PlatformServices {
   apiKey: ApiKeyManager;
   logger: StructuredLogger;
   publicIpv4: PublicIpv4Service;
+  pricing: PublicPricingService;
 }
 
 let servicesPromise: Promise<PlatformServices> | undefined;
@@ -72,6 +74,12 @@ async function createPlatformServices(): Promise<PlatformServices> {
         mutationGate: maintenanceGate
       });
       const publicIpv4 = new PublicIpv4Service({ settings, environment: env });
+      const pricing = new PublicPricingService({
+        settings,
+        gate: maintenanceGate,
+        reportFailure: (category) =>
+          logger.warn('pricing.refresh_failed', { data: { category } }).catch(() => undefined)
+      });
       await logger.info('platform.started', {
         data: {
           schemaVersion: DATABASE_SCHEMA_VERSION,
@@ -89,7 +97,8 @@ async function createPlatformServices(): Promise<PlatformServices> {
         settings,
         apiKey,
         logger,
-        publicIpv4
+        publicIpv4,
+        pricing
       };
     } catch (error) {
       database?.close();

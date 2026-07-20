@@ -1,6 +1,18 @@
 import type { Database } from 'bun:sqlite';
+import {
+  PRICING_SIGNATURE_VERSION,
+  type EstimateEnvelope,
+  type OutstandingSpendProjection,
+  type TaskCharge,
+  type PricingBasis
+} from '../../features/pricing/contracts';
+import {
+  isPricingSignature,
+  OBSERVED_MEDIAN_MAX_SAMPLES,
+  type ObservedChargeSample
+} from '../../features/pricing/estimate';
 import { DatabaseRepository } from '../platform/repository';
-import type { PoyoStatusResult, PoyoSubmitResult } from '../poyo/types';
+import type { PoyoBalanceResult, PoyoStatusResult, PoyoSubmitResult } from '../poyo/types';
 import { isPaidActionId, JobRequestError } from './create-request';
 import { packDurableJobEventPayload } from './event-attention';
 import type {
@@ -46,11 +58,38 @@ type JobRow = {
 };
 type IntentRow = {
   job_id: string;
+  request_fingerprint: string;
   state: string;
   transmit_claim_token: string | null;
   transmit_claim_owner: string | null;
   lease_expires_at: string | null;
   actual_payload_json: string;
+};
+type ObservedChargeRow = {
+  registry_version: string | null;
+  estimated_credits: number | null;
+  actual_credits: number | null;
+  remote_status: RemoteStatus;
+  remote_status_raw: string | null;
+  safe_payload_json: string | null;
+  terminal_at: string;
+};
+type OutstandingRow = {
+  action_id: string;
+  intent_state: string;
+  sent_at: string | null;
+  intent_task_id: string | null;
+  job_task_id: string | null;
+  local_phase: LocalPhase;
+  remote_status: RemoteStatus;
+  estimated_credits: number | null;
+};
+type BalanceRow = {
+  id: number;
+  email: string | null;
+  credits: number;
+  source: string;
+  fetched_at: string;
 };
 type ActionRow = {
   job_id: string;
@@ -111,6 +150,37 @@ type RefreshManagedSource = (
   mediaKind: 'image' | 'video'
 ) => Promise<{ id: string; url: string }>;
 
+export type CostBalancePhase = 'before' | 'after';
+export type BalanceCorroborationReason =
+  | 'snapshot_failed'
+  | 'snapshot_count'
+  | 'account_mismatch'
+  | 'snapshot_order'
+  | 'terminal_charge_missing'
+  | 'terminal_outside_bracket'
+  | 'charge_mismatch'
+  | 'unknown_intent'
+  | 'retry'
+  | 'dispatch_count'
+  | 'unrelated_snapshot'
+  | 'overlapping_paid_action';
+
+export type BalanceCorroboration =
+  | { status: 'unavailable'; reason: null }
+  | { status: 'ambiguous'; reason: BalanceCorroborationReason }
+  | { status: 'corroborated'; reason: null };
+
+const BALANCE_CORROBORATION_TOLERANCE = 0.001;
+const OBSERVED_CHARGE_CANDIDATE_SCAN_LIMIT = OBSERVED_MEDIAN_MAX_SAMPLES * 2;
+
+export function costBalanceSource(
+  phase: CostBalancePhase,
+  jobId: string,
+  actionId: string
+): string {
+  return `cost:v1:${phase}:${jobId}:${actionId}`;
+}
+
 const transitions: Record<LocalPhase, readonly LocalPhase[]> = {
   queued: ['validating', 'submission_prepared', 'requires_attention'],
   validating: ['uploading', 'submission_prepared', 'requires_attention'],
@@ -135,6 +205,45 @@ function hash(value: string): string {
   return new Bun.CryptoHasher('sha256').update(value).digest('hex');
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function terminalStatus(
+  remoteStatus: RemoteStatus,
+  remoteStatusRaw: string | null
+): TaskCharge['terminalStatus'] | null {
+  if (remoteStatus === 'finished') return 'finished';
+  if (remoteStatus !== 'failed') return null;
+  return remoteStatusRaw === 'cancelled' || remoteStatusRaw === 'canceled' ? 'cancelled' : 'failed';
+}
+
+function taskChargeFromParts(input: {
+  credits: number | null;
+  remoteStatus: RemoteStatus;
+  remoteStatusRaw: string | null;
+  settledAt: string | null;
+}): TaskCharge | null {
+  const status = terminalStatus(input.remoteStatus, input.remoteStatusRaw);
+  if (
+    !status ||
+    input.credits === null ||
+    !Number.isFinite(input.credits) ||
+    input.credits < 0 ||
+    !input.settledAt ||
+    !Number.isFinite(Date.parse(input.settledAt))
+  ) {
+    return null;
+  }
+  return {
+    classification: 'task-charge',
+    credits: input.credits,
+    source: 'poyo-task',
+    terminalStatus: status,
+    settledAt: input.settledAt
+  };
+}
+
 function replacePayloadUrls(value: unknown, replacements: ReadonlyMap<string, string>): unknown {
   if (typeof value === 'string') return replacements.get(value) ?? value;
   if (Array.isArray(value)) return value.map((item) => replacePayloadUrls(item, replacements));
@@ -156,6 +265,93 @@ function assertSafeRequest(value: unknown): void {
       throw new Error('Generation requests cannot contain credential fields.');
     assertSafeRequest(entry);
   }
+}
+
+function safeEstimateNumber(value: number | null, label: string): number | null {
+  if (value === null) return null;
+  if (!Number.isFinite(value) || value < 0 || value > 1_000_000_000) {
+    throw new Error(`${label} is outside the supported range.`);
+  }
+  return value;
+}
+
+function safeEstimateBasis(value: PricingBasis | null): PricingBasis | null {
+  if (value === null) return null;
+  if (
+    (value.unit !== 'per-output' && value.unit !== 'per-second') ||
+    !Number.isFinite(value.creditsPerUnit) ||
+    value.creditsPerUnit < 0 ||
+    value.creditsPerUnit > 1_000_000_000 ||
+    !Number.isFinite(value.units) ||
+    value.units <= 0 ||
+    value.units > 100_000_000
+  ) {
+    throw new Error('Estimate basis is outside the supported range.');
+  }
+  return {
+    unit: value.unit,
+    creditsPerUnit: value.creditsPerUnit,
+    units: value.units
+  };
+}
+
+function safeEstimateEnvelope(
+  value: EstimateEnvelope | undefined,
+  registryVersion: string | null,
+  estimatedCredits: number | null
+): EstimateEnvelope {
+  const credits = safeEstimateNumber(estimatedCredits, 'Estimated credits');
+  if (!value) {
+    return {
+      signatureVersion: PRICING_SIGNATURE_VERSION,
+      signature: null,
+      registryVersion,
+      pricingHash: null,
+      basis: null,
+      provenance: 'published',
+      sourceVerifiedAt: null,
+      credits
+    };
+  }
+  const keys = Object.keys(value).sort();
+  if (
+    keys.join(',') !==
+    'basis,credits,pricingHash,provenance,registryVersion,signature,signatureVersion,sourceVerifiedAt'
+  ) {
+    throw new Error('Estimate envelope contains unsupported fields.');
+  }
+  if (value.signatureVersion !== PRICING_SIGNATURE_VERSION) {
+    throw new Error('Estimate signature version is unsupported.');
+  }
+  if (
+    (value.signature !== null && !isPricingSignature(value.signature)) ||
+    value.registryVersion !== registryVersion ||
+    (value.registryVersion !== null && value.registryVersion.length > 128) ||
+    (value.pricingHash !== null &&
+      (typeof value.pricingHash !== 'string' || !/^[0-9a-f]{64}$/.test(value.pricingHash))) ||
+    !['published', 'observed', 'blend'].includes(value.provenance) ||
+    (value.sourceVerifiedAt !== null &&
+      (typeof value.sourceVerifiedAt !== 'string' ||
+        value.sourceVerifiedAt.length > 64 ||
+        !Number.isFinite(Date.parse(value.sourceVerifiedAt)) ||
+        new Date(value.sourceVerifiedAt).toISOString() !== value.sourceVerifiedAt))
+  ) {
+    throw new Error('Estimate envelope is invalid.');
+  }
+  const envelopeCredits = safeEstimateNumber(value.credits, 'Estimate envelope credits');
+  if (envelopeCredits !== credits) {
+    throw new Error('Estimate envelope credits do not match the persisted estimate.');
+  }
+  return {
+    signatureVersion: value.signatureVersion,
+    signature: value.signature,
+    registryVersion: value.registryVersion,
+    pricingHash: value.pricingHash,
+    basis: safeEstimateBasis(value.basis),
+    provenance: value.provenance,
+    sourceVerifiedAt: value.sourceVerifiedAt,
+    credits: envelopeCredits
+  };
 }
 function mapJob(row: JobRow): JobRecord {
   return {
@@ -270,8 +466,10 @@ export class JobRepository extends DatabaseRepository {
       throw new Error('Workflow and public model ID are required.');
     if (!request.normalizedPayload?.model?.trim() || !request.normalizedPayload.input)
       throw new Error('A normalized Poyo payload is required.');
-    if (request.estimatedCredits !== undefined && request.estimatedCredits < 0)
-      throw new Error('Estimated credits cannot be negative.');
+    const requestedEstimate = safeEstimateNumber(
+      request.estimatedCredits ?? null,
+      'Estimated credits'
+    );
     assertSafeRequest(request.guidedRequest);
     assertSafeRequest(request.normalizedPayload);
     assertSafeRequest(request.expertDiff ?? []);
@@ -285,7 +483,6 @@ export class JobRepository extends DatabaseRepository {
           publicModelId: request.publicModelId,
           guidedRequest: request.guidedRequest,
           normalizedPayload: request.normalizedPayload,
-          estimatedCredits: request.estimatedCredits ?? null,
           correlationId: request.correlationId ?? null,
           retryOfJobId: request.retryOfJobId ?? null,
           expertDiff: request.expertDiff ?? [],
@@ -337,6 +534,11 @@ export class JobRepository extends DatabaseRepository {
           'The prepared request does not match its registry entry.',
           409
         );
+      const estimateEnvelope = safeEstimateEnvelope(
+        request.estimateEnvelope,
+        registry?.registry_version ?? null,
+        requestedEstimate
+      );
       this.database
         .query(
           `INSERT INTO jobs(id,registry_version,entry_key,workflow,public_model_id,local_phase,guided_request_json,actual_payload_json,expert_diff_json,estimated_credits,prompt_text,search_text,correlation_id,retry_of_job_id,created_at,updated_at) VALUES (?,?,?,?,?,'submission_prepared',?,?,?,?,?,?,?,?,?,?)`
@@ -350,7 +552,7 @@ export class JobRepository extends DatabaseRepository {
           canonical(request.guidedRequest),
           payload,
           request.expertDiff?.length ? canonical(request.expertDiff) : null,
-          request.estimatedCredits ?? null,
+          requestedEstimate,
           request.prompt ?? null,
           `${request.prompt ?? ''} ${request.publicModelId}`,
           request.correlationId ?? crypto.randomUUID(),
@@ -400,7 +602,7 @@ export class JobRepository extends DatabaseRepository {
         .run(id, request.actionId, immutableHash, now, now);
       const job = this.get(id);
       if (!job) throw new Error('Created job was not found.');
-      this.append(job, 'job.created');
+      this.append(job, 'job.created', { estimate: estimateEnvelope });
       return job;
     });
   }
@@ -418,6 +620,26 @@ export class JobRepository extends DatabaseRepository {
         metadata: JSON.parse(input.metadata_json),
         ...(input.managed_source_id ? { managedSourceId: input.managed_source_id } : {})
       }));
+  }
+  private estimateEnvelopeFor(job: JobRecord): EstimateEnvelope | undefined {
+    const row = this.database
+      .query<{ safe_payload_json: string | null }, [string]>(
+        `SELECT safe_payload_json FROM job_events
+         WHERE job_id=? AND event_type='job.created' ORDER BY event_id LIMIT 1`
+      )
+      .get(job.id);
+    if (!row?.safe_payload_json) return undefined;
+    try {
+      const payload: unknown = JSON.parse(row.safe_payload_json);
+      if (!isRecord(payload) || !isRecord(payload.estimate)) return undefined;
+      return safeEstimateEnvelope(
+        payload.estimate as unknown as EstimateEnvelope,
+        job.registryVersion,
+        job.estimatedCredits
+      );
+    } catch {
+      return undefined;
+    }
   }
   private existingRetry(jobId: string, actionId: string): JobRecord | null {
     if (!isPaidActionId(actionId))
@@ -458,6 +680,7 @@ export class JobRepository extends DatabaseRepository {
     );
     const replay = this.existingRetry(job.id, actionId);
     if (replay) return replay;
+    const estimateEnvelope = this.estimateEnvelopeFor(job);
     return this.create({
       actionId,
       ...(job.entryKey ? { entryKey: job.entryKey } : {}),
@@ -470,6 +693,7 @@ export class JobRepository extends DatabaseRepository {
       ) as JobRecord['normalizedPayload'],
       ...(typeof job.guidedRequest.prompt === 'string' ? { prompt: job.guidedRequest.prompt } : {}),
       ...(job.estimatedCredits === null ? {} : { estimatedCredits: job.estimatedCredits }),
+      ...(estimateEnvelope ? { estimateEnvelope } : {}),
       retryOfJobId: job.id,
       expertDiff: job.expertDiff,
       inputs
@@ -504,6 +728,15 @@ export class JobRepository extends DatabaseRepository {
       .get(actionId);
     return row ? this.get(row.job_id) : null;
   }
+  paidActionId(jobId: string): string | null {
+    return (
+      this.database
+        .query<{ request_fingerprint: string }, [string]>(
+          'SELECT request_fingerprint FROM submission_intents WHERE job_id=?'
+        )
+        .get(jobId)?.request_fingerprint ?? null
+    );
+  }
   get(id: string): JobRecord | null {
     const row = this.database.query<JobRow, [string]>('SELECT * FROM jobs WHERE id=?').get(id);
     return row ? mapJob(row) : null;
@@ -521,6 +754,162 @@ export class JobRepository extends DatabaseRepository {
       .query<JobRow, []>('SELECT * FROM jobs ORDER BY created_at DESC')
       .all()
       .map(mapJob);
+  }
+  taskCharge(jobId: string): TaskCharge | null {
+    const job = this.get(jobId);
+    if (!job) return null;
+    const terminal = this.database
+      .query<
+        { observed_at: string; remote_status: RemoteStatus; remote_status_raw: string | null },
+        [string]
+      >(
+        `SELECT observed_at,remote_status,remote_status_raw
+         FROM job_events
+         WHERE job_id=? AND event_type='status.observed'
+           AND remote_status IN ('finished','failed')
+         ORDER BY event_id LIMIT 1`
+      )
+      .get(jobId);
+    return taskChargeFromParts({
+      credits: job.actualCredits,
+      remoteStatus: terminal?.remote_status ?? job.remoteStatus,
+      remoteStatusRaw: terminal?.remote_status_raw ?? job.remoteStatusRaw,
+      settledAt: terminal?.observed_at ?? null
+    });
+  }
+  observedChargeSamples(group: {
+    signature: string;
+    signatureVersion: string;
+    registryVersion: string;
+    pricingHash: string;
+  }): ObservedChargeSample[] {
+    if (
+      !isPricingSignature(group.signature) ||
+      group.signatureVersion !== PRICING_SIGNATURE_VERSION ||
+      !group.registryVersion ||
+      group.registryVersion.length > 128 ||
+      !/^[0-9a-f]{64}$/.test(group.pricingHash)
+    ) {
+      return [];
+    }
+    const rows = this.database
+      .query<ObservedChargeRow, [string, string, string, string, number]>(
+        `SELECT j.registry_version,j.estimated_credits,j.actual_credits,
+                j.remote_status,j.remote_status_raw,created.safe_payload_json,
+                terminal.observed_at terminal_at
+         FROM jobs j
+         JOIN job_events created ON created.event_id=(
+           SELECT MIN(event_id) FROM job_events
+           WHERE job_id=j.id AND event_type='job.created'
+         )
+         JOIN job_events terminal ON terminal.event_id=(
+           SELECT MIN(event_id) FROM job_events
+           WHERE job_id=j.id AND event_type='status.observed'
+             AND remote_status IN ('finished','failed')
+         )
+         WHERE j.registry_version=?
+           AND j.remote_status IN ('finished','failed')
+           AND j.actual_credits IS NOT NULL
+           AND json_extract(created.safe_payload_json,'$.estimate.signature')=?
+           AND json_extract(created.safe_payload_json,'$.estimate.signatureVersion')=?
+           AND json_extract(created.safe_payload_json,'$.estimate.pricingHash')=?
+         ORDER BY terminal.observed_at DESC,terminal.event_id DESC
+         LIMIT ?`
+      )
+      .all(
+        group.registryVersion,
+        group.signature,
+        group.signatureVersion,
+        group.pricingHash,
+        OBSERVED_CHARGE_CANDIDATE_SCAN_LIMIT
+      );
+    const samples: ObservedChargeSample[] = [];
+    for (const row of rows) {
+      if (!row.safe_payload_json) continue;
+      try {
+        const payload: unknown = JSON.parse(row.safe_payload_json);
+        if (!isRecord(payload) || !isRecord(payload.estimate)) continue;
+        const envelope = safeEstimateEnvelope(
+          payload.estimate as unknown as EstimateEnvelope,
+          row.registry_version,
+          row.estimated_credits
+        );
+        if (
+          envelope.signature !== group.signature ||
+          envelope.signatureVersion !== group.signatureVersion ||
+          envelope.registryVersion !== group.registryVersion ||
+          envelope.pricingHash !== group.pricingHash
+        ) {
+          continue;
+        }
+        const charge = taskChargeFromParts({
+          credits: row.actual_credits,
+          remoteStatus: row.remote_status,
+          remoteStatusRaw: row.remote_status_raw,
+          settledAt: row.terminal_at
+        });
+        if (charge) {
+          samples.push({
+            signature: group.signature,
+            signatureVersion: group.signatureVersion,
+            registryVersion: group.registryVersion,
+            pricingHash: group.pricingHash,
+            observedAt: row.terminal_at,
+            charge
+          });
+          if (samples.length === OBSERVED_MEDIAN_MAX_SAMPLES) break;
+        }
+      } catch {
+        // Corrupt or legacy event metadata is ineligible rather than partially trusted.
+      }
+    }
+    return samples;
+  }
+  outstandingProjection(): OutstandingSpendProjection {
+    const rows = this.database
+      .query<OutstandingRow, []>(
+        `SELECT i.request_fingerprint action_id,i.state intent_state,i.sent_at,
+                i.poyo_task_id intent_task_id,j.poyo_task_id job_task_id,
+                j.local_phase,j.remote_status,j.estimated_credits
+         FROM submission_intents i
+         JOIN jobs j ON j.id=i.job_id
+         ORDER BY i.prepared_at,i.job_id`
+      )
+      .all();
+    const actions = new Set<string>();
+    let credits = 0;
+    let unavailable = false;
+    for (const row of rows) {
+      if (actions.has(row.action_id)) continue;
+      if (row.remote_status === 'finished' || row.remote_status === 'failed') continue;
+      const definitivelyPreDispatchRejected =
+        row.intent_state === 'rejected' &&
+        row.sent_at === null &&
+        row.intent_task_id === null &&
+        row.job_task_id === null;
+      if (definitivelyPreDispatchRejected) continue;
+      if (
+        !['prepared', 'sending', 'acknowledged', 'unknown', 'rejected'].includes(row.intent_state)
+      ) {
+        continue;
+      }
+      actions.add(row.action_id);
+      if (
+        row.estimated_credits === null ||
+        !Number.isFinite(row.estimated_credits) ||
+        row.estimated_credits < 0
+      ) {
+        unavailable = true;
+      } else {
+        credits += row.estimated_credits;
+      }
+    }
+    return {
+      classification: 'estimate',
+      credits: unavailable ? null : Math.round(credits * 1_000_000) / 1_000_000,
+      actionCount: actions.size,
+      availability: unavailable ? 'unavailable' : 'available'
+    };
   }
   transition(
     id: string,
@@ -573,18 +962,27 @@ export class JobRepository extends DatabaseRepository {
         .run(token, owner, now, expires, now, jobId).changes;
       if (!changed) return null;
       this.transition(jobId, 'submitting', 'none', null, 'submission.claimed');
-      return { jobId, owner, token, payload: JSON.parse(intent.actual_payload_json) };
+      return {
+        jobId,
+        actionId: intent.request_fingerprint,
+        owner,
+        token,
+        payload: JSON.parse(intent.actual_payload_json)
+      };
     });
   }
   markSubmissionTransmitted(jobId: string, token: string): boolean {
-    const now = this.timestamp();
-    return (
-      this.database
-        .query(
-          `UPDATE submission_intents SET sent_at=?,transport_evidence_json=?,updated_at=? WHERE job_id=? AND state='sending' AND transmit_claim_token=?`
-        )
-        .run(now, JSON.stringify({ possibleTransmit: true }), now, jobId, token).changes === 1
-    );
+    return this.transaction(() => {
+      const now = this.timestamp();
+      const changed =
+        this.database
+          .query(
+            `UPDATE submission_intents SET sent_at=?,transport_evidence_json=?,updated_at=? WHERE job_id=? AND state='sending' AND transmit_claim_token=?`
+          )
+          .run(now, JSON.stringify({ possibleTransmit: true }), now, jobId, token).changes === 1;
+      if (changed) this.append(this.requireJob(jobId), 'submission.transmitted');
+      return changed;
+    });
   }
   releaseUntransmitted(jobId: string, token: string): boolean {
     return this.transaction(() => {
@@ -815,7 +1213,20 @@ export class JobRepository extends DatabaseRepository {
           jobId
         );
       const job = this.requireJob(jobId);
-      if (changed) this.append(job, 'status.observed', { observedProgress: status.progress });
+      if (changed) {
+        const taskCharge = nextTerminal
+          ? taskChargeFromParts({
+              credits,
+              remoteStatus: nextStatus,
+              remoteStatusRaw: status.statusRaw,
+              settledAt: now
+            })
+          : null;
+        this.append(job, 'status.observed', {
+          observedProgress: status.progress,
+          ...(taskCharge ? { taskCharge } : {})
+        });
+      }
       if (malformed)
         this.append(job, 'output_set.malformed', {
           reason: malformed,
@@ -1072,6 +1483,227 @@ export class JobRepository extends DatabaseRepository {
         ? this.transition(jobId, 'complete', 'none', null, 'job.complete')
         : job;
     });
+  }
+  beginCostBalanceSample(jobId: string, actionId: string, phase: CostBalancePhase): boolean {
+    return this.transaction(() => {
+      if (this.paidActionId(jobId) !== actionId) return false;
+      const existing =
+        this.database
+          .query<{ count: number }, [string, string]>(
+            `SELECT COUNT(*) count FROM job_events
+             WHERE job_id=? AND event_type='balance.cost.started'
+               AND json_extract(safe_payload_json,'$.phase')=?`
+          )
+          .get(jobId, phase)?.count ?? 0;
+      if (existing > 0) return false;
+      this.append(this.requireJob(jobId), 'balance.cost.started', { phase, status: 'started' });
+      return true;
+    });
+  }
+  recordCostBalanceSample(
+    jobId: string,
+    actionId: string,
+    phase: CostBalancePhase,
+    balance: PoyoBalanceResult
+  ): boolean {
+    return this.transaction(() => {
+      if (
+        this.paidActionId(jobId) !== actionId ||
+        !balance.email.trim() ||
+        !Number.isFinite(balance.creditsAmount) ||
+        balance.creditsAmount < 0
+      ) {
+        return false;
+      }
+      const completed =
+        this.database
+          .query<{ count: number }, [string, string]>(
+            `SELECT COUNT(*) count FROM job_events
+             WHERE job_id=? AND event_type IN ('balance.cost.recorded','balance.cost.failed')
+               AND json_extract(safe_payload_json,'$.phase')=?`
+          )
+          .get(jobId, phase)?.count ?? 0;
+      if (completed > 0) return false;
+      this.database
+        .query('INSERT INTO balance_snapshots(email,credits,source,fetched_at) VALUES (?,?,?,?)')
+        .run(
+          balance.email,
+          balance.creditsAmount,
+          costBalanceSource(phase, jobId, actionId),
+          this.timestamp()
+        );
+      this.append(this.requireJob(jobId), 'balance.cost.recorded', {
+        phase,
+        status: 'recorded'
+      });
+      return true;
+    });
+  }
+  recordCostBalanceFailure(jobId: string, actionId: string, phase: CostBalancePhase): boolean {
+    return this.transaction(() => {
+      if (this.paidActionId(jobId) !== actionId) return false;
+      const completed =
+        this.database
+          .query<{ count: number }, [string, string]>(
+            `SELECT COUNT(*) count FROM job_events
+             WHERE job_id=? AND event_type IN ('balance.cost.recorded','balance.cost.failed')
+               AND json_extract(safe_payload_json,'$.phase')=?`
+          )
+          .get(jobId, phase)?.count ?? 0;
+      if (completed > 0) return false;
+      this.append(this.requireJob(jobId), 'balance.cost.failed', { phase, status: 'failed' });
+      return true;
+    });
+  }
+  balanceCorroboration(jobId: string): BalanceCorroboration {
+    const actionId = this.paidActionId(jobId);
+    if (!actionId) return { status: 'unavailable', reason: null };
+    const failures =
+      this.database
+        .query<{ count: number }, [string]>(
+          `SELECT COUNT(*) count FROM job_events
+           WHERE job_id=? AND event_type='balance.cost.failed'`
+        )
+        .get(jobId)?.count ?? 0;
+    if (failures > 0) return { status: 'ambiguous', reason: 'snapshot_failed' };
+    const incompleteSamples =
+      this.database
+        .query<{ count: number }, [string]>(
+          `SELECT COUNT(*) count FROM job_events started
+           WHERE started.job_id=? AND started.event_type='balance.cost.started'
+             AND NOT EXISTS (
+               SELECT 1 FROM job_events completed
+               WHERE completed.job_id=started.job_id
+                 AND completed.event_type IN ('balance.cost.recorded','balance.cost.failed')
+                 AND json_extract(completed.safe_payload_json,'$.phase')=
+                     json_extract(started.safe_payload_json,'$.phase')
+             )`
+        )
+        .get(jobId)?.count ?? 0;
+    if (incompleteSamples > 0) return { status: 'ambiguous', reason: 'snapshot_failed' };
+    const snapshots = (phase: CostBalancePhase) =>
+      this.database
+        .query<BalanceRow, [string]>(
+          `SELECT id,email,credits,source,fetched_at FROM balance_snapshots
+           WHERE source=? ORDER BY id`
+        )
+        .all(costBalanceSource(phase, jobId, actionId));
+    const beforeRows = snapshots('before');
+    const afterRows = snapshots('after');
+    if (beforeRows.length === 0 || afterRows.length === 0) {
+      return { status: 'unavailable', reason: null };
+    }
+    if (beforeRows.length !== 1 || afterRows.length !== 1) {
+      return { status: 'ambiguous', reason: 'snapshot_count' };
+    }
+    const before = beforeRows[0];
+    const after = afterRows[0];
+    if (!before || !after) return { status: 'ambiguous', reason: 'snapshot_count' };
+    if (!before.email || before.email !== after.email) {
+      return { status: 'ambiguous', reason: 'account_mismatch' };
+    }
+    if (before.id >= after.id || before.fetched_at > after.fetched_at) {
+      return { status: 'ambiguous', reason: 'snapshot_order' };
+    }
+    const charge = this.taskCharge(jobId);
+    if (!charge) return { status: 'ambiguous', reason: 'terminal_charge_missing' };
+    const eventBracket = this.database
+      .query<
+        { before_event: number | null; terminal_event: number | null; after_event: number | null },
+        [string]
+      >(
+        `SELECT
+           MIN(CASE WHEN event_type='balance.cost.recorded'
+                     AND json_extract(safe_payload_json,'$.phase')='before' THEN event_id END) before_event,
+           MIN(CASE WHEN event_type='status.observed'
+                     AND remote_status IN ('finished','failed') THEN event_id END) terminal_event,
+           MIN(CASE WHEN event_type='balance.cost.recorded'
+                     AND json_extract(safe_payload_json,'$.phase')='after' THEN event_id END) after_event
+         FROM job_events WHERE job_id=?`
+      )
+      .get(jobId);
+    if (
+      eventBracket?.before_event === null ||
+      eventBracket?.terminal_event === null ||
+      eventBracket?.after_event === null ||
+      eventBracket?.before_event === undefined ||
+      eventBracket?.terminal_event === undefined ||
+      eventBracket?.after_event === undefined ||
+      eventBracket.before_event >= eventBracket.terminal_event ||
+      eventBracket.terminal_event >= eventBracket.after_event
+    ) {
+      return { status: 'ambiguous', reason: 'terminal_outside_bracket' };
+    }
+    const delta = before.credits - after.credits;
+    if (delta < 0 || Math.abs(delta - charge.credits) > BALANCE_CORROBORATION_TOLERANCE) {
+      return { status: 'ambiguous', reason: 'charge_mismatch' };
+    }
+    const intent = this.database
+      .query<{ state: string; sent_at: string | null; retry_of_job_id: string | null }, [string]>(
+        `SELECT i.state,i.sent_at,j.retry_of_job_id
+         FROM submission_intents i JOIN jobs j ON j.id=i.job_id WHERE i.job_id=?`
+      )
+      .get(jobId);
+    if (!intent || intent.state === 'unknown') {
+      return { status: 'ambiguous', reason: 'unknown_intent' };
+    }
+    if (intent.retry_of_job_id) return { status: 'ambiguous', reason: 'retry' };
+    const dispatchCount =
+      this.database
+        .query<{ count: number }, [string]>(
+          `SELECT COUNT(*) count FROM job_events
+           WHERE job_id=? AND event_type='submission.transmitted'`
+        )
+        .get(jobId)?.count ?? 0;
+    if (!intent.sent_at || dispatchCount !== 1) {
+      return { status: 'ambiguous', reason: 'dispatch_count' };
+    }
+    const unrelatedSnapshots =
+      this.database
+        .query<{ count: number }, [number, number]>(
+          'SELECT COUNT(*) count FROM balance_snapshots WHERE id>? AND id<?'
+        )
+        .get(before.id, after.id)?.count ?? 0;
+    if (unrelatedSnapshots > 0) {
+      return { status: 'ambiguous', reason: 'unrelated_snapshot' };
+    }
+    const overlappingActions =
+      this.database
+        .query<{ count: number }, [string, string, string, string]>(
+          `SELECT COUNT(*) count
+           FROM submission_intents other
+           WHERE other.job_id<>?
+             AND (
+               (other.sent_at IS NOT NULL
+                 AND other.sent_at<=?
+                 AND COALESCE((
+                   SELECT MIN(observed_at) FROM job_events terminal
+                   WHERE terminal.job_id=other.job_id
+                     AND terminal.event_type='status.observed'
+                     AND terminal.remote_status IN ('finished','failed')
+                 ),'9999-12-31T23:59:59.999Z')>=?)
+               OR (other.state='unknown' AND other.prepared_at<=?)
+             )`
+        )
+        .get(jobId, after.fetched_at, before.fetched_at, after.fetched_at)?.count ?? 0;
+    const overlappingTerminalCharges =
+      this.database
+        .query<{ count: number }, [string, number, number]>(
+          `SELECT COUNT(*) count
+           FROM job_events terminal
+           JOIN jobs other_job ON other_job.id=terminal.job_id
+           JOIN submission_intents other_intent ON other_intent.job_id=terminal.job_id
+           WHERE terminal.job_id<>?
+             AND terminal.event_type='status.observed'
+             AND terminal.remote_status IN ('finished','failed')
+             AND other_job.actual_credits IS NOT NULL
+             AND terminal.event_id>? AND terminal.event_id<?`
+        )
+        .get(jobId, eventBracket.before_event, eventBracket.after_event)?.count ?? 0;
+    if (overlappingActions > 0 || overlappingTerminalCharges > 0) {
+      return { status: 'ambiguous', reason: 'overlapping_paid_action' };
+    }
+    return { status: 'corroborated', reason: null };
   }
   recordBalance(email: string, credits: number, source: string): void {
     this.database

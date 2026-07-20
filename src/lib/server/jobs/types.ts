@@ -1,4 +1,5 @@
 import type { PoyoSubmitRequest } from '../poyo/types';
+import type { EstimateEnvelope } from '../../features/pricing/contracts';
 
 export type LocalPhase =
   | 'queued'
@@ -55,7 +56,8 @@ export interface CreateJobRequest {
   guidedRequest: Record<string, unknown>;
   normalizedPayload: PoyoSubmitRequest;
   prompt?: string;
-  estimatedCredits?: number;
+  estimatedCredits?: number | null;
+  estimateEnvelope?: EstimateEnvelope;
   correlationId?: string;
   retryOfJobId?: string;
   expertDiff?: Array<{ key: string; value: unknown; status?: string }>;
@@ -94,6 +96,7 @@ export interface JobRecord {
 
 export interface SubmissionClaim {
   jobId: string;
+  actionId: string;
   owner: string;
   token: string;
   payload: PoyoSubmitRequest;
