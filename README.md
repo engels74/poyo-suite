@@ -44,14 +44,17 @@ The project is independent and is not an official Poyo.ai client.
 ### Requirements
 
 - [Bun 1.3.14](https://bun.sh/) — pinned in `.bun-version` and `package.json`.
-- [ExifTool 13.55+](https://exiftool.org/), [FFmpeg/ffprobe 8.1+](https://ffmpeg.org/), and
-  [ImageMagick 7.1+](https://imagemagick.org/) on the server `PATH` for privacy-preserving local
-  image and video intake. The application invokes these tools directly with bounded argument-array
-  subprocesses; no shell integration is used. Welcome, Settings, and Studio report which image and
-  video protections are ready. After installing or updating a tool, restart Studio so its server
-  process receives the updated `PATH`, then reload the page.
 - A Poyo API key for connectivity or generation. No paid request is needed to install, build,
   or run the automated test suite.
+
+ExifTool, ImageMagick, FFmpeg, and ffprobe are optional local privacy enhancements. Image cleanup is
+available with [ExifTool 13.55+](https://exiftool.org/) and
+[ImageMagick 7.1+](https://imagemagick.org/); video cleanup uses ExifTool plus
+[FFmpeg and ffprobe 8.1+](https://ffmpeg.org/). Without a complete supported toolchain, local uploads
+still use the validated managed-source path but continue without metadata cleanup. The application
+invokes available tools directly with bounded argument-array subprocesses and no shell integration.
+After installing or updating a tool, restart Studio so its server process receives the updated
+`PATH`, then reload the page.
 
 ### Development
 
@@ -93,19 +96,22 @@ user or required to finish a durable job. Active jobs are checked every ten seco
 unchanged status observations advance the durable poll clock without creating repetitive lifecycle
 history entries.
 
-Local media metadata sanitization is enabled by default. Before a newly selected local image or
-video becomes a managed source, the loopback server removes the selected EXIF, IPTC, XMP, and
-Photoshop/8BIM metadata categories and verifies the result. Embedded still-image color profiles are
-preserved byte-for-byte by default, and video streams are remuxed without re-encoding while their
-playback-critical color signalling is checked. Poyo receives the verified managed bytes under a
-generated neutral filename, never the user's original filename. Missing tools, unsupported stream
-layouts, timeouts, or failed privacy/media verification reject the intake without falling back to
-the original. A tool problem blocks only the affected protected image or video upload; onboarding,
-remote-URL sources, and the other media kind remain available. Each successful local upload returns
-a privacy receipt listing only the metadata categories verified as removed or preserved—never the
-original values. When sanitization is disabled, the receipt explicitly states that no cleanup was
-applied. These controls apply only to local files handled by the app; Poyo fetches remote URLs
-directly. Metadata removal does not anonymize visible people, landmarks, text, watermarks, or audio.
+Local media metadata sanitization is preferred by default when the complete optional toolchain for
+the selected media kind is available. The server resolves that capability authoritatively for each
+intake. When it is unavailable, outdated, or unverifiable before cleanup begins, the validated local
+file is published through the same private managed-source flow without cleanup. When it is ready,
+the loopback server removes the selected EXIF, IPTC, XMP, and Photoshop/8BIM metadata categories and
+verifies the result. Embedded still-image color profiles are preserved byte-for-byte by default, and
+video streams are remuxed without re-encoding while playback-critical color signalling is checked.
+
+Poyo receives managed bytes under a generated neutral filename, never the user's original filename.
+Once the sanitizer path has begun, a disappearing tool, timeout, unsupported stream layout, invalid
+output, or failed privacy/media verification rejects the intake and never falls back to raw bytes.
+Each successful local upload returns a privacy receipt that distinguishes cleanup disabled by the
+saved preference from cleanup unavailable because optional tools were absent. Applied receipts list
+only metadata categories verified as removed or preserved—never original values. These controls
+apply only to local files handled by the app; Poyo fetches remote URLs directly. Metadata removal
+does not anonymize visible people, landmarks, text, watermarks, or audio.
 
 ### Delete local data
 
@@ -171,7 +177,15 @@ prek run --all-files
 
 Normal tests use mocked/loopback Poyo responses and do not spend credits. The paid live test is
 fail-closed and skipped by default. The registry network audit fetches only public official
-documentation, sends no credentials, and spends zero credits:
+documentation, sends no credentials, and spends zero credits.
+
+The optional real-tool sanitizer integration verifies the supported executables installed on the
+current `PATH`. It runs image and video groups independently and prints an intentional skip for a
+media kind whose complete supported toolchain is unavailable:
+
+```bash
+bun run test:media-tools
+```
 
 The optional production-download probe exercises Bun's real pinned HTTP/HTTPS transport
 against public `example.com` without authentication, Poyo traffic, or credits. It is disabled

@@ -18,6 +18,7 @@ import type {
   MediaSanitizationReceiptDto,
   MediaToolReadinessDto
 } from '$lib/features/settings/contracts';
+import { mediaKindSanitizationReady } from '$lib/features/settings/media-privacy';
 import {
   type BrowserMediaMetadata,
   mediaMetadataLabel,
@@ -343,20 +344,15 @@ let selectedMediaKinds = $derived(
     (mediaKind): mediaKind is 'image' | 'video' => mediaKind !== 'audio'
   )
 );
-let selectedMediaReady = $derived(
-  selectedMediaKinds.every((mediaKind) => mediaKindReady(mediaKind))
-);
-let selectedUnreadyTools = $derived.by(() => {
+let selectedRelevantTools = $derived.by(() => {
   const relevantNames = new Set(
     selectedMediaKinds.flatMap((mediaKind) => relevantTools(mediaKind).map((tool) => tool.name))
   );
-  return data.mediaTools.tools.filter(
-    (tool) => relevantNames.has(tool.name) && tool.status !== 'ready'
-  );
+  return data.mediaTools.tools.filter((tool) => relevantNames.has(tool.name));
 });
 
 function mediaKindReady(mediaKind: 'image' | 'video'): boolean {
-  return mediaKind === 'image' ? data.mediaTools.imageReady : data.mediaTools.videoReady;
+  return mediaKindSanitizationReady(data.mediaTools, mediaKind);
 }
 
 function relevantTools(mediaKind: 'image' | 'video'): MediaToolReadinessDto[] {
@@ -369,29 +365,51 @@ function relevantTools(mediaKind: 'image' | 'video'): MediaToolReadinessDto[] {
 
 function studioToolIssue(tool: MediaToolReadinessDto): string {
   if (tool.status === 'missing') {
-    return `${tool.label} ${tool.minimumVersion}+ is not available to the Studio server. Install it on the machine running Poyo Local Studio, then restart Studio and reload.`;
+    return `${tool.label} ${tool.minimumVersion}+ is not installed. Install this optional tool on the machine running Poyo Local Studio to add cleanup, then restart Studio and reload.`;
   }
   if (tool.status === 'outdated') {
-    return `${tool.label} ${tool.detectedVersion ?? 'an older version'} was found; ${tool.minimumVersion}+ is required. Update it on the machine running Poyo Local Studio, then restart Studio and reload.`;
+    return `${tool.label} ${tool.detectedVersion ?? 'an older version'} was found; ${tool.minimumVersion}+ is supported. Update this optional tool on the machine running Poyo Local Studio to add cleanup, then restart Studio and reload.`;
   }
-  return `Studio could not verify ${tool.label}. Resolve the local command error, then restart Studio and reload.`;
+  return `Studio could not verify optional ${tool.label} cleanup. Check the local installation, then restart Studio and reload.`;
+}
+
+function studioToolStatus(tool: MediaToolReadinessDto): string {
+  if (tool.status === 'ready') return `${tool.detectedVersion ?? tool.minimumVersion} available`;
+  if (tool.status === 'missing') return `${tool.minimumVersion}+ not installed`;
+  if (tool.status === 'outdated') {
+    return `${tool.detectedVersion ?? 'Older version'} found · ${tool.minimumVersion}+ needed`;
+  }
+  return 'Could not verify';
 }
 
 function sanitizationSummary(receipt: MediaSanitizationReceiptDto): string {
-  if (!receipt.applied) return 'No metadata cleanup applied';
+  if (!receipt.applied) {
+    return receipt.notAppliedReason === 'tools-unavailable'
+      ? 'Not cleaned · Optional tools unavailable'
+      : 'Not cleaned · Cleanup off';
+  }
   if (!receipt.removedCategories.length && receipt.preservedCategories.length) {
     const count = receipt.preservedCategories.length;
-    return `Privacy check complete · ${count} metadata ${count === 1 ? 'category' : 'categories'} preserved`;
+    return `Checked · ${count} ${count === 1 ? 'category' : 'categories'} preserved`;
   }
   if (!receipt.removedCategories.length) {
-    return 'Privacy check complete · No selected metadata was found';
+    return 'Checked · No selected metadata found';
   }
   const count = receipt.removedCategories.length;
-  return `Privacy cleanup complete · ${count} metadata ${count === 1 ? 'category' : 'categories'} removed`;
+  return `Cleaned · ${count} ${count === 1 ? 'category' : 'categories'} removed`;
 }
 
 function categoryList(categories: readonly MediaSanitizationCategory[]): string {
   return categories.map((category) => sanitizationCategoryLabels[category]).join(', ');
+}
+
+function sanitizationHasDetails(receipt: MediaSanitizationReceiptDto): boolean {
+  return (
+    receipt.applied &&
+    (receipt.removedCategories.length > 0 ||
+      receipt.preservedCategories.length > 0 ||
+      receipt.orientationNormalized === true)
+  );
 }
 
 function fieldsHaveIssues(fields: readonly FieldDefinition[]): boolean {
@@ -845,13 +863,6 @@ function addRemote(role: string): void {
 async function uploadFiles(role: string, files: FileList | null): Promise<void> {
   const definition = selectedEntry.inputRoles.find((item) => item.role === role);
   if (!definition || !files?.length || definition.mediaKind === 'audio') return;
-  if (data.sanitizeLocalMedia && !mediaKindReady(definition.mediaKind)) {
-    uploadError[role] =
-      `${roleLabel(role)} local uploads need media protection tools that are not ready. ` +
-      'Review the readiness details above, then restart Studio and reload after resolving them.';
-    uploadProgress[role] = { phase: 'error', percent: null, message: 'Upload not started.' };
-    return;
-  }
   const selectedFiles = Array.from(files);
   const selectionIssues = validateLocalFileSelection(
     definition,
@@ -1752,40 +1763,34 @@ onMount(() => {
 
 {#snippet sanitizationReceipt(receipt: MediaSanitizationReceiptDto | undefined)}
   {#if receipt}
-    <div
-      class="col-span-full mt-1 rounded border border-border bg-muted/50 px-2.5 py-2"
-      role="status"
-      aria-live="polite"
-      aria-atomic="true"
-    >
-      <div class="flex items-start gap-2">
-        <AppIcon name="shield" size={14} class="mt-0.5 text-muted-foreground" />
-        <div class="min-w-0 flex-1">
-          <p class="font-semibold">{sanitizationSummary(receipt)}</p>
-          {#if receipt.applied}
-            <details class="mt-1.5 text-[0.6875rem] leading-4 text-muted-foreground">
-              <summary class="focus-ring w-fit cursor-pointer rounded font-semibold text-foreground">
-                What changed
-              </summary>
-              <div class="mt-1.5 grid gap-1">
-                {#if receipt.removedCategories.length}
-                  <p>Removed: {categoryList(receipt.removedCategories)}.</p>
-                {/if}
-                {#if receipt.preservedCategories.length}
-                  <p>Preserved: {categoryList(receipt.preservedCategories)}.</p>
-                {/if}
-                {#if receipt.orientationNormalized !== null}
-                  <p>
-                    {receipt.orientationNormalized
-                      ? 'Image orientation normalized.'
-                      : 'Image orientation was not changed.'}
-                  </p>
-                {/if}
-              </div>
-            </details>
-          {/if}
-        </div>
-      </div>
+    <div class="col-span-full mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[0.6875rem]">
+      <span
+        class="inline-flex min-w-0 items-center gap-1.5 text-muted-foreground"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+      >
+        <AppIcon name="shield" size={13} class="shrink-0" />
+        <span class="font-semibold text-foreground">{sanitizationSummary(receipt)}</span>
+      </span>
+      {#if sanitizationHasDetails(receipt)}
+        <details class="leading-4 text-muted-foreground">
+          <summary class="focus-ring w-fit cursor-pointer rounded font-semibold text-foreground">
+            Details
+          </summary>
+          <div class="mt-1.5 grid gap-1 border-l border-border pl-2.5">
+            {#if receipt.removedCategories.length}
+              <p>Removed: {categoryList(receipt.removedCategories)}.</p>
+            {/if}
+            {#if receipt.preservedCategories.length}
+              <p>Preserved: {categoryList(receipt.preservedCategories)}.</p>
+            {/if}
+            {#if receipt.orientationNormalized === true}
+              <p>Image orientation normalized.</p>
+            {/if}
+          </div>
+        </details>
+      {/if}
     </div>
   {/if}
 {/snippet}
@@ -2034,75 +2039,70 @@ onMount(() => {
         hidden={activeInspectorSection !== 'inputs'}
       >
           <p class="eyebrow-label">Essential</p>
-          <h2
-            id={`${data.modality}-${surface}-inputs-heading`}
-            class="mt-1 text-sm font-semibold"
-          >Required media</h2>
-          {#if selectedEntry.inputRoles.length}
-            {#if selectedMediaKinds.length}
+          <div class="mt-1 grid gap-1.5">
+            <div class="flex items-center justify-between gap-3">
+              <h2
+                id={`${data.modality}-${surface}-inputs-heading`}
+                class="text-sm font-semibold"
+              >Required media</h2>
+              {#if selectedEntry.inputRoles.length && selectedMediaKinds.length}
+                <details class="min-w-0 text-[0.6875rem] text-muted-foreground">
+                  <summary class="focus-ring w-fit cursor-pointer rounded font-semibold text-foreground">
+                    Details
+                  </summary>
+                  <ul class="mt-2 grid min-w-56 list-none gap-2 rounded bg-muted/70 p-2.5">
+                    {#each selectedRelevantTools as tool (tool.name)}
+                      <li class="grid gap-1">
+                        <span class="flex flex-wrap items-baseline justify-between gap-x-3">
+                          <strong class="text-foreground">{tool.label}</strong>
+                          <span class="tabular-nums">{studioToolStatus(tool)}</span>
+                        </span>
+                        {#if tool.status !== 'ready'}
+                          <span class="text-foreground">{studioToolIssue(tool)}</span>
+                        {/if}
+                      </li>
+                    {/each}
+                  </ul>
+                </details>
+              {/if}
+            </div>
+            {#if selectedEntry.inputRoles.length && selectedMediaKinds.length}
               <div
-                class="mt-3 rounded border px-3 py-2.5 {data.sanitizeLocalMedia
-                  ? selectedMediaReady
-                    ? 'border-success/30 bg-success/10'
-                    : 'border-warning/30 bg-warning/10'
-                  : 'border-border bg-muted/50'}"
+                class="flex min-w-0 flex-wrap items-start gap-x-2.5 gap-y-1 text-[0.6875rem] leading-4"
+                aria-label="Media cleanup status"
               >
-                <div class="flex items-start gap-2.5">
-                  <AppIcon
-                    name="shield"
-                    size={16}
-                    class={data.sanitizeLocalMedia && selectedMediaReady
-                      ? 'mt-0.5 text-success'
-                      : 'mt-0.5 text-muted-foreground'}
-                  />
-                  <div class="min-w-0 flex-1">
-                    <p class="text-xs font-semibold">
-                      {data.sanitizeLocalMedia
-                        ? selectedMediaReady
-                          ? 'Local media protection ready'
-                          : 'Some local uploads need setup'
-                        : 'Local media protection is off'}
-                    </p>
-                    <p class="mt-1 text-[0.6875rem] leading-4 text-muted-foreground">
-                      {data.sanitizeLocalMedia
-                        ? selectedMediaReady
-                          ? 'Protection is ready for the local media used by this workflow.'
-                          : 'Only affected local file controls are unavailable. Remote URLs still work.'
-                        : 'Local files can be uploaded, but no metadata cleanup will be applied.'}
-                    </p>
-                    <div class="mt-2 flex flex-wrap gap-1.5">
-                      {#each selectedMediaKinds as mediaKind (mediaKind)}
-                        <Badge
-                          tone={data.sanitizeLocalMedia
-                            ? mediaKindReady(mediaKind)
-                              ? 'success'
-                              : 'warning'
-                            : 'neutral'}
-                        >
-                          {mediaKind === 'image' ? 'Image' : 'Video'} · {data.sanitizeLocalMedia
-                            ? mediaKindReady(mediaKind)
-                              ? 'Ready'
-                              : 'Needs setup'
-                            : 'No cleanup'}
-                        </Badge>
-                      {/each}
-                    </div>
-                  </div>
-                </div>
-                {#if data.sanitizeLocalMedia && selectedUnreadyTools.length}
-                  <details class="mt-2 border-t border-border/70 pt-2 text-[0.6875rem]">
-                    <summary class="focus-ring w-fit cursor-pointer rounded font-semibold">
-                      Readiness details
-                    </summary>
-                    <ul class="mt-2 grid list-none gap-2 p-0">
-                      {#each selectedUnreadyTools as tool (tool.name)}
-                        <li class="leading-4 text-foreground">{studioToolIssue(tool)}</li>
-                      {/each}
-                    </ul>
-                  </details>
+                <AppIcon
+                  name="shield"
+                  size={14}
+                  class={data.sanitizeLocalMedia && selectedMediaKinds.every(mediaKindReady)
+                    ? 'shrink-0 text-success'
+                    : 'shrink-0 text-muted-foreground'}
+                />
+                {#if data.sanitizeLocalMedia}
+                  {#each selectedMediaKinds as mediaKind (mediaKind)}
+                    <span class="inline-flex min-w-0 items-center gap-1.5">
+                      <span
+                        class="size-1.5 shrink-0 rounded-full {mediaKindReady(mediaKind)
+                          ? 'bg-success'
+                          : 'bg-warning'}"
+                        aria-hidden="true"
+                      ></span>
+                      <span>
+                        <strong>{mediaKind === 'image' ? 'Image' : 'Video'} cleanup</strong> · {mediaKindReady(
+                          mediaKind
+                        )
+                          ? 'Ready'
+                          : 'Optional tools unavailable — upload continues without cleanup'}
+                      </span>
+                    </span>
+                  {/each}
+                {:else}
+                  <span><strong>Media cleanup</strong> · Off</span>
                 {/if}
               </div>
             {/if}
+          </div>
+          {#if selectedEntry.inputRoles.length}
             <div class="mt-3 grid gap-4">
               {#each selectedEntry.inputRoles as role (role.role)}
                 <div class="rounded-[var(--radius)] bg-muted px-3 py-3">
@@ -2140,7 +2140,7 @@ onMount(() => {
                   <div class="mt-3 grid gap-2">
                     {#if role.mediaKind !== 'audio'}
                       <label
-                        class="focus-ring flex min-h-9 items-center justify-center gap-2 rounded-[var(--radius)] border border-border bg-background px-3 text-xs font-semibold shadow-[var(--shadow-xs)] {uploadingRole !== null || !hasApiKey || (data.sanitizeLocalMedia && !mediaKindReady(role.mediaKind))
+                        class="focus-ring flex min-h-9 items-center justify-center gap-2 rounded-[var(--radius)] border border-border bg-background px-3 text-xs font-semibold shadow-[var(--shadow-xs)] {uploadingRole !== null || !hasApiKey
                           ? 'cursor-not-allowed opacity-50'
                           : 'cursor-pointer hover:bg-muted'}"
                       >
@@ -2151,7 +2151,7 @@ onMount(() => {
                           type="file"
                           accept={mediaAccept(role)}
                           multiple={role.max !== 1}
-                          disabled={uploadingRole !== null || !hasApiKey || (data.sanitizeLocalMedia && !mediaKindReady(role.mediaKind))}
+                          disabled={uploadingRole !== null || !hasApiKey}
                           onchange={(event) => void uploadFiles(role.role, event.currentTarget.files)}
                         />
                       </label>
@@ -2174,7 +2174,11 @@ onMount(() => {
                     </div>
                   </div>
                   {#if uploadProgress[role.role]}
-                    <div class="mt-2 rounded bg-background px-2.5 py-2" role="status" aria-live="polite">
+                    <div
+                      class="mt-2 rounded bg-background px-2.5 py-2"
+                      role={uploadProgress[role.role]?.phase === 'complete' ? undefined : 'status'}
+                      aria-live={uploadProgress[role.role]?.phase === 'complete' ? undefined : 'polite'}
+                    >
                       <div class="flex items-center justify-between gap-3 text-[0.6875rem] font-semibold">
                         <span>Local browser upload</span>
                         {#if uploadProgress[role.role]?.percent !== null}<span>{uploadProgress[role.role]?.percent}%</span>{/if}

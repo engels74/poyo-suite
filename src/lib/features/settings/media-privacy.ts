@@ -1,4 +1,21 @@
-import type { MediaPrivacySettings } from './contracts';
+import type { MediaPrivacySettings, MediaToolsReadinessDto } from './contracts';
+
+export type MediaSanitizationCapabilityState = 'available' | 'partial' | 'unavailable';
+
+export function mediaKindSanitizationReady(
+  readiness: MediaToolsReadinessDto,
+  mediaKind: 'image' | 'video'
+): boolean {
+  return mediaKind === 'image' ? readiness.imageReady : readiness.videoReady;
+}
+
+export function mediaSanitizationCapabilityState(
+  readiness: MediaToolsReadinessDto
+): MediaSanitizationCapabilityState {
+  if (readiness.imageReady && readiness.videoReady) return 'available';
+  if (readiness.imageReady || readiness.videoReady) return 'partial';
+  return 'unavailable';
+}
 
 export const DEFAULT_MEDIA_PRIVACY_SETTINGS: Readonly<MediaPrivacySettings> = Object.freeze({
   sanitizeLocalMedia: true,

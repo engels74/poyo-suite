@@ -12,6 +12,7 @@ import {
   operationsRequest,
   settingsDraft
 } from '$lib/features/settings/controller';
+import { mediaSanitizationCapabilityState } from '$lib/features/settings/media-privacy';
 import { resolveTheme, type ThemePreference, themePreferences, themeStorageKey } from '$lib/theme';
 import type { PageData } from './$types';
 
@@ -65,6 +66,25 @@ let connectivityLabel = $derived(
       : connectivityState === 'failure'
         ? 'Connection failed. Check the key and try again.'
         : 'Not tested'
+);
+let mediaCapabilityState = $derived(mediaSanitizationCapabilityState(data.mediaTools));
+let mediaCleanupSummary = $derived(
+  !mediaPrivacy.sanitizeLocalMedia
+    ? 'Off'
+    : mediaCapabilityState === 'available'
+      ? 'Images and videos'
+      : data.mediaTools.imageReady
+        ? 'Images only'
+        : data.mediaTools.videoReady
+          ? 'Videos only'
+          : 'Optional tools unavailable'
+);
+let mediaPrivacyActionLabel = $derived(
+  mediaCapabilityState === 'unavailable'
+    ? 'Continue without media cleanup'
+    : !mediaPrivacy.sanitizeLocalMedia
+      ? 'Continue with cleanup off'
+      : 'Save and continue'
 );
 
 $effect(() => {
@@ -461,12 +481,13 @@ const setupStepLabels: Record<SetupStep, string> = {
       </dl>
     {:else if step === 'done'}
       <p class="mt-3 text-sm leading-6 text-muted-foreground">
-        Your privacy, connection, appearance, and defaults are ready. Complete setup to enter the
-        Studio, or dismiss this guide and continue with the same saved choices.
+        Your local choices and verified connection are saved. Complete setup to enter the Studio,
+        or dismiss this guide and continue with the same choices.
       </p>
-      <dl class="mt-4 grid gap-3 text-sm sm:grid-cols-3">
+      <dl class="mt-4 grid gap-3 text-sm sm:grid-cols-2">
         <div><dt class="text-muted-foreground">Storage</dt><dd class="mt-1 font-semibold">Local</dd></div>
         <div><dt class="text-muted-foreground">API key</dt><dd class="mt-1 font-semibold">Connected</dd></div>
+        <div><dt class="text-muted-foreground">Media cleanup</dt><dd class="mt-1 font-semibold">{mediaCleanupSummary}</dd></div>
         <div><dt class="text-muted-foreground">Appearance</dt><dd class="mt-1 font-semibold capitalize">{settings.theme.defaultMode}</dd></div>
       </dl>
     {/if}
@@ -484,7 +505,9 @@ const setupStepLabels: Record<SetupStep, string> = {
       {:else if step === 'location'}
         <Button variant="primary" onclick={confirmLocation} disabled={busy}>Continue</Button>
       {:else if step === 'mediaPrivacy'}
-        <Button variant="primary" onclick={saveMediaPrivacy} disabled={busy}>Save and continue</Button>
+        <Button variant="primary" onclick={saveMediaPrivacy} disabled={busy}>
+          {mediaPrivacyActionLabel}
+        </Button>
       {:else if step === 'apiKey'}
         <Button
           variant="primary"

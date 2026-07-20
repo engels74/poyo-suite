@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  mediaKindSanitizationReady,
+  mediaSanitizationCapabilityState
+} from '../../../src/lib/features/settings/media-privacy';
+import {
   assertMediaToolsReady,
   MediaPrerequisiteError,
   probeMediaTools,
@@ -118,6 +122,35 @@ describe('media tool readiness', () => {
     }
   });
 
+  test('selects image and video capabilities independently', async () => {
+    const imageOnly = await probeMediaTools(
+      runnerWith({ ffmpeg: 'ffmpeg version 8.0 Copyright' }).runner
+    );
+    expect(mediaKindSanitizationReady(imageOnly, 'image')).toBe(true);
+    expect(mediaKindSanitizationReady(imageOnly, 'video')).toBe(false);
+    expect(mediaSanitizationCapabilityState(imageOnly)).toBe('partial');
+
+    const videoOnly = await probeMediaTools(
+      runnerWith({ magick: 'Version: ImageMagick 7.0.11 Q16' }).runner
+    );
+    expect(mediaKindSanitizationReady(videoOnly, 'image')).toBe(false);
+    expect(mediaKindSanitizationReady(videoOnly, 'video')).toBe(true);
+    expect(mediaSanitizationCapabilityState(videoOnly)).toBe('partial');
+
+    expect(mediaSanitizationCapabilityState(await probeMediaTools(runnerWith().runner))).toBe(
+      'available'
+    );
+    expect(
+      mediaSanitizationCapabilityState(
+        await probeMediaTools(
+          runnerWith({
+            exiftool: Object.assign(new Error('missing'), { code: 'ENOENT' })
+          }).runner
+        )
+      )
+    ).toBe('unavailable');
+  });
+
   test('accepts version output above 16 KiB while preserving the 64 KiB probe bound', async () => {
     const acceptedBytes = 32 * 1024;
     const versionLine = 'ffmpeg version 8.1.2 Copyright\n';
@@ -161,12 +194,31 @@ describe('media tool readiness', () => {
     await expect(
       assertMediaToolsReady('video', runnerWith({ ffmpeg: 'not a version' }).runner)
     ).rejects.toMatchObject({
-      message: 'Studio could not verify FFmpeg. Version 8.1 or newer is required.'
+      message:
+        'Optional FFmpeg cleanup could not be verified after it started, so this upload stopped safely.'
     });
   });
 });
 
 describe('media tool readiness cache', () => {
+  test('fresh readiness bypasses the cache and updates later page reads', async () => {
+    const first = await probeMediaTools(runnerWith().runner);
+    const second = await probeMediaTools(
+      runnerWith({ magick: 'Version: ImageMagick 7.0.11 Q16' }).runner
+    );
+    let calls = 0;
+    const service = new MediaToolReadinessService({
+      probe: async () => (calls++ === 0 ? first : second)
+    });
+
+    expect(await service.getReadiness()).toEqual(first);
+    expect(await service.getReadiness()).toEqual(first);
+    expect(calls).toBe(1);
+    expect(await service.refreshReadiness()).toEqual(second);
+    expect(calls).toBe(2);
+    expect(await service.getReadiness()).toEqual(second);
+  });
+
   test('caches for 30 seconds, collapses concurrent probes, and refreshes after expiry', async () => {
     let now = 100;
     let calls = 0;

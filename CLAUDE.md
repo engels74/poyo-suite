@@ -20,6 +20,7 @@ Run commands from the repository root. Bun is pinned to `1.3.14` in both `.bun-v
 | `bun run test:e2e` | Build, then run all browser E2E files serially. |
 | `bun run test:security` | Build, then run static and browser security suites. |
 | `bun run test:restart` | Run restart/recovery alone with concurrency 1. |
+| `bun run test:media-tools` | Run optional real ExifTool/ImageMagick/FFmpeg/ffprobe integration coverage, skipping unavailable media-kind toolchains. |
 | `bun run validate:registry` | Validate registry code, versions, evidence, and reviewed fixtures offline. |
 | `bun run build && bun run test:production-smoke` | Exercise onboarding and primary routes against the packaged loopback server. |
 
@@ -42,9 +43,12 @@ browser file, preserve the repository's build-first, serial behavior:
 bun run build && bun test --max-concurrency 1 tests/e2e/job-history.browser.ts
 ```
 
-ExifTool 13.55+, FFmpeg/ffprobe 8.1+, and ImageMagick 7.1+ must be on `PATH` for media intake and the
-media-sanitizer tests. Normal suites use loopback mocks and require no paid Poyo request. Do not enable
-the `POYO_LIVE_*` variables during routine validation; they unlock the explicitly approved paid test.
+ExifTool 13.55+ with ImageMagick 7.1+ enables optional image metadata cleanup; ExifTool with
+FFmpeg/ffprobe 8.1+ enables optional video cleanup. They are not install, startup, onboarding,
+standard-test, or local-upload prerequisites. `bun run test:media-tools` exercises supported host
+toolchains and intentionally skips unavailable media kinds. Normal suites isolate media-tool shims,
+use loopback Poyo mocks, and require no paid request. Do not enable the `POYO_LIVE_*` variables during
+routine validation; they unlock the explicitly approved paid test.
 
 ## Architecture Overview
 

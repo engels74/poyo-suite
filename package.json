@@ -21,6 +21,7 @@
     "test:restart": "bun test --max-concurrency 1 tests/reliability/restart-recovery.test.ts",
     "test:security": "bun scripts/test-browser.ts security",
     "test:performance": "bun test --max-concurrency 1 tests/performance",
+    "test:media-tools": "bun scripts/test-media-tools.ts",
     "test:live": "bun test --max-concurrency 1 ./tests/live/poyo-live.live.ts",
     "validate:registry": "bun scripts/validate-registry.ts",
     "registry:validate": "bun run validate:registry",

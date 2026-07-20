@@ -312,12 +312,12 @@ export async function probeMediaTools(
 
 function mediaPrerequisiteMessage(tool: MediaToolReadinessDto): string {
   if (tool.status === 'missing') {
-    return `${tool.label} is not available to the Studio server. Version ${tool.minimumVersion} or newer is required.`;
+    return `Optional ${tool.label} cleanup became unavailable, so this upload stopped safely. Version ${tool.minimumVersion} or newer is supported.`;
   }
   if (tool.status === 'outdated') {
-    return `${tool.label} ${tool.detectedVersion ?? 'unknown'} is below the required version ${tool.minimumVersion}.`;
+    return `Optional ${tool.label} cleanup became unavailable, so this upload stopped safely. Found ${tool.detectedVersion ?? 'an older version'}; version ${tool.minimumVersion} or newer is supported.`;
   }
-  return `Studio could not verify ${tool.label}. Version ${tool.minimumVersion} or newer is required.`;
+  return `Optional ${tool.label} cleanup could not be verified after it started, so this upload stopped safely.`;
 }
 
 export async function assertMediaToolsReady(
@@ -641,6 +641,7 @@ async function sanitizeImage(
   }
   return {
     applied: true,
+    notAppliedReason: null,
     mediaKind: 'image',
     ...receipt,
     orientationNormalized: transformed
@@ -894,6 +895,7 @@ async function sanitizeVideo(
   if ((beforeProbe.chapters?.length ?? 0) > 0) receipt.removedCategories.push('chapters');
   return {
     applied: true,
+    notAppliedReason: null,
     mediaKind: 'video',
     ...receipt,
     orientationNormalized: null

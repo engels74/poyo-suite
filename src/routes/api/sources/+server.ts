@@ -13,7 +13,8 @@ export const POST: RequestHandler = async ({ request }) => {
   try {
     const platform = await getPlatformServices();
     const source = await intakeLocalSource(request, platform.paths, {
-      mediaPrivacy: readMediaPrivacySettings(platform.settings)
+      mediaPrivacy: readMediaPrivacySettings(platform.settings),
+      readiness: () => platform.mediaTools.refreshReadiness()
     });
     const { sanitization } = source;
     managedSources = new ManagedSourceRepository(platform.database, platform.paths);

@@ -13,7 +13,13 @@ const cleanupBoundMs = 5_000;
 const startScript = join(process.cwd(), 'scripts', 'start.ts');
 
 export type BrowserMediaToolName = 'exiftool' | 'imagemagick' | 'ffmpeg' | 'ffprobe';
-export type BrowserMediaToolShimState = 'ready' | 'missing' | 'outdated' | 'error';
+export type BrowserMediaToolShimState =
+  | 'ready'
+  | 'missing'
+  | 'outdated'
+  | 'error'
+  | 'ready-then-outdated'
+  | 'runtime-error';
 
 export interface BrowserMediaToolShimController {
   setTool: (name: BrowserMediaToolName, state: BrowserMediaToolShimState) => Promise<void>;
@@ -54,25 +60,146 @@ const mediaToolVersions: Record<
 function mediaToolShimScript(
   name: BrowserMediaToolName,
   state: Exclude<BrowserMediaToolShimState, 'missing'>,
-  realExecutable: string | null
+  probeCounterPath: string
 ): string {
   const versionArgument = name === 'exiftool' ? '-ver' : '-version';
-  const versionOutput = mediaToolVersions[name][state];
+  const versionOutput =
+    state === 'outdated' || state === 'error'
+      ? mediaToolVersions[name][state]
+      : mediaToolVersions[name].ready;
   return `#!${process.execPath}
+import { copyFile } from 'node:fs/promises';
+
 const args = Bun.argv.slice(2);
 if (args.length === 1 && args[0] === ${JSON.stringify(versionArgument)}) {
-  process.stdout.write(${JSON.stringify(`${versionOutput}\n`)});
+  let versionOutput = ${JSON.stringify(versionOutput)};
+  if (${JSON.stringify(state)} === 'ready-then-outdated') {
+    const counterFile = Bun.file(${JSON.stringify(probeCounterPath)});
+    const count = Number((await counterFile.exists()) ? await counterFile.text() : '0');
+    await Bun.write(${JSON.stringify(probeCounterPath)}, String(count + 1));
+    versionOutput = count === 0
+      ? ${JSON.stringify(mediaToolVersions[name].ready)}
+      : ${JSON.stringify(mediaToolVersions[name].outdated)};
+  }
+  process.stdout.write(versionOutput + '\\n');
   process.exit(0);
 }
-const realExecutable = ${JSON.stringify(realExecutable)};
-if (!realExecutable) process.exit(127);
-const result = Bun.spawnSync({
-  cmd: [realExecutable, ...args],
-  stdin: 'inherit',
-  stdout: 'inherit',
-  stderr: 'inherit'
-});
-process.exit(result.exitCode);
+
+if (${JSON.stringify(state)} === 'runtime-error') {
+  process.stderr.write('Deterministic media-tool runtime failure.\\n');
+  process.exit(19);
+}
+
+function u32be(bytes, offset) {
+  return (((bytes[offset] ?? 0) << 24) | ((bytes[offset + 1] ?? 0) << 16) |
+    ((bytes[offset + 2] ?? 0) << 8) | (bytes[offset + 3] ?? 0)) >>> 0;
+}
+
+function imageInfo(bytes) {
+  const ascii = (start, end) => new TextDecoder().decode(bytes.slice(start, end));
+  if (bytes[0] === 0x89 && ascii(1, 4) === 'PNG') {
+    return { format: 'PNG', width: u32be(bytes, 16), height: u32be(bytes, 20) };
+  }
+  if (ascii(0, 6) === 'GIF87a' || ascii(0, 6) === 'GIF89a') {
+    return {
+      format: 'GIF',
+      width: (bytes[6] ?? 0) | ((bytes[7] ?? 0) << 8),
+      height: (bytes[8] ?? 0) | ((bytes[9] ?? 0) << 8)
+    };
+  }
+  if (bytes[0] === 0xff && bytes[1] === 0xd8) {
+    let offset = 2;
+    while (offset + 8 < bytes.length) {
+      if (bytes[offset] !== 0xff) { offset += 1; continue; }
+      const marker = bytes[offset + 1] ?? 0;
+      const length = ((bytes[offset + 2] ?? 0) << 8) | (bytes[offset + 3] ?? 0);
+      if ((marker >= 0xc0 && marker <= 0xc3) && length >= 7) {
+        return {
+          format: 'JPEG',
+          width: ((bytes[offset + 7] ?? 0) << 8) | (bytes[offset + 8] ?? 0),
+          height: ((bytes[offset + 5] ?? 0) << 8) | (bytes[offset + 6] ?? 0)
+        };
+      }
+      offset += Math.max(length + 2, 2);
+    }
+  }
+  if (ascii(0, 4) === 'RIFF' && ascii(8, 12) === 'WEBP') {
+    return { format: 'WEBP', width: 16, height: 16 };
+  }
+  throw new Error('The deterministic media shim received an unsupported image fixture.');
+}
+
+async function copyFixture(inputPath, outputPath) {
+  await copyFile(inputPath, outputPath);
+}
+
+const tool = ${JSON.stringify(name)};
+if (tool === 'exiftool') {
+  if (args.includes('-json')) {
+    process.stdout.write('[{}]');
+    process.exit(0);
+  }
+  if (args.includes('-b') && args.includes('-ICC_Profile')) process.exit(0);
+  if (args.includes('-s3') && args.includes('-Orientation')) process.exit(0);
+  const outputIndex = args.indexOf('-o');
+  if (outputIndex >= 0) {
+    await copyFixture(args.at(-1), args[outputIndex + 1]);
+    process.exit(0);
+  }
+  if (args.includes('-overwrite_original') && args.includes('-tagsFromFile')) process.exit(0);
+}
+
+if (tool === 'imagemagick') {
+  if (args[0] === 'identify') {
+    const bytes = new Uint8Array(await Bun.file(args.at(-1)).arrayBuffer());
+    const info = imageInfo(bytes);
+    process.stdout.write(
+      [info.format, info.width, info.height, 'srgb', 'Undefined', 0, 'Undefined'].join('\\t') + '\\n'
+    );
+    process.exit(0);
+  }
+  const orientIndex = args.indexOf('-auto-orient');
+  if (orientIndex > 0) {
+    await copyFixture(args[orientIndex - 1], args[orientIndex + 1]);
+    process.exit(0);
+  }
+}
+
+if (tool === 'ffprobe' && args.includes('-show_streams')) {
+  const sourcePath = args.at(-1);
+  const sanitized = sourcePath.includes('.sanitized.');
+  process.stdout.write(JSON.stringify({
+    streams: [{
+      index: 0,
+      codec_name: 'h264',
+      codec_type: 'video',
+      width: 16,
+      height: 16,
+      pix_fmt: 'yuv420p',
+      time_base: '1/10240',
+      duration: '0.200000',
+      disposition: {}
+    }],
+    chapters: [],
+    format: {
+      duration: '0.200000',
+      tags: sanitized ? {} : { title: 'Private fixture title' }
+    }
+  }));
+  process.exit(0);
+}
+
+if (tool === 'ffmpeg') {
+  const inputIndex = args.indexOf('-i');
+  const outputPath = args.at(-1);
+  if (inputIndex >= 0 && outputPath !== '-') {
+    await copyFixture(args[inputIndex + 1], outputPath);
+  }
+  process.exit(0);
+}
+
+process.stderr.write('Unsupported deterministic media-tool shim command.\\n');
+process.exit(20);
 `;
 }
 
@@ -81,20 +208,19 @@ async function createMediaToolShims(
   initial: Partial<Record<BrowserMediaToolName, BrowserMediaToolShimState>>
 ): Promise<BrowserMediaToolShimController> {
   await mkdir(directory, { recursive: true });
-  const realExecutables = Object.fromEntries(
-    Object.entries(mediaToolExecutables).map(([name, executable]) => [name, Bun.which(executable)])
-  ) as Record<BrowserMediaToolName, string | null>;
 
   async function setTool(
     name: BrowserMediaToolName,
     state: BrowserMediaToolShimState
   ): Promise<void> {
     const executable = join(directory, mediaToolExecutables[name]);
+    const probeCounter = `${executable}.probe-count`;
+    await rm(probeCounter, { force: true });
     if (state === 'missing') {
       await rm(executable, { force: true });
       return;
     }
-    await Bun.write(executable, mediaToolShimScript(name, state, realExecutables[name]));
+    await Bun.write(executable, mediaToolShimScript(name, state, probeCounter));
     await chmod(executable, 0o755);
   }
 
@@ -110,7 +236,7 @@ async function createMediaToolShims(
     Object.fromEntries(
       (Object.keys(mediaToolExecutables) as BrowserMediaToolName[]).map((name) => [
         name,
-        initial[name] ?? 'ready'
+        initial[name] ?? 'missing'
       ])
     )
   );
@@ -374,7 +500,7 @@ export interface BrowserAppHarness {
   temporaryPath: string;
   syntheticKey: string;
   mock: Awaited<ReturnType<typeof startStudioMockPoyoServer>>;
-  mediaTools: BrowserMediaToolShimController | null;
+  mediaTools: BrowserMediaToolShimController;
   startApp: () => Promise<void>;
   stopApp: () => Promise<void>;
   processPid: () => number | null;
@@ -388,7 +514,7 @@ export interface BrowserAppHarnessOptions {
   freshOnboarding?: boolean;
   /** Explicitly seed onboarding completion for fixtures that are not exercising first-run setup. */
   completedOnboarding?: boolean;
-  /** Use isolated executable shims for deterministic media-tool readiness browser tests. */
+  /** Configure isolated media tools. Unspecified tools are unavailable. */
   mediaToolShims?: Partial<Record<BrowserMediaToolName, BrowserMediaToolShimState>>;
 }
 
@@ -451,9 +577,10 @@ export async function startBrowserAppHarness(
   const url = `http://${host}:${port}`;
   const deploymentRoot = join(temporary.path, 'deployment');
   const mediaToolShimDirectory = join(temporary.path, 'media-tool-shims');
-  const mediaTools = options.mediaToolShims
-    ? await createMediaToolShims(mediaToolShimDirectory, options.mediaToolShims)
-    : null;
+  const mediaTools = await createMediaToolShims(
+    mediaToolShimDirectory,
+    options.mediaToolShims ?? {}
+  );
   const isolatedEnvironment = {
     HOME: join(temporary.path, 'home'),
     XDG_DATA_HOME: join(temporary.path, 'xdg'),
@@ -572,7 +699,7 @@ export async function startBrowserAppHarness(
       {
         ...inheritedEnvironment,
         ...isolatedEnvironment,
-        ...(mediaTools ? { PATH: mediaToolShimDirectory } : {}),
+        PATH: mediaToolShimDirectory,
         HOST: host,
         ORIGIN: url,
         PORT: String(port),

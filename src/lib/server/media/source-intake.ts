@@ -4,9 +4,13 @@ import { basename } from 'node:path';
 import type {
   MediaPrivacySettings,
   MediaSanitizationReceiptDto,
-  MediaToolReadinessDto
+  MediaToolReadinessDto,
+  MediaToolsReadinessDto
 } from '../../features/settings/contracts';
-import { DEFAULT_MEDIA_PRIVACY_SETTINGS } from '../../features/settings/media-privacy';
+import {
+  DEFAULT_MEDIA_PRIVACY_SETTINGS,
+  mediaKindSanitizationReady
+} from '../../features/settings/media-privacy';
 import type { AppPaths } from '../platform/app-paths';
 import { resolvePathWithin } from '../platform/app-paths';
 import { RequestSecurityError } from '../platform/request-security';
@@ -18,7 +22,12 @@ import {
   readExactPositioned,
   syncDirectory
 } from './filesystem-boundary';
-import { MediaPrerequisiteError, type MediaSanitizer, sanitizeMedia } from './media-sanitizer';
+import {
+  MediaPrerequisiteError,
+  type MediaSanitizer,
+  probeMediaTools,
+  sanitizeMedia
+} from './media-sanitizer';
 
 const IMAGE_MAX_BYTES = 25 * 1024 * 1024;
 const REQUEST_MAX_BYTES = 101 * 1024 * 1024;
@@ -26,6 +35,7 @@ const REQUEST_MAX_BYTES = 101 * 1024 * 1024;
 export interface SourceIntakeOptions {
   maxRequestBytes?: number;
   mediaPrivacy?: MediaPrivacySettings;
+  readiness?: () => Promise<MediaToolsReadinessDto>;
   sanitizer?: MediaSanitizer;
 }
 
@@ -50,7 +60,7 @@ export class SourceIntakePrerequisiteError extends Error {
     super(
       cause instanceof MediaPrerequisiteError
         ? cause.message
-        : 'A required media tool is unavailable.',
+        : 'Optional media cleanup became unavailable after it started.',
       {
         cause
       }
@@ -402,6 +412,7 @@ export async function intakeLocalSource(
 ): Promise<LocalSourceIntake> {
   const maxRequestBytes = options.maxRequestBytes ?? REQUEST_MAX_BYTES;
   const mediaPrivacy = options.mediaPrivacy ?? DEFAULT_MEDIA_PRIVACY_SETTINGS;
+  const readiness = options.readiness ?? probeMediaTools;
   const sanitizer = options.sanitizer ?? sanitizeMedia;
   const boundary = assertSameOriginMultipart(request, maxRequestBytes);
   const { file, mediaKind: requestedKind } = requiredParts(
@@ -444,6 +455,7 @@ export async function intakeLocalSource(
     let candidate = rawTemporary;
     let sanitization: MediaSanitizationReceiptDto = {
       applied: false,
+      notAppliedReason: 'preference-disabled',
       mediaKind: requestedKind,
       removedCategories: [],
       preservedCategories: [],
@@ -452,17 +464,22 @@ export async function intakeLocalSource(
     const maxOutputBytes =
       requestedKind === 'image' ? IMAGE_MAX_BYTES : POYO_STREAM_VIDEO_MAX_BYTES;
     if (mediaPrivacy.sanitizeLocalMedia) {
-      sanitizationPendingVerification = true;
-      sanitization = await sanitizer({
-        inputPath: rawTemporary,
-        outputPath: sanitizedTemporary,
-        mimeType: type,
-        mediaKind: requestedKind,
-        settings: mediaPrivacy,
-        maxOutputBytes
-      });
-      await makePrivateRegular(sanitizedTemporary);
-      candidate = sanitizedTemporary;
+      const currentReadiness = await readiness().catch(() => null);
+      if (!currentReadiness || !mediaKindSanitizationReady(currentReadiness, requestedKind)) {
+        sanitization = { ...sanitization, notAppliedReason: 'tools-unavailable' };
+      } else {
+        sanitizationPendingVerification = true;
+        sanitization = await sanitizer({
+          inputPath: rawTemporary,
+          outputPath: sanitizedTemporary,
+          mimeType: type,
+          mediaKind: requestedKind,
+          settings: mediaPrivacy,
+          maxOutputBytes
+        });
+        await makePrivateRegular(sanitizedTemporary);
+        candidate = sanitizedTemporary;
+      }
     }
     await assertCanonicalDirectory(temporaryRoot, temporaryRoot, 'Managed source temporary');
     const details = await inspectCandidate(candidate, type, maxOutputBytes);

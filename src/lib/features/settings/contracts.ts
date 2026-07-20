@@ -57,8 +57,11 @@ export type MediaSanitizationCategory =
   | 'container-tags'
   | 'chapters';
 
+export type MediaSanitizationNotAppliedReason = 'preference-disabled' | 'tools-unavailable';
+
 export interface MediaSanitizationReceiptDto {
   applied: boolean;
+  notAppliedReason: MediaSanitizationNotAppliedReason | null;
   mediaKind: 'image' | 'video';
   removedCategories: readonly MediaSanitizationCategory[];
   preservedCategories: readonly MediaSanitizationCategory[];

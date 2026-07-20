@@ -94,6 +94,7 @@ describe('job HTTP boundaries', () => {
 
   test('UPLOAD-08 source intake and verified snapshot complete before any Poyo client exists', async () => {
     const route = await Bun.file('src/routes/api/sources/+server.ts').text();
+    expect(route).toContain('platform.mediaTools.refreshReadiness()');
     const intakeIndex = route.indexOf('await intakeLocalSource');
     const sanitizationCaptureIndex = route.indexOf('const { sanitization } = source');
     const registerIndex = route.indexOf('await managedSources.register');

@@ -105,8 +105,9 @@ describe('settings HTTP and page boundaries', () => {
     }
   });
 
-  test('media readiness is loaded for setup and Studio while receipts stay out of drafts', async () => {
+  test('optional media capabilities stay discoverable while Studio uploads and receipts remain compact', async () => {
     const welcomeLoad = await Bun.file('src/routes/welcome/+page.server.ts').text();
+    const welcome = await Bun.file('src/routes/welcome/+page.svelte').text();
     const settingsLoad = await Bun.file('src/routes/settings/+page.server.ts').text();
     const studioLoad = await Bun.file('src/lib/server/generation/studio-data.ts').text();
     const mediaPrivacy = await Bun.file(
@@ -119,12 +120,25 @@ describe('settings HTTP and page boundaries', () => {
     expect(settingsLoad).toContain('platform.mediaTools.getReadiness()');
     expect(studioLoad).toContain('platform.mediaTools.getReadiness()');
     expect(studioLoad).toContain('readMediaPrivacySettings(platform.settings)');
-    expect(mediaPrivacy).toContain('Media protection ready');
-    expect(mediaPrivacy).toContain('Media protection needs setup');
-    expect(mediaPrivacy).toContain('Local files will be uploaded without metadata cleanup.');
-    expect(studio).toContain('Some local uploads need setup');
-    expect(studio).toContain('No metadata cleanup applied');
-    expect(studio).toContain('Privacy cleanup complete');
+    expect(mediaPrivacy).toContain('Media cleanup available');
+    expect(mediaPrivacy).toContain('Media cleanup partially available');
+    expect(mediaPrivacy).toContain('Optional media cleanup unavailable');
+    expect(mediaPrivacy).toContain('Sanitize supported local media when available');
+    expect(mediaPrivacy).toContain('disabled={disabled || !anyReady}');
+    expect(mediaPrivacy).toContain('aria-describedby');
+    expect(mediaPrivacy).toContain('Tool details');
+    expect(welcome).toContain('Continue without media cleanup');
+    expect(welcome).toContain('Media cleanup');
+    expect(welcome).not.toContain('Your privacy, connection, appearance, and defaults are ready.');
+    expect(studio).toContain('Optional tools unavailable — upload continues without cleanup');
+    expect(studio).toContain('disabled={uploadingRole !== null || !hasApiKey}');
+    expect(studio).not.toContain('data.sanitizeLocalMedia && !mediaKindReady(role.mediaKind)');
+    expect(studio).toContain('Not cleaned · Cleanup off');
+    expect(studio).toContain('Not cleaned · Optional tools unavailable');
+    expect(studio).toMatch(/Cleaned · \$\{count\}/);
+    expect(studio).toContain('Checked · No selected metadata found');
+    expect(studio).not.toContain('Image orientation was not changed.');
+    expect(studio).not.toContain('Some local uploads need setup');
     expect(studio).toContain('aria-live="polite"');
     expect(studio).toContain('role="alert"');
     expect(studioDraft).not.toContain('sanitizationReceipt');

@@ -14,6 +14,7 @@ import {
 } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { DEFAULT_MEDIA_PRIVACY_SETTINGS } from '../../../src/lib/features/settings/media-privacy';
+import type { MediaToolsReadinessDto } from '../../../src/lib/features/settings/contracts';
 import { jobHttpError } from '../../../src/lib/server/jobs/http';
 import { readVerifiedManagedSourceBlob } from '../../../src/lib/server/jobs/managed-source-upload';
 import { syncDirectory as syncFilesystemDirectory } from '../../../src/lib/server/media/filesystem-boundary';
@@ -37,11 +38,56 @@ const unsanitizedMedia = {
 };
 const imageReceipt = {
   applied: true,
+  notAppliedReason: null,
   mediaKind: 'image',
   removedCategories: ['xmp'],
   preservedCategories: [],
   orientationNormalized: false
 } as const;
+const readyMediaTools: MediaToolsReadinessDto = {
+  imageReady: true,
+  videoReady: true,
+  tools: [
+    {
+      name: 'exiftool',
+      label: 'ExifTool',
+      minimumVersion: '13.55',
+      detectedVersion: '13.55',
+      status: 'ready'
+    },
+    {
+      name: 'imagemagick',
+      label: 'ImageMagick',
+      minimumVersion: '7.1',
+      detectedVersion: '7.1',
+      status: 'ready'
+    },
+    {
+      name: 'ffmpeg',
+      label: 'FFmpeg',
+      minimumVersion: '8.1',
+      detectedVersion: '8.1',
+      status: 'ready'
+    },
+    {
+      name: 'ffprobe',
+      label: 'ffprobe',
+      minimumVersion: '8.1',
+      detectedVersion: '8.1',
+      status: 'ready'
+    }
+  ]
+};
+const unavailableMediaTools: MediaToolsReadinessDto = {
+  ...readyMediaTools,
+  imageReady: false,
+  videoReady: false,
+  tools: readyMediaTools.tools.map((tool) => ({
+    ...tool,
+    detectedVersion: null,
+    status: 'missing' as const
+  }))
+};
 
 afterEach(async () => {
   await Promise.all(cleanups.splice(0).map((cleanup) => cleanup()));
@@ -68,18 +114,33 @@ function intakeLocalSource(
 ) {
   return intakeWithPrivacy(request, paths, {
     mediaPrivacy: unsanitizedMedia,
+    readiness: async () => readyMediaTools,
     ...options
   });
 }
 
 function uploadRequest(bytes: Uint8Array, type = 'image/png', origin?: string): Request {
+  return uploadMediaRequest(bytes, type, 'image', origin);
+}
+
+function uploadMediaRequest(
+  bytes: Uint8Array,
+  type: string,
+  mediaKind: 'image' | 'video',
+  origin?: string
+): Request {
   const form = new FormData();
-  form.set('mediaKind', 'image');
+  form.set('mediaKind', mediaKind);
   const buffer = bytes.buffer.slice(
     bytes.byteOffset,
     bytes.byteOffset + bytes.byteLength
   ) as ArrayBuffer;
-  form.set('file', new File([buffer], '../unsafe-name.png', { type }));
+  form.set(
+    'file',
+    new File([buffer], mediaKind === 'image' ? '../unsafe-name.png' : '../unsafe-name.mp4', {
+      type
+    })
+  );
   return new Request('http://127.0.0.1:5173/api/sources', {
     method: 'POST',
     headers: origin === undefined ? {} : { origin },
@@ -137,6 +198,7 @@ describe('local source intake', () => {
     expect(source.signature).toStartWith('89504e47');
     expect(source.sanitization).toEqual({
       applied: false,
+      notAppliedReason: 'preference-disabled',
       mediaKind: 'image',
       removedCategories: [],
       preservedCategories: [],
@@ -148,6 +210,147 @@ describe('local source intake', () => {
     );
     await expect(repository.resolveAvailable('../unsafe')).rejects.toThrow('not valid');
     expect(await Array.fromAsync(new Bun.Glob('*.part').scan(paths.temporary))).toEqual([]);
+  });
+
+  test('UPLOAD-01A chooses raw paths without invoking unavailable cleanup and records why', async () => {
+    const { paths } = await fixture();
+    const png = await Bun.file('tests/fixtures/media/tiny.png').bytes();
+    const mp4 = await Bun.file('tests/fixtures/media/tiny.mp4').bytes();
+    let readinessCalls = 0;
+    let sanitizerCalls = 0;
+    const options: SourceIntakeOptions = {
+      mediaPrivacy: { ...DEFAULT_MEDIA_PRIVACY_SETTINGS },
+      readiness: async () => {
+        readinessCalls += 1;
+        return unavailableMediaTools;
+      },
+      sanitizer: async () => {
+        sanitizerCalls += 1;
+        throw new Error('sanitizer must not run');
+      }
+    };
+
+    const image = await intakeLocalSource(
+      uploadRequest(png, 'image/png', 'http://127.0.0.1:5173'),
+      paths,
+      options
+    );
+    const video = await intakeLocalSource(
+      uploadMediaRequest(mp4, 'video/mp4', 'video', 'http://127.0.0.1:5173'),
+      paths,
+      options
+    );
+
+    expect(readinessCalls).toBe(2);
+    expect(sanitizerCalls).toBe(0);
+    expect(image.sanitization.notAppliedReason).toBe('tools-unavailable');
+    expect(video.sanitization.notAppliedReason).toBe('tools-unavailable');
+    expect(await Bun.file(image.localPath).bytes()).toEqual(png);
+    expect(await Bun.file(video.localPath).bytes()).toEqual(mp4);
+  });
+
+  test('UPLOAD-01A2 preference-off skips both readiness and sanitizer', async () => {
+    const { paths } = await fixture();
+    const png = await Bun.file('tests/fixtures/media/tiny.png').bytes();
+    let readinessCalls = 0;
+    let sanitizerCalls = 0;
+    const source = await intakeLocalSource(
+      uploadRequest(png, 'image/png', 'http://127.0.0.1:5173'),
+      paths,
+      {
+        readiness: async () => {
+          readinessCalls += 1;
+          return readyMediaTools;
+        },
+        sanitizer: async () => {
+          sanitizerCalls += 1;
+          return imageReceipt;
+        }
+      }
+    );
+    expect(readinessCalls).toBe(0);
+    expect(sanitizerCalls).toBe(0);
+    expect(source.sanitization.notAppliedReason).toBe('preference-disabled');
+  });
+
+  test('UPLOAD-01A3 treats a failed capability probe as unavailable', async () => {
+    const { paths } = await fixture();
+    const png = await Bun.file('tests/fixtures/media/tiny.png').bytes();
+    let sanitizerCalls = 0;
+    const source = await intakeLocalSource(
+      uploadRequest(png, 'image/png', 'http://127.0.0.1:5173'),
+      paths,
+      {
+        mediaPrivacy: { ...DEFAULT_MEDIA_PRIVACY_SETTINGS },
+        readiness: async () => {
+          throw new Error('private probe failure');
+        },
+        sanitizer: async () => {
+          sanitizerCalls += 1;
+          return imageReceipt;
+        }
+      }
+    );
+    expect(sanitizerCalls).toBe(0);
+    expect(source.sanitization.notAppliedReason).toBe('tools-unavailable');
+    expect(JSON.stringify(source.sanitization)).not.toContain('private');
+  });
+
+  test('UPLOAD-01A4 selects cleanup independently for partial image and video capability', async () => {
+    const { paths } = await fixture();
+    const png = await Bun.file('tests/fixtures/media/tiny.png').bytes();
+    const mp4 = await Bun.file('tests/fixtures/media/tiny.mp4').bytes();
+    const sanitizedKinds: Array<'image' | 'video'> = [];
+    const sanitizer = async (
+      input: Parameters<NonNullable<SourceIntakeOptions['sanitizer']>>[0]
+    ) => {
+      sanitizedKinds.push(input.mediaKind);
+      await writeFile(input.outputPath, await Bun.file(input.inputPath).bytes(), {
+        flag: 'wx',
+        mode: 0o600
+      });
+      return {
+        applied: true,
+        notAppliedReason: null,
+        mediaKind: input.mediaKind,
+        removedCategories: [],
+        preservedCategories: [],
+        orientationNormalized: input.mediaKind === 'image' ? false : null
+      } as const;
+    };
+    const requestFor = (kind: 'image' | 'video') =>
+      kind === 'image'
+        ? uploadRequest(png, 'image/png', 'http://127.0.0.1:5173')
+        : uploadMediaRequest(mp4, 'video/mp4', 'video', 'http://127.0.0.1:5173');
+    const imageOnly = { ...readyMediaTools, videoReady: false };
+    const videoOnly = { ...readyMediaTools, imageReady: false };
+
+    const cleanedImage = await intakeLocalSource(requestFor('image'), paths, {
+      mediaPrivacy: { ...DEFAULT_MEDIA_PRIVACY_SETTINGS },
+      readiness: async () => imageOnly,
+      sanitizer
+    });
+    const rawVideo = await intakeLocalSource(requestFor('video'), paths, {
+      mediaPrivacy: { ...DEFAULT_MEDIA_PRIVACY_SETTINGS },
+      readiness: async () => imageOnly,
+      sanitizer
+    });
+    const rawImage = await intakeLocalSource(requestFor('image'), paths, {
+      mediaPrivacy: { ...DEFAULT_MEDIA_PRIVACY_SETTINGS },
+      readiness: async () => videoOnly,
+      sanitizer
+    });
+    const cleanedVideo = await intakeLocalSource(requestFor('video'), paths, {
+      mediaPrivacy: { ...DEFAULT_MEDIA_PRIVACY_SETTINGS },
+      readiness: async () => videoOnly,
+      sanitizer
+    });
+
+    expect(sanitizedKinds).toEqual(['image', 'video']);
+    expect(cleanedImage.sanitization.applied).toBe(true);
+    expect(cleanedVideo.sanitization.applied).toBe(true);
+    expect(rawVideo.sanitization.notAppliedReason).toBe('tools-unavailable');
+    expect(rawImage.sanitization.notAppliedReason).toBe('tools-unavailable');
   });
 
   test('UPLOAD-01B publishes, sizes and hashes only the sanitizer output', async () => {
@@ -174,6 +377,41 @@ describe('local source intake', () => {
     expect(await Bun.file(source.localPath).bytes()).toEqual(sanitized);
     expect(source.sanitization).toEqual(imageReceipt);
     expect(await readdir(paths.temporary)).toEqual([]);
+  });
+
+  test('UPLOAD-01B2 uses newly installed capabilities without changing saved settings', async () => {
+    const { paths } = await fixture();
+    const raw = await Bun.file('tests/fixtures/media/tiny.png').bytes();
+    const sanitized = new Uint8Array([...raw, 0]);
+    const mediaPrivacy = { ...DEFAULT_MEDIA_PRIVACY_SETTINGS };
+    let ready = false;
+    let sanitizerCalls = 0;
+    const options: SourceIntakeOptions = {
+      mediaPrivacy,
+      readiness: async () => (ready ? readyMediaTools : unavailableMediaTools),
+      sanitizer: async ({ outputPath }) => {
+        sanitizerCalls += 1;
+        await writeFile(outputPath, sanitized, { flag: 'wx', mode: 0o600 });
+        return imageReceipt;
+      }
+    };
+
+    const beforeInstall = await intakeLocalSource(
+      uploadRequest(raw, 'image/png', 'http://127.0.0.1:5173'),
+      paths,
+      options
+    );
+    ready = true;
+    const afterInstall = await intakeLocalSource(
+      uploadRequest(raw, 'image/png', 'http://127.0.0.1:5173'),
+      paths,
+      options
+    );
+
+    expect(mediaPrivacy.sanitizeLocalMedia).toBe(true);
+    expect(beforeInstall.sanitization.notAppliedReason).toBe('tools-unavailable');
+    expect(afterInstall.sanitization).toEqual(imageReceipt);
+    expect(sanitizerCalls).toBe(1);
   });
 
   test('UPLOAD-01C sanitizer and output verification failures leave no raw or published file', async () => {
@@ -299,7 +537,8 @@ describe('local source intake', () => {
     expect(await response.json()).toEqual({
       error: {
         code: 'source_media_prerequisite_failed',
-        message: 'ImageMagick 7.0 is below the required version 7.1.',
+        message:
+          'Optional ImageMagick cleanup became unavailable, so this upload stopped safely. Found 7.0; version 7.1 or newer is supported.',
         tool: {
           name: 'imagemagick',
           label: 'ImageMagick',

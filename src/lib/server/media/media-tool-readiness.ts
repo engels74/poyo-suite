@@ -20,7 +20,15 @@ export class MediaToolReadinessService {
   }
 
   getReadiness(): Promise<MediaToolsReadinessDto> {
-    if (this.#cached && this.#cached.expiresAt > this.#now()) {
+    return this.#load(true);
+  }
+
+  refreshReadiness(): Promise<MediaToolsReadinessDto> {
+    return this.#load(false);
+  }
+
+  #load(useCache: boolean): Promise<MediaToolsReadinessDto> {
+    if (useCache && this.#cached && this.#cached.expiresAt > this.#now()) {
       return Promise.resolve(this.#cached.value);
     }
     if (this.#inFlight) return this.#inFlight;

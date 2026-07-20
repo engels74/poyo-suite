@@ -48,6 +48,7 @@ test('managed-source refresh upload is blocked before the upload reaches Poyo', 
     localPath,
     sanitization: {
       applied: false,
+      notAppliedReason: 'preference-disabled',
       mediaKind: 'image',
       removedCategories: [],
       preservedCategories: [],

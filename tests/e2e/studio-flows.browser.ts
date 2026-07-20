@@ -579,7 +579,7 @@ async function chooseImageEditWorkflow(page: Page): Promise<void> {
     .getByRole('textbox', { name: /^Prompt/ })
     .fill('Transform the retained source into a quiet cyanotype');
   const inputsPanel = await showInspectorSection(inspector, 'Inputs');
-  await inputsPanel.getByText('Local media protection ready', { exact: true }).waitFor();
+  await inputsPanel.getByLabel('Media cleanup status').getByText('Image cleanup · Ready').waitFor();
   await inputsPanel.getByLabel('Add local file').setInputFiles({
     name: 'portrait-near-nine-sixteen.png',
     mimeType: 'image/png',
@@ -591,9 +591,7 @@ async function chooseImageEditWorkflow(page: Page): Promise<void> {
   await outputPanel.getByRole('radio', { name: 'Automatic (9:16 from 900 × 1601)' }).waitFor();
   await showInspectorSection(inspector, 'Inputs');
   await inputsPanel.getByText('Local transfer and Poyo upload completed.').waitFor();
-  await inputsPanel
-    .getByText('Privacy check complete · No selected metadata was found', { exact: true })
-    .waitFor();
+  await inputsPanel.getByText('Checked · No selected metadata found', { exact: true }).waitFor();
   await waitForValidRequest(page);
 }
 
@@ -1490,7 +1488,14 @@ serial('E2E-01..15 production studios, recovery, library, settings and accessibi
   };
 
   try {
-    harness = await startBrowserAppHarness();
+    harness = await startBrowserAppHarness({
+      mediaToolShims: {
+        exiftool: 'ready',
+        imagemagick: 'ready',
+        ffmpeg: 'ready',
+        ffprobe: 'ready'
+      }
+    });
     owner = await startBrowserOwner(stage);
     page = owner.page;
     page.on('request', requestListener);
@@ -1978,7 +1983,7 @@ serial('E2E-01..15 production studios, recovery, library, settings and accessibi
       .setInputFiles('tests/fixtures/media/tiny.mp4');
     await videoEditInputsPanel.getByText('16 × 16 px · 0.20 s').waitFor();
     await videoEditInputsPanel.getByText('Local transfer and Poyo upload completed.').waitFor();
-    await videoEditInputsPanel.getByText(/Privacy (?:cleanup|check) complete/).waitFor();
+    await videoEditInputsPanel.getByText(/^(?:Cleaned|Checked) ·/).waitFor();
     await generationCommands(page).getByText('sourceVideoDuration is below minimum.').waitFor();
 
     await page.goto(`${harness.url}/studio/image`);
