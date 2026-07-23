@@ -148,6 +148,16 @@ try {
   ) {
     throw new Error('Fresh production startup did not enter onboarding.');
   }
+  const onboardingLibrary = await fetch(new URL('/library', url), {
+    redirect: 'manual',
+    signal: AbortSignal.timeout(requestTimeoutMs)
+  });
+  if (
+    onboardingLibrary.status !== 307 ||
+    onboardingLibrary.headers.get('location') !== '/welcome'
+  ) {
+    throw new Error('Fresh production Library navigation did not enter onboarding.');
+  }
 
   const jsonHeaders = {
     'content-type': 'application/json',
@@ -192,15 +202,12 @@ try {
       throw new Error(`Production route ${pathname} did not contain its application markers.`);
     }
   }
-  const legacyLibrary = await fetch(new URL('/library?view=list&q=cobalt', url), {
+  const removedLibrary = await fetch(new URL('/library?view=list&q=cobalt', url), {
     redirect: 'manual',
     signal: AbortSignal.timeout(requestTimeoutMs)
   });
-  if (
-    legacyLibrary.status !== 308 ||
-    legacyLibrary.headers.get('location') !== '/gallery?view=list&q=cobalt'
-  ) {
-    throw new Error('Legacy Library route did not preserve its query in a permanent redirect.');
+  if (removedLibrary.status !== 404 || removedLibrary.headers.get('location') !== null) {
+    throw new Error('Removed Library route forwarded instead of returning a plain 404.');
   }
   if (mock.ipRequests.length === 0) {
     throw new Error('Production smoke did not resolve public IPv4 through the loopback fixture.');

@@ -102,8 +102,8 @@ describe('studio batch persistence and state', () => {
     expect(JSON.stringify(batch)).not.toContain('/Users/');
   });
 
-  test('BATCH-01 canonicalizes a legacy WAN item and removes retired ratio state', () => {
-    const item = createBatchItem(
+  test('BATCH-01 preserves nonblank stale paid recovery data and current video workflows verbatim', () => {
+    const stale = createBatchItem(
       {
         modality: 'video',
         displayName: 'Wan 2.7 Video',
@@ -111,15 +111,15 @@ describe('studio batch persistence and state', () => {
         automaticFields: ['aspectRatio'],
         request: {
           ...request,
-          entryKey: 'wan2.7-image-to-video:frame-to-video',
+          entryKey: 'retired-video-model:old-workflow',
           values: {
             prompt: 'Animate',
             aspectRatio: '16:9',
             resolution: '720p',
-            duration: 2,
-            audioUrl: 'https://assets.example/soundtrack.mp3'
+            duration: 2
           }
-        }
+        },
+        estimate: null
       },
       {
         itemId: 'wan-item-1',
@@ -127,59 +127,41 @@ describe('studio batch persistence and state', () => {
         now: '2026-07-17T00:00:00.000Z'
       }
     );
-    localStorage.setItem(
-      'poyo-studio-batch:video',
-      JSON.stringify({ version: 1, modality: 'video', items: [item] })
-    );
+    const submitting = { ...stale, state: 'submitting' as const };
+    const batch: StudioBatch = {
+      version: 1,
+      modality: 'video',
+      items: [submitting]
+    };
+    localStorage.setItem('poyo-studio-batch:video', JSON.stringify(batch));
     const restored = readStudioBatch('video')?.items[0];
-    expect(restored).toMatchObject({
-      sizeMode: 'resolution',
-      automaticFields: [],
-      request: {
-        entryKey: 'wan2.7-image-to-video:image-to-video',
-        values: {
-          prompt: 'Animate',
-          resolution: '720p',
-          duration: 2,
-          audioUrl: 'https://assets.example/soundtrack.mp3'
-        }
-      }
+    expect(restored).toEqual(submitting);
+    if (!restored) throw new Error('Missing saved batch item.');
+    expect(restoreBatchItemForRegistry(restored, undefined)).toEqual({
+      ...submitting,
+      state: 'unknown',
+      error:
+        'The app restarted before this paid submission was confirmed. Check the saved action before retrying.'
     });
-    if (!restored) throw new Error('Expected legacy WAN batch item to restore.');
-    expect(restoreBatchRoleInputs(restored).audio).toEqual([
-      expect.objectContaining({
-        role: 'audio',
-        source: 'remote',
-        mediaKind: 'audio',
-        url: 'https://assets.example/soundtrack.mp3'
-      })
-    ]);
-    localStorage.setItem(
-      'poyo-studio-batch:video',
-      JSON.stringify({
-        version: 1,
-        modality: 'video',
-        items: [
-          {
-            ...item,
-            request: {
-              ...item.request,
-              inputs: [
-                {
-                  role: 'audio',
-                  mediaKind: 'audio',
-                  source: 'uploaded',
-                  url: 'https://retained-source.invalid/audio',
-                  localSourceId: sourceId,
-                  metadata: {}
-                }
-              ]
-            }
-          }
-        ]
-      })
-    );
-    expect(readStudioBatch('video')).toBeNull();
+
+    const unknown = {
+      ...submitting,
+      state: 'unknown' as const,
+      error: 'Reconcile this paid action.'
+    };
+    expect(restoreBatchItemForRegistry(unknown, undefined)).toEqual(unknown);
+
+    for (const entryKey of ['wan2.7-image-to-video:image-to-video', 'kling-2.6:frame-to-video']) {
+      const current = {
+        ...stale,
+        request: { ...stale.request, entryKey },
+        state: 'draft' as const
+      };
+      expect(writeStudioBatch('video', { version: 1, modality: 'video', items: [current] })).toBe(
+        true
+      );
+      expect(readStudioBatch('video')?.items[0]).toEqual(current);
+    }
   });
 
   test('BATCH-02 duplicates a draft with new stable IDs and no shared mutable values', () => {
@@ -368,6 +350,27 @@ describe('studio batch persistence and state', () => {
         JSON.stringify({ version: 1, modality: 'image', items: [malformed] })
       );
       expect(readStudioBatch('image')).toBeNull();
+    }
+    localStorage.setItem(
+      'poyo-studio-batch:image',
+      JSON.stringify({
+        version: 1,
+        modality: 'image',
+        items: [{ ...item, estimate: undefined }]
+      })
+    );
+    expect(readStudioBatch('image')).toBeNull();
+    for (const persistedEstimate of [null, estimate]) {
+      const persisted = { ...item, estimate: persistedEstimate };
+      localStorage.setItem(
+        'poyo-studio-batch:image',
+        JSON.stringify({ version: 1, modality: 'image', items: [persisted] })
+      );
+      expect(readStudioBatch('image')).toEqual({
+        version: 1,
+        modality: 'image',
+        items: [persisted]
+      });
     }
   });
 

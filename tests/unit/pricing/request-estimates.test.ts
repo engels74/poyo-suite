@@ -13,7 +13,7 @@ import {
   type PricingRefreshFailureCategory,
   PublicPricingService
 } from '../../../src/lib/server/pricing/public-pricing';
-import { seedImageRegistry } from '../../../src/lib/server/registry/repository';
+import { seedImageRegistry, seedVideoRegistry } from '../../../src/lib/server/registry/repository';
 import { SettingsRepository } from '../../../src/lib/server/settings/settings-repository';
 import { createTemporaryDirectory } from '../../helpers/temporary-directory';
 
@@ -62,7 +62,7 @@ describe('cache-only preview and accepted job estimates', () => {
     const pricing = new PublicPricingService({
       settings,
       gate,
-      now: () => Date.parse('2026-07-20T12:00:00.000Z'),
+      now: Date.now,
       fetch: async () => {
         calls += 1;
         await deferred;
@@ -129,6 +129,73 @@ describe('cache-only preview and accepted job estimates', () => {
     expect(calls).toBe(1);
   });
 
+  test('current WAN workflows are estimated while retired workflow aliases are rejected', async () => {
+    const temporary = await createTemporaryDirectory('request-estimates-video-');
+    const database = await openDatabase(join(temporary.path, 'studio.sqlite'));
+    cleanups.push(() => temporary.cleanup());
+    cleanups.push(() => database.close());
+    seedVideoRegistry(database);
+    const pricing = new PublicPricingService({
+      settings: new SettingsRepository(database),
+      gate: new MaintenanceGate(),
+      now: Date.now,
+      fetch: async () => new Response(fixtureHtml, { status: 200 })
+    });
+    await pricing.refreshForTest();
+
+    const wanPreview = normalizeEstimatedRegistryRequest(
+      {
+        entryKey: 'wan2.7-image-to-video:image-to-video',
+        values: {
+          prompt: 'Animate this image',
+          duration: 2,
+          resolution: '720p',
+          imageUrls: ['https://assets.example/start.png']
+        }
+      },
+      pricing
+    );
+    expect(wanPreview).toMatchObject({
+      request: { model: 'wan2.7-image-to-video' },
+      estimate: { credits: 24, availability: 'available', freshness: 'fresh' }
+    });
+
+    const framePreview = normalizeEstimatedRegistryRequest(
+      {
+        entryKey: 'wan2.2-image-to-video-fast:frame-to-video',
+        values: {
+          prompt: 'Animate these frames',
+          resolution: '720p',
+          imageUrls: ['https://assets.example/start.png']
+        }
+      },
+      pricing
+    );
+    expect(framePreview).toMatchObject({
+      request: { model: 'wan2.2-image-to-video-fast' },
+      estimate: {
+        credits: 12,
+        signature:
+          'version=pricing-signature-v1|registry=video-2026-07-20.1|model=wan2.2-image-to-video-fast|workflow=frame-to-video|unit=per-output|quantity=1|resolution=720p',
+        availability: 'available',
+        freshness: 'fresh'
+      }
+    });
+
+    expect(() =>
+      normalizeEstimatedRegistryRequest(
+        {
+          entryKey: 'wan2.7-image-to-video:frame-to-video',
+          values: {
+            duration: 2,
+            resolution: '720p',
+            imageUrls: ['https://assets.example/start.png']
+          }
+        },
+        pricing
+      )
+    ).toThrow('Unknown or non-selectable video registry workflow.');
+  });
   test('refused refresh admission leaves preview and job acceptance immediate', async () => {
     const temporary = await createTemporaryDirectory('request-estimates-refused-');
     const database = await openDatabase(join(temporary.path, 'studio.sqlite'));

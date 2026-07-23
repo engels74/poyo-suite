@@ -1,5 +1,7 @@
+import { Database } from 'bun:sqlite';
 import { expect, setDefaultTimeout, test } from 'bun:test';
 import { chromium, type Page } from 'playwright';
+import { SettingsRepository } from '../../src/lib/server/settings/settings-repository';
 import { startBrowserAppHarness } from '../helpers/browser-app-harness';
 import {
   pageHasNoHorizontalOverflow,
@@ -360,6 +362,72 @@ test('fresh onboarding keeps storage informational and completes through one loc
     expect(requestedPaths).not.toContain('/api/settings/credential-backend');
     expect((await page.textContent('body')) ?? '').not.toContain(harness.syntheticKey);
     expect(issues.pageErrors).toEqual([]);
+  } finally {
+    await context.close();
+    await browser.close();
+    await harness.cleanup();
+  }
+});
+test('invalid stored onboarding timestamps cannot bypass the welcome gate', async () => {
+  const harness = await startBrowserAppHarness();
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext();
+  const page = await context.newPage();
+
+  try {
+    await harness.stopApp();
+    const database = new Database(harness.databasePath, { strict: true });
+    try {
+      new SettingsRepository(database).set(
+        'onboarding',
+        {
+          version: 1,
+          completedAt: 'not a timestamp',
+          dismissedAt: null,
+          steps: {
+            location: true,
+            mediaPrivacy: true,
+            connection: true,
+            theme: true,
+            defaults: true
+          }
+        },
+        1
+      );
+    } finally {
+      database.close();
+    }
+
+    await harness.startApp();
+    await page.goto(`${harness.url}/`);
+    await page.waitForURL((url) => url.pathname === '/welcome');
+
+    await harness.stopApp();
+    const reopenedDatabase = new Database(harness.databasePath, { strict: true });
+    try {
+      new SettingsRepository(reopenedDatabase).set(
+        'onboarding',
+        {
+          version: 1,
+          completedAt: '2026-01-01T00:00:00.000Z',
+          dismissedAt: null,
+          steps: {
+            location: true,
+            mediaPrivacy: true,
+            connection: true,
+            theme: true,
+            defaults: true
+          }
+        },
+        1
+      );
+    } finally {
+      reopenedDatabase.close();
+    }
+
+    await harness.startApp();
+    await page.goto(`${harness.url}/`);
+    await page.waitForURL((url) => url.pathname === '/');
   } finally {
     await context.close();
     await browser.close();

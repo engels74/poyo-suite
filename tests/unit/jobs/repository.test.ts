@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { PRICING_SIGNATURE_VERSION } from '../../../src/lib/features/pricing/contracts';
-import { seedImageRegistry } from '../../../src/lib/server/registry/repository';
+import { seedImageRegistry, seedVideoRegistry } from '../../../src/lib/server/registry/repository';
 import type { CreateJobRequest } from '../../../src/lib/server/jobs/types';
 import { createJobFixture, createTestJob } from '../../helpers/job-fixture';
 
@@ -412,6 +412,153 @@ describe('durable job repository invariants', () => {
     expect(supportingRerun.guidedRequest.n).toBe(2);
     expect(supportingRerun.normalizedPayload.input.n).toBe(2);
   });
+  test('JOB-14A reruns current WAN and frame jobs', async () => {
+    const fixture = await createJobFixture();
+    cleanups.push(fixture.cleanup);
+    seedVideoRegistry(fixture.database);
+    const wan = fixture.repository.create({
+      actionId: crypto.randomUUID(),
+      entryKey: 'wan2.7-image-to-video:image-to-video',
+      workflow: 'image-to-video',
+      publicModelId: 'wan2.7-image-to-video',
+      guidedRequest: { prompt: 'Animate this WAN source' },
+      normalizedPayload: {
+        model: 'wan2.7-image-to-video',
+        input: { prompt: 'Animate this WAN source' }
+      }
+    });
+    const frame = fixture.repository.create({
+      actionId: crypto.randomUUID(),
+      entryKey: 'kling-2.6:frame-to-video',
+      workflow: 'frame-to-video',
+      publicModelId: 'kling-2.6',
+      guidedRequest: { prompt: 'Animate this frame' },
+      normalizedPayload: { model: 'kling-2.6', input: { prompt: 'Animate this frame' } }
+    });
+    await expect(
+      fixture.repository.rerunAsNew(wan.id, crypto.randomUUID(), unexpectedManagedSourceRefresh)
+    ).resolves.toMatchObject({ retryOfJobId: wan.id });
+    await expect(
+      fixture.repository.rerunAsNew(frame.id, crypto.randomUUID(), unexpectedManagedSourceRefresh)
+    ).resolves.toMatchObject({ retryOfJobId: frame.id });
+  });
+
+  test('JOB-14B blocks stale WAN retries and reruns before refresh or paid side effects', async () => {
+    const fixture = await createJobFixture();
+    cleanups.push(fixture.cleanup);
+    seedVideoRegistry(fixture.database);
+    const managedSourceId = '019b0000-0000-7000-8000-000000000114';
+    fixture.database
+      .query(
+        `INSERT INTO managed_sources(id,original_name,media_kind,mime_type,byte_size,checksum,signature,relative_path,availability,created_at,last_verified_at)
+         VALUES (?,?,?,?,?,?,?,?, 'available',?,?)`
+      )
+      .run(
+        managedSourceId,
+        'source.png',
+        'image',
+        'image/png',
+        8,
+        'checksum',
+        '89504e47',
+        `2026-07/${managedSourceId}.png`,
+        '2026-07-15T12:00:00.000Z',
+        '2026-07-15T12:00:00.000Z'
+      );
+    const request = (actionId: string) => ({
+      actionId,
+      entryKey: 'wan2.7-image-to-video:image-to-video',
+      workflow: 'image-to-video',
+      publicModelId: 'wan2.7-image-to-video',
+      guidedRequest: { prompt: 'Stale WAN history' },
+      normalizedPayload: {
+        model: 'wan2.7-image-to-video',
+        input: {
+          prompt: 'Stale WAN history',
+          image_url: 'https://poyo.test/source.png'
+        }
+      },
+      inputs: [
+        {
+          role: 'source-image',
+          mediaKind: 'image' as const,
+          source: 'uploaded' as const,
+          url: 'https://poyo.test/source.png',
+          managedSourceId,
+          metadata: {}
+        }
+      ]
+    });
+    const ambiguous = fixture.repository.create(request(crypto.randomUUID()));
+    const claim = fixture.repository.claimSubmission(ambiguous.id, 'worker', 1);
+    if (!claim) throw new Error('submission claim missing');
+    fixture.repository.markSubmissionTransmitted(ambiguous.id, claim.token);
+    fixture.setNow(new Date('2026-07-15T12:00:02Z'));
+    fixture.repository.claimSubmission(ambiguous.id, 'recovery', 1);
+    const rerun = fixture.repository.create(request(crypto.randomUUID()));
+    const retryActionId = crypto.randomUUID();
+    const rerunActionId = crypto.randomUUID();
+    let refreshes = 0;
+    const refresh = async (id: string) => {
+      refreshes += 1;
+      return { id, url: `https://poyo.test/refreshed-${id}.png` };
+    };
+    const retried = await fixture.repository.retryAmbiguous(ambiguous.id, retryActionId, refresh);
+    const reran = await fixture.repository.rerunAsNew(rerun.id, rerunActionId, refresh);
+    await expect(
+      fixture.repository.retryAmbiguous(ambiguous.id, retryActionId, unexpectedManagedSourceRefresh)
+    ).resolves.toMatchObject({ id: retried.id });
+    await expect(
+      fixture.repository.rerunAsNew(rerun.id, rerunActionId, unexpectedManagedSourceRefresh)
+    ).resolves.toMatchObject({ id: reran.id });
+    expect(refreshes).toBe(2);
+    if (!rerun.registryVersion) throw new Error('seeded video registry version missing');
+    fixture.database
+      .query(
+        `INSERT INTO registry_entries(registry_version,entry_key,public_model_id,provider,modality,workflow,status,definition_json,provenance_json,limitations_json)
+         VALUES (?,?,?,?,?,?,?,?,?,?)`
+      )
+      .run(
+        rerun.registryVersion,
+        'wan2.7-image-to-video:frame-to-video',
+        'wan2.7-image-to-video',
+        'historical fixture',
+        'video',
+        'frame-to-video',
+        'historical',
+        '{}',
+        '{}',
+        '[]'
+      );
+    fixture.database
+      .query(
+        "UPDATE jobs SET entry_key='wan2.7-image-to-video:frame-to-video',workflow='frame-to-video' WHERE id IN (?,?)"
+      )
+      .run(ambiguous.id, rerun.id);
+    const before = fixture.database
+      .query<{ jobs: number; intents: number; events: number }, []>(
+        `SELECT (SELECT COUNT(*) FROM jobs) jobs,
+                (SELECT COUNT(*) FROM submission_intents) intents,
+                (SELECT COUNT(*) FROM job_events) events`
+      )
+      .get();
+    await expect(
+      fixture.repository.retryAmbiguous(ambiguous.id, retryActionId, refresh)
+    ).rejects.toMatchObject({ code: 'registry_request_mismatch', status: 409 });
+    await expect(
+      fixture.repository.rerunAsNew(rerun.id, rerunActionId, refresh)
+    ).rejects.toMatchObject({ code: 'registry_request_mismatch', status: 409 });
+    expect(refreshes).toBe(2);
+    expect(
+      fixture.database
+        .query<{ jobs: number; intents: number; events: number }, []>(
+          `SELECT (SELECT COUNT(*) FROM jobs) jobs,
+                  (SELECT COUNT(*) FROM submission_intents) intents,
+                  (SELECT COUNT(*) FROM job_events) events`
+        )
+        .get()
+    ).toEqual(before);
+  });
 
   test.each([
     ['zero outputs', 1, []],
@@ -683,11 +830,12 @@ describe('durable job repository invariants', () => {
       );
     const job = fixture.repository.create({
       actionId: crypto.randomUUID(),
-      workflow: 'image-to-image',
-      publicModelId: 'provider/model',
+      entryKey: 'flux-kontext-pro-edit:image-edit',
+      workflow: 'image-edit',
+      publicModelId: 'flux-kontext-pro-edit',
       guidedRequest: { prompt: 'reuse the retained source' },
       normalizedPayload: {
-        model: 'provider/model',
+        model: 'flux-kontext-pro-edit',
         input: { prompt: 'reuse the retained source', image_url: 'https://poyo.test/source.png' }
       },
       inputs: [

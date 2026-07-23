@@ -91,15 +91,18 @@ describe('server-authoritative paid request preparation', () => {
     }
   });
 
-  test('JOB-10 canonicalizes legacy WAN ingress and preserves remote image, video and audio roles', async () => {
+  test('JOB-10 accepts current WAN image-to-video and unrelated frame-to-video entries while rejecting the retired WAN pair', async () => {
     const fixture = await createJobFixture();
     try {
       seedVideoRegistry(fixture.database);
-      const prepared = await prepareJobCreateRequest(
+      const resolve = async () => {
+        throw new Error('No remote source should be resolved.');
+      };
+      const wan = await prepareJobCreateRequest(
         fixture.database,
         {
           actionId,
-          entryKey: 'wan2.7-image-to-video:frame-to-video',
+          entryKey: 'wan2.7-image-to-video:image-to-video',
           values: {
             prompt: 'Animate',
             duration: 2,
@@ -129,11 +132,9 @@ describe('server-authoritative paid request preparation', () => {
             }
           ]
         },
-        async () => {
-          throw new Error('No remote source should be resolved.');
-        }
+        resolve
       );
-      expect(prepared).toMatchObject({
+      expect(wan).toMatchObject({
         entryKey: 'wan2.7-image-to-video:image-to-video',
         workflow: 'image-to-video',
         publicModelId: 'wan2.7-image-to-video',
@@ -150,28 +151,69 @@ describe('server-authoritative paid request preparation', () => {
           }
         }
       });
+      const frame = await prepareJobCreateRequest(
+        fixture.database,
+        {
+          actionId: '019b0000-0000-7000-8000-000000000011',
+          entryKey: 'kling-2.6:frame-to-video',
+          values: { prompt: 'Animate frames', duration: 5, aspectRatio: '16:9' },
+          expertOverrides: [],
+          inputs: [
+            {
+              role: 'start-frame',
+              mediaKind: 'image',
+              source: 'remote',
+              url: 'https://assets.example/start.png'
+            },
+            {
+              role: 'end-frame',
+              mediaKind: 'image',
+              source: 'remote',
+              url: 'https://assets.example/end.png'
+            }
+          ]
+        },
+        resolve
+      );
+      expect(frame).toMatchObject({
+        entryKey: 'kling-2.6:frame-to-video',
+        workflow: 'frame-to-video',
+        publicModelId: 'kling-2.6',
+        normalizedPayload: {
+          model: 'kling-2.6',
+          input: {
+            image_urls: ['https://assets.example/start.png'],
+            end_image_url: 'https://assets.example/end.png',
+            sound: false
+          }
+        }
+      });
       await expect(
         prepareJobCreateRequest(
           fixture.database,
           {
-            actionId: '019b0000-0000-7000-8000-000000000011',
-            entryKey: 'wan2.7-image-to-video:frame-to-video',
+            actionId: '019b0000-0000-7000-8000-000000000013',
+            entryKey: 'wan2.7-image-to-video:image-to-video',
             values: { duration: 2, resolution: '720p', aspectRatio: '16:9' },
             expertOverrides: [],
-            inputs: [
-              {
-                role: 'start-frame',
-                mediaKind: 'image',
-                source: 'remote',
-                url: 'https://assets.example/start.png'
-              }
-            ]
+            inputs: []
           },
-          async () => {
-            throw new Error('No remote source should be resolved.');
-          }
+          resolve
         )
-      ).rejects.toThrow('Unsupported guided field aspectRatio');
+      ).rejects.toThrow('Unsupported guided field aspectRatio.');
+      await expect(
+        prepareJobCreateRequest(
+          fixture.database,
+          {
+            actionId: '019b0000-0000-7000-8000-000000000012',
+            entryKey: 'wan2.7-image-to-video:frame-to-video',
+            values: { duration: 2, resolution: '720p' },
+            expertOverrides: [],
+            inputs: []
+          },
+          resolve
+        )
+      ).rejects.toThrow('Registry entry is unavailable.');
     } finally {
       await fixture.cleanup();
     }

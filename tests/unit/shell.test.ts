@@ -72,14 +72,17 @@ describe('studio shell navigation', () => {
     }
   });
 
-  test('retains permanent compatibility redirects for legacy Library URLs', async () => {
-    const overviewRedirect = await Bun.file('src/routes/library/+page.server.ts').text();
-    const detailRedirect = await Bun.file('src/routes/library/[jobId]/+page.server.ts').text();
+  test('does not ship obsolete Library page routes', async () => {
+    const obsoletePageRoutes = [
+      'src/routes/library/+page.server.ts',
+      'src/routes/library/+page.svelte',
+      'src/routes/library/[jobId]/+page.server.ts',
+      'src/routes/library/[jobId]/+page.svelte'
+    ];
 
-    expect(overviewRedirect).toContain(`redirect(308, \`/gallery\${url.search}\`)`);
-    expect(detailRedirect).toContain(
-      `redirect(308, \`/jobs/\${encodeURIComponent(params.jobId)}\`)`
-    );
+    for (const file of obsoletePageRoutes) {
+      expect(await Bun.file(file).exists()).toBe(false);
+    }
   });
 
   test('renders poll-blocked dashboard guidance from the existing failure domain', async () => {

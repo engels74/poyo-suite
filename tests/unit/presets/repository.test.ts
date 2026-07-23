@@ -126,7 +126,7 @@ describe('durable studio presets', () => {
     }
   });
 
-  test('PRESET-04 canonicalizes legacy WAN rows while rejecting contradictory pairs', () => {
+  test('PRESET-04 filters stale WAN rows and round-trips the current exact workflow', () => {
     const fixture = repository();
     try {
       const values: PresetValues = {
@@ -142,11 +142,11 @@ describe('durable studio presets', () => {
            VALUES (?,?,?,?,?,?,1,?,?,?)`
         )
         .run(
-          'legacy-wan',
+          'stale-wan',
           'video-legacy',
           'wan2.7-image-to-video:frame-to-video',
           'frame-to-video',
-          'Legacy WAN',
+          'Stale WAN',
           null,
           JSON.stringify(values),
           '2026-07-14T00:00:00.000Z',
@@ -158,34 +158,40 @@ describe('durable studio presets', () => {
            VALUES (?,?,?,?,?,?,1,?,?,?)`
         )
         .run(
-          'contradictory-wan',
-          'video-current',
+          'stale-version',
+          'video-legacy',
           'wan2.7-image-to-video:image-to-video',
-          'frame-to-video',
-          'Contradictory WAN',
+          'image-to-video',
+          'Stale version',
           null,
           JSON.stringify(values),
           '2026-07-14T00:00:00.000Z',
           '2026-07-15T00:00:00.000Z'
         );
 
-      expect(fixture.repository.get('legacy-wan')).toMatchObject({
-        entryKey: 'wan2.7-image-to-video:image-to-video',
-        workflow: 'image-to-video',
-        values: { guided: { prompt: 'Animate', resolution: '720p', duration: 2 } }
-      });
-      expect(fixture.repository.get('contradictory-wan')).toBeNull();
-      expect(fixture.repository.list()).toHaveLength(1);
+      expect(fixture.repository.get('stale-wan')).toBeNull();
+      expect(fixture.repository.get('stale-version')).toBeNull();
+      expect(fixture.repository.list()).toEqual([]);
+      expect(() =>
+        fixture.repository.save({
+          entryKey: 'wan2.7-image-to-video:frame-to-video',
+          name: 'Rejected stale WAN',
+          values
+        })
+      ).toThrow('unknown');
+
       const saved = fixture.repository.save({
-        entryKey: 'wan2.7-image-to-video:frame-to-video',
-        name: 'Saved legacy WAN',
+        entryKey: 'wan2.7-image-to-video:image-to-video',
+        name: 'Current WAN',
         values
       });
+
       expect(saved).toMatchObject({
         entryKey: 'wan2.7-image-to-video:image-to-video',
         workflow: 'image-to-video',
-        values: { guided: { prompt: 'Animate', resolution: '720p', duration: 2 } }
+        values
       });
+      expect(persistedValues(fixture.database, saved.id)).toEqual(values);
       expect(
         fixture.database
           .query<{ entry_key: string; workflow: string }, [string]>(
@@ -196,6 +202,8 @@ describe('durable studio presets', () => {
         entry_key: 'wan2.7-image-to-video:image-to-video',
         workflow: 'image-to-video'
       });
+      fixture.database.query('UPDATE presets SET values_version=2 WHERE id=?').run(saved.id);
+      expect(fixture.repository.get(saved.id)).toBeNull();
     } finally {
       fixture.database.close();
     }

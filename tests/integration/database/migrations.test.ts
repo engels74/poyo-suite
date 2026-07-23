@@ -53,12 +53,9 @@ const expectedTables = [
 ];
 
 describe('database migrations', () => {
-  test('DB-00 matches the immutable pre-collapse final schema signature', async () => {
+  test('DB-00 current version-1 schema matches the immutable historical signature', async () => {
     const database = await openDatabase(await databasePath());
     try {
-      expect(preCollapseSchema.source.migrations.map((migration) => migration.version)).toEqual([
-        1, 2, 3, 4
-      ]);
       expect(migrations).toHaveLength(1);
       expect(migrations[0]?.version).toBe(DATABASE_SCHEMA_VERSION);
       expect(databaseSchemaSignature(database)).toEqual(preCollapseSchema.schema);

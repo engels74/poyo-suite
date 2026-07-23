@@ -77,28 +77,34 @@ describe('studio draft persistence', () => {
     expect(readStudioDraft('video')?.entryKey).toBe('kling-video');
   });
 
-  test('canonicalizes the legacy WAN video draft and removes its retired ratio state', () => {
-    localStorage.setItem(
-      'poyo-studio-draft:video',
-      JSON.stringify({
+  test('preserves stale video draft keys and sizing verbatim', () => {
+    const stale: StudioDraft = {
+      ...draft,
+      entryKey: 'wan2.7-image-to-video:frame-to-video',
+      values: {
+        ...values,
+        modality: 'video' as const,
+        guided: { prompt: 'Animate', aspectRatio: '16:9', resolution: '720p' }
+      },
+      roleInputs: {},
+      automaticFields: ['aspectRatio'],
+      sizeMode: 'aspect-ratio' as const
+    };
+    localStorage.setItem('poyo-studio-draft:video', JSON.stringify(stale));
+    expect(readStudioDraft('video')).toEqual(stale);
+  });
+
+  test('round-trips current WAN image-to-video and frame-to-video draft keys', () => {
+    for (const entryKey of ['wan2.7-image-to-video:image-to-video', 'kling-2.6:frame-to-video']) {
+      const current = {
         ...draft,
-        entryKey: 'wan2.7-image-to-video:frame-to-video',
-        values: {
-          ...values,
-          modality: 'video',
-          guided: { prompt: 'Animate', aspectRatio: '16:9', resolution: '720p' }
-        },
-        roleInputs: {},
-        automaticFields: ['aspectRatio'],
-        sizeMode: 'aspect-ratio'
-      })
-    );
-    expect(readStudioDraft('video')).toMatchObject({
-      entryKey: 'wan2.7-image-to-video:image-to-video',
-      sizeMode: 'resolution',
-      automaticFields: [],
-      values: { guided: { prompt: 'Animate', resolution: '720p' } }
-    });
+        entryKey,
+        values: { ...values, modality: 'video' as const },
+        roleInputs: {}
+      };
+      writeStudioDraft('video', current);
+      expect(readStudioDraft('video')).toEqual(current);
+    }
   });
 
   test('rejects a wrong version', () => {

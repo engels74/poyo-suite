@@ -1211,6 +1211,130 @@ serial(
     }
   }
 );
+serial('BATCH-06 stale paid video recovery never replays retired requests', async () => {
+  const harness = await startBrowserAppHarness();
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const page = await context.newPage();
+  const retiredEntryKey = 'wan2.7-image-to-video:frame-to-video';
+  const retiredActionId = '019b0000-0000-7000-8000-000000000041';
+  const currentActionId = '019b0000-0000-7000-8000-000000000042';
+  const previewEntryKeys: string[] = [];
+  let paidSubmissionCount = 0;
+  const estimate = {
+    classification: 'estimate',
+    credits: 60,
+    signature:
+      'version=pricing-signature-v1|registry=video-2026-07-20.1|model=wan2.7-image-to-video|workflow=image-to-video|unit=per-second|duration=5|resolution=720p',
+    basis: { unit: 'per-second', creditsPerUnit: 12, units: 5 },
+    provenance: 'published',
+    sourceVerifiedAt: '2026-07-20T00:00:00.000Z',
+    expiresAt: '2026-07-21T00:00:00.000Z',
+    freshness: 'fresh',
+    availability: 'available'
+  };
+  const batch = {
+    version: 1,
+    modality: 'video',
+    items: [
+      {
+        id: 'retired-paid-item',
+        modality: 'video',
+        displayName: 'Retired Wan 2.7 paid action',
+        sizeMode: 'aspect-ratio',
+        automaticFields: ['aspectRatio'],
+        request: {
+          actionId: retiredActionId,
+          entryKey: retiredEntryKey,
+          values: {
+            prompt: 'Do not replay this retired paid request',
+            duration: 2,
+            resolution: '720p'
+          },
+          expertOverrides: [],
+          inputs: []
+        },
+        estimate,
+        state: 'submitting',
+        job: null,
+        outputs: [],
+        error: null,
+        createdAt: '2026-07-22T00:00:00.000Z',
+        updatedAt: '2026-07-22T00:00:00.000Z'
+      },
+      {
+        id: 'current-draft-item',
+        modality: 'video',
+        displayName: 'Current Wan 2.7 sibling',
+        sizeMode: 'resolution',
+        automaticFields: ['resolution'],
+        request: {
+          actionId: currentActionId,
+          entryKey: 'wan2.7-image-to-video:image-to-video',
+          values: { duration: 2, resolution: '720p' },
+          expertOverrides: [],
+          inputs: []
+        },
+        estimate,
+        state: 'draft',
+        job: null,
+        outputs: [],
+        error: null,
+        createdAt: '2026-07-22T00:00:00.000Z',
+        updatedAt: '2026-07-22T00:00:00.000Z'
+      }
+    ]
+  };
+  page.on('request', (request) => {
+    const url = new URL(request.url());
+    if (url.pathname === '/api/jobs' && request.method() === 'POST') paidSubmissionCount += 1;
+    if (url.pathname !== '/api/requests/preview' || request.method() !== 'POST') return;
+    try {
+      const body = JSON.parse(request.postData() ?? '') as { entryKey?: unknown };
+      if (typeof body.entryKey === 'string') previewEntryKeys.push(body.entryKey);
+    } catch {
+      // The preview endpoint itself remains responsible for malformed request handling.
+    }
+  });
+  await page.addInitScript((storedBatch) => {
+    localStorage.setItem('poyo-studio-batch:video', JSON.stringify(storedBatch));
+  }, batch);
+  try {
+    await page.goto(`${harness.url}/studio/video`);
+    const commands = generationCommands(page);
+    await commands.getByRole('button', { name: 'Review batch (2)' }).waitFor();
+    await commands.getByRole('button', { name: 'Review batch (2)' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Video batch' });
+    await dialog.getByText('unknown', { exact: true }).waitFor();
+    expect(await dialog.getByText('Retired Wan 2.7 paid action', { exact: true }).count()).toBe(1);
+    expect(await dialog.getByText('Current Wan 2.7 sibling', { exact: true }).count()).toBe(1);
+    expect(await dialog.getByRole('button', { name: 'Check action' }).count()).toBe(1);
+    expect(await dialog.getByRole('button', { name: 'Abandon action' }).count()).toBe(1);
+    expect(paidSubmissionCount).toBe(0);
+    expect(previewEntryKeys).not.toContain(retiredEntryKey);
+    await waitUntil(
+      () =>
+        page.evaluate(
+          ({ actionId, entryKey }) => {
+            const raw = localStorage.getItem('poyo-studio-batch:video');
+            const stored = raw
+              ? (JSON.parse(raw) as { items?: Array<{ request?: Record<string, unknown> }> })
+              : null;
+            const item = stored?.items?.find(
+              (candidate) => candidate.request?.actionId === actionId
+            );
+            return item?.request?.entryKey === entryKey;
+          },
+          { actionId: retiredActionId, entryKey: retiredEntryKey }
+        ),
+      'The restored paid action was rewritten in browser storage.'
+    );
+  } finally {
+    await context.close();
+    await browser.close();
+    await harness.cleanup();
+  }
+});
 
 serial('G005 observed costs and outstanding spend remain clearly classified', async () => {
   const harness = await startBrowserAppHarness();

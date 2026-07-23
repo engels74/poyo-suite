@@ -327,6 +327,28 @@ async function expectSelection(
   }
   expect(await dialog.locator(options.mediaKind === 'image' ? 'video' : 'img').count()).toBe(0);
 }
+test('Library enters onboarding before setup and is unavailable after completion', async () => {
+  const freshHarness = await startBrowserAppHarness({ freshOnboarding: true });
+  const completedHarness = await startBrowserAppHarness({ completedOnboarding: true });
+
+  try {
+    await freshHarness.startApp();
+    const beforeOnboarding = await fetch(`${freshHarness.url}/library`, { redirect: 'manual' });
+    expect(beforeOnboarding.status).toBe(307);
+    expect(beforeOnboarding.headers.get('location')).toBe('/welcome');
+
+    await completedHarness.startApp();
+    for (const pathname of ['/library', '/library/test-job']) {
+      const response = await fetch(`${completedHarness.url}${pathname}?view=list&q=cobalt`, {
+        redirect: 'manual'
+      });
+      expect(response.status).toBe(404);
+      expect(response.headers.get('location')).toBeNull();
+    }
+  } finally {
+    await Promise.all([freshHarness.cleanup(), completedHarness.cleanup()]);
+  }
+});
 
 test('Gallery viewer preserves context across mixed media, focus, actions and responsive states', async () => {
   const harness = await startBrowserAppHarness();
@@ -1040,21 +1062,15 @@ test('Gallery viewer preserves context across mixed media, focus, actions and re
     expect(renderedHtml).not.toContain(harness.syntheticKey);
     await page.keyboard.press('Escape');
 
-    const legacyOverview = await fetch(`${harness.url}/library?view=list&q=cobalt`, {
-      redirect: 'manual'
-    });
-    expect(legacyOverview.status).toBe(308);
-    expect(legacyOverview.headers.get('location')).toBe('/gallery?view=list&q=cobalt');
-    await page.goto(`${harness.url}/library?view=list&q=cobalt`);
-    expect(new URL(page.url()).pathname).toBe('/gallery');
-    expect(new URL(page.url()).searchParams.get('view')).toBe('list');
-    expect(new URL(page.url()).searchParams.get('q')).toBe('cobalt');
-    const legacyDetail = await fetch(`${harness.url}/library/${seeded.video.jobId}`, {
-      redirect: 'manual'
-    });
-    expect(legacyDetail.status).toBe(308);
-    expect(legacyDetail.headers.get('location')).toBe(`/jobs/${seeded.video.jobId}`);
-    await page.goto(`${harness.url}/library/${seeded.video.jobId}`);
+    for (const pathname of ['/library', `/library/${seeded.video.jobId}`]) {
+      const response = await fetch(`${harness.url}${pathname}?view=list&q=cobalt`, {
+        redirect: 'manual'
+      });
+      expect(response.status).toBe(404);
+      expect(response.headers.get('location')).toBeNull();
+    }
+
+    await page.goto(`${harness.url}/jobs/${seeded.video.jobId}`);
     expect(new URL(page.url()).pathname).toBe(`/jobs/${seeded.video.jobId}`);
     await page.getByRole('heading', { name: labels.video, level: 1 }).waitFor();
 

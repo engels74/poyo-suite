@@ -192,7 +192,7 @@ describe('browser-safe published pricing estimates', () => {
     ).toMatchObject({ credits: 120, basis: { units: 10 } });
   });
 
-  test('estimates normalized registry requests without trusting draft-only fields', () => {
+  test('estimates current WAN image-to-video and frame-to-video entries without pricing retired keys', () => {
     expect(
       estimateNormalizedRegistryRequest({
         snapshot: snapshot(),
@@ -209,6 +209,32 @@ describe('browser-safe published pricing estimates', () => {
         'version=pricing-signature-v1|registry=video-2026-07-20.1|model=wan2.7-image-to-video|workflow=image-to-video|unit=per-second|duration=5|resolution=720p',
       availability: 'available'
     });
+    expect(
+      estimateNormalizedRegistryRequest({
+        snapshot: snapshot(),
+        entryKey: 'wan2.2-image-to-video-fast:frame-to-video',
+        normalizedRequest: {
+          model: 'wan2.2-image-to-video-fast',
+          input: { resolution: '720p', prompt: 'not part of pricing' }
+        },
+        now: Date.parse('2026-07-20T12:00:00.000Z')
+      })
+    ).toMatchObject({
+      credits: 12,
+      signature:
+        'version=pricing-signature-v1|registry=video-2026-07-20.1|model=wan2.2-image-to-video-fast|workflow=frame-to-video|unit=per-output|quantity=1|resolution=720p',
+      availability: 'available'
+    });
+    expect(
+      estimateNormalizedRegistryRequest({
+        snapshot: snapshot(),
+        entryKey: 'wan2.7-image-to-video:frame-to-video',
+        normalizedRequest: {
+          model: 'wan2.7-image-to-video',
+          input: { duration: 5, resolution: '720p' }
+        }
+      })
+    ).toMatchObject({ credits: null, signature: null, availability: 'unavailable' });
     expect(
       estimateNormalizedRegistryRequest({
         snapshot: snapshot(),

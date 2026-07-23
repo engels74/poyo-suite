@@ -4,6 +4,7 @@ import { JobCoordinator, type JobPoyoGateway } from '../../../src/lib/server/job
 import { OutputDownloader } from '../../../src/lib/server/jobs/downloader';
 import { PoyoError } from '../../../src/lib/server/poyo/errors';
 import type { PoyoStatusResult } from '../../../src/lib/server/poyo/types';
+import { seedVideoRegistry } from '../../../src/lib/server/registry/repository';
 import { createJobFixture, createTestJob } from '../../helpers/job-fixture';
 
 const cleanups: Array<() => Promise<void>> = [];
@@ -11,8 +12,11 @@ const publicDns = async () => [{ address: '93.184.216.34', family: 4 as const }]
 afterEach(async () => {
   await Promise.all(cleanups.splice(0).map((cleanup) => cleanup()));
 });
-function accepted(fixture: Awaited<ReturnType<typeof createJobFixture>>, suffix: string) {
-  const job = createTestJob(fixture.repository, suffix);
+function accepted(
+  fixture: Awaited<ReturnType<typeof createJobFixture>>,
+  suffix: string,
+  job = createTestJob(fixture.repository, suffix)
+) {
   const claim = fixture.repository.claimSubmission(job.id, 'setup', 1000);
   if (!claim) throw new Error('claim failed');
   fixture.repository.markSubmissionTransmitted(job.id, claim.token);
@@ -26,10 +30,15 @@ function accepted(fixture: Awaited<ReturnType<typeof createJobFixture>>, suffix:
   if (!acceptedJob) throw new Error('accepted job missing');
   return acceptedJob;
 }
-function finishedOutput(fixture: Awaited<ReturnType<typeof createJobFixture>>, suffix: string) {
-  const job = accepted(fixture, suffix);
+function finishedOutput(
+  fixture: Awaited<ReturnType<typeof createJobFixture>>,
+  suffix: string,
+  job = createTestJob(fixture.repository, suffix)
+) {
+  const acceptedJob = accepted(fixture, suffix, job);
+  const video = job.workflow.includes('video');
   fixture.repository.applyStatus(
-    job.id,
+    acceptedJob.id,
     {
       taskId: `task-${suffix}`,
       statusRaw: 'finished',
@@ -37,12 +46,12 @@ function finishedOutput(fixture: Awaited<ReturnType<typeof createJobFixture>>, s
       creditsAmount: 1,
       files: [
         {
-          url: 'https://media.example/result.png',
-          fileType: 'image',
+          url: `https://media.example/result.${video ? 'mp4' : 'png'}`,
+          fileType: video ? 'video' : 'image',
           label: null,
-          format: 'png',
-          contentType: 'image/png',
-          fileName: 'result.png',
+          format: video ? 'mp4' : 'png',
+          contentType: video ? 'video/mp4' : 'image/png',
+          fileName: `result.${video ? 'mp4' : 'png'}`,
           fileSize: 8
         }
       ],
@@ -52,9 +61,9 @@ function finishedOutput(fixture: Awaited<ReturnType<typeof createJobFixture>>, s
     },
     1_000
   );
-  const output = fixture.repository.outputs(job.id)[0];
+  const output = fixture.repository.outputs(acceptedJob.id)[0];
   if (!output) throw new Error('output missing');
-  return { job, output };
+  return { job: acceptedJob, output };
 }
 function gateway(overrides: Partial<JobPoyoGateway> = {}): JobPoyoGateway {
   return {
@@ -291,7 +300,22 @@ describe('durable coordinator and media lifecycle', () => {
   test('explicit rerun remains behind the guard before a new paid dispatch', async () => {
     const fixture = await createJobFixture();
     cleanups.push(fixture.cleanup);
-    const original = finishedOutput(fixture, 'ip-policy-rerun').job;
+    seedVideoRegistry(fixture.database);
+    const original = finishedOutput(
+      fixture,
+      'ip-policy-rerun',
+      fixture.repository.create({
+        actionId: crypto.randomUUID(),
+        entryKey: 'wan2.7-image-to-video:image-to-video',
+        workflow: 'image-to-video',
+        publicModelId: 'wan2.7-image-to-video',
+        guidedRequest: { prompt: 'Animate this current WAN source' },
+        normalizedPayload: {
+          model: 'wan2.7-image-to-video',
+          input: { prompt: 'Animate this current WAN source' }
+        }
+      })
+    ).job;
     const rerun = await fixture.repository.rerunAsNew(
       original.id,
       crypto.randomUUID(),

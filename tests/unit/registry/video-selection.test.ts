@@ -1,43 +1,21 @@
 import { describe, expect, test } from 'bun:test';
 import { normalizeRegistryRequest } from '../../../src/lib/features/registry/normalize-registry';
-import {
-  canonicalizeVideoSelection,
-  LEGACY_WAN_IMAGE_TO_VIDEO_KEY,
-  WAN_IMAGE_TO_VIDEO_KEY
-} from '../../../src/lib/features/registry/video-selection';
+const WAN_IMAGE_TO_VIDEO_KEY = 'wan2.7-image-to-video:image-to-video';
 
-describe('video registry selection compatibility', () => {
-  test('canonicalizes only the known legacy WAN key/workflow pair', () => {
-    expect(canonicalizeVideoSelection(LEGACY_WAN_IMAGE_TO_VIDEO_KEY, 'frame-to-video')).toEqual({
-      entryKey: WAN_IMAGE_TO_VIDEO_KEY,
-      workflow: 'image-to-video',
-      migrated: true
-    });
-    expect(canonicalizeVideoSelection(LEGACY_WAN_IMAGE_TO_VIDEO_KEY)).toEqual({
-      entryKey: WAN_IMAGE_TO_VIDEO_KEY,
-      workflow: 'image-to-video',
-      migrated: true
-    });
-    expect(canonicalizeVideoSelection(WAN_IMAGE_TO_VIDEO_KEY, 'image-to-video')).toEqual({
-      entryKey: WAN_IMAGE_TO_VIDEO_KEY,
-      workflow: 'image-to-video',
-      migrated: false
-    });
+describe('video registry selection', () => {
+  test('rejects the stale WAN frame-to-video key', () => {
+    expect(() =>
+      normalizeRegistryRequest('wan2.7-image-to-video:frame-to-video', {
+        imageUrls: ['https://assets.example/start.png'],
+        duration: 2,
+        resolution: '720p'
+      })
+    ).toThrow('Unknown or non-selectable video registry workflow.');
   });
 
-  test('rejects contradictory pairs and preserves unrelated selections', () => {
-    expect(canonicalizeVideoSelection(WAN_IMAGE_TO_VIDEO_KEY, 'frame-to-video')).toBeNull();
-    expect(canonicalizeVideoSelection('kling-2.6:frame-to-video', 'image-to-video')).toBeNull();
-    expect(canonicalizeVideoSelection('missing-workflow-suffix', 'image-to-video')).toBeNull();
-    expect(canonicalizeVideoSelection('kling-2.6:frame-to-video')).toEqual({
-      entryKey: 'kling-2.6:frame-to-video',
-      migrated: false
-    });
-  });
-
-  test('normalizes legacy preview ingress through the canonical WAN adapter', () => {
+  test('normalizes the current WAN image-to-video key', () => {
     expect(
-      normalizeRegistryRequest(LEGACY_WAN_IMAGE_TO_VIDEO_KEY, {
+      normalizeRegistryRequest(WAN_IMAGE_TO_VIDEO_KEY, {
         imageUrls: ['https://assets.example/start.png'],
         duration: 2,
         resolution: '720p'
@@ -52,13 +30,27 @@ describe('video registry selection compatibility', () => {
         multi_shots: false
       }
     });
-    expect(() =>
-      normalizeRegistryRequest(LEGACY_WAN_IMAGE_TO_VIDEO_KEY, {
-        imageUrls: ['https://assets.example/start.png'],
-        duration: 2,
-        resolution: '720p',
-        aspectRatio: '16:9'
-      })
-    ).toThrow('aspectRatio is not supported');
+  });
+
+  test('preserves an unrelated current frame-to-video workflow', () => {
+    expect(
+      normalizeRegistryRequest('kling-2.6:frame-to-video', {
+        prompt: 'studio video',
+        duration: 5,
+        aspectRatio: '1:1',
+        imageUrls: ['https://assets.example/start-frame.png'],
+        endImageUrl: 'https://assets.example/end-frame.png'
+      }).request
+    ).toEqual({
+      model: 'kling-2.6',
+      input: {
+        sound: false,
+        prompt: 'studio video',
+        duration: 5,
+        aspect_ratio: '1:1',
+        image_urls: ['https://assets.example/start-frame.png'],
+        end_image_url: 'https://assets.example/end-frame.png'
+      }
+    });
   });
 });
