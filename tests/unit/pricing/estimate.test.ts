@@ -18,7 +18,10 @@ import {
   OBSERVED_MEDIAN_MAX_SAMPLES,
   type ObservedChargeSample
 } from '../../../src/lib/features/pricing/estimate';
-import { estimateNormalizedRegistryRequest } from '../../../src/lib/server/pricing/estimate-request';
+import {
+  estimateNormalizedRegistryRequest,
+  estimateNormalizedRegistryRequestWithEnvelope
+} from '../../../src/lib/server/pricing/estimate-request';
 
 interface SupportedFixture {
   tierSignature: string;
@@ -242,6 +245,25 @@ describe('browser-safe published pricing estimates', () => {
         normalizedRequest: { model: 'client-tampered-model', input: { duration: 5 } }
       })
     ).toMatchObject({ credits: null, availability: 'unavailable' });
+  });
+
+  test('does not treat excluded registry entries as pricing targets', () => {
+    const result = estimateNormalizedRegistryRequestWithEnvelope({
+      snapshot: snapshot(),
+      entryKey: 'kling-avatar-2.0/standard:avatar-video',
+      normalizedRequest: {
+        model: 'kling-avatar-2.0/standard',
+        input: {}
+      },
+      now: Date.parse('2026-07-20T12:00:00.000Z')
+    });
+
+    expect(result.estimate).toMatchObject({
+      credits: null,
+      signature: null,
+      availability: 'unavailable'
+    });
+    expect(result.envelope.registryVersion).toBeNull();
   });
 
   test('recomputes when normalized duration, resolution, workflow input, or quantity changes', () => {

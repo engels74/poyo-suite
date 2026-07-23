@@ -1,4 +1,17 @@
 import {
+  type Estimate,
+  type EstimateEnvelope,
+  PRICING_SIGNATURE_VERSION,
+  type PricingSnapshotView,
+  type PublishedPricingSnapshot
+} from '../../features/pricing/contracts';
+import {
+  estimateObservedMedian,
+  estimatePublishedCredits,
+  type ObservedChargeSample,
+  unavailablePublishedEstimate
+} from '../../features/pricing/estimate';
+import {
   IMAGE_REGISTRY_ENTRIES,
   IMAGE_REGISTRY_VERSION
 } from '../../features/registry/image-registry';
@@ -13,19 +26,6 @@ import {
   VIDEO_REGISTRY_ENTRIES,
   VIDEO_REGISTRY_VERSION
 } from '../../features/registry/video-registry';
-import {
-  PRICING_SIGNATURE_VERSION,
-  type Estimate,
-  type EstimateEnvelope,
-  type PricingSnapshotView,
-  type PublishedPricingSnapshot
-} from '../../features/pricing/contracts';
-import {
-  estimatePublishedCredits,
-  estimateObservedMedian,
-  type ObservedChargeSample,
-  unavailablePublishedEstimate
-} from '../../features/pricing/estimate';
 import type { CreateJobRequest } from '../jobs/types';
 
 export type RegistryPreviewRequest = {
@@ -54,10 +54,12 @@ type NormalizedRegistryEstimateInput = {
 };
 
 function registryPricingTarget(entryKey: string) {
-  const imageEntry = IMAGE_REGISTRY_ENTRIES.find((entry) => entry.key === entryKey);
+  const imageEntry = IMAGE_REGISTRY_ENTRIES.find(
+    (entry) => entry.key === entryKey && entry.status === 'current'
+  );
   const videoEntry = imageEntry
     ? undefined
-    : VIDEO_REGISTRY_ENTRIES.find((entry) => entry.key === entryKey);
+    : VIDEO_REGISTRY_ENTRIES.find((entry) => entry.key === entryKey && entry.status === 'current');
   const entry = imageEntry ?? videoEntry;
   return entry
     ? {
