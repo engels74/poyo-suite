@@ -1,13 +1,13 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
-import type { PresetValues } from '../../../src/lib/features/presets/types';
 import {
   clearStudioDraft,
   readStudioDraft,
   restoreStudioDraftRoleInputs,
+  type StudioDraft,
   serializeStudioDraftRoleInputs,
-  writeStudioDraft,
-  type StudioDraft
+  writeStudioDraft
 } from '../../../src/lib/features/generation/studio-draft';
+import type { PresetValues } from '../../../src/lib/features/presets/types';
 import { IMAGE_REGISTRY } from '../../../src/lib/features/registry/image-registry';
 
 class MemoryStorage {
@@ -122,6 +122,14 @@ describe('studio draft persistence', () => {
 
   test('rejects a missing entry key', () => {
     localStorage.setItem('poyo-studio-draft:image', JSON.stringify({ version: 3, values }));
+    expect(readStudioDraft('image')).toBeNull();
+  });
+
+  test('rejects a whitespace-only entry key', () => {
+    localStorage.setItem(
+      'poyo-studio-draft:image',
+      JSON.stringify({ ...draft, entryKey: ' \t\n ' })
+    );
     expect(readStudioDraft('image')).toBeNull();
   });
 

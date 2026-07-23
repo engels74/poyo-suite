@@ -1,7 +1,7 @@
 import type { PresetValues } from '../presets/types';
 import type { StudioEntry, StudioRoleInput } from './contracts';
-import type { AutomaticFieldKey } from './studio-sizing';
 import { retainedSourceUrl, type SizeMode } from './studio-controller';
+import type { AutomaticFieldKey } from './studio-sizing';
 
 /**
  * A per-studio draft persisted to browser storage so navigating away and back — or reloading —
@@ -143,7 +143,7 @@ export function readStudioDraft(modality: 'image' | 'video'): StudioDraft | null
     if (
       parsed?.version !== 3 ||
       typeof parsed.entryKey !== 'string' ||
-      !parsed.entryKey ||
+      !parsed.entryKey.trim() ||
       !SIZE_MODES.includes(parsed.sizeMode as SizeMode) ||
       !isValidPresetValues(parsed.values)
     ) {
