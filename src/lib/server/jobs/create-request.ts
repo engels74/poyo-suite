@@ -8,7 +8,6 @@ import { IMAGE_REGISTRY_ENTRIES } from '../../features/registry/image-registry';
 import { normalizeRegistryRequest } from '../../features/registry/normalize-registry';
 import type { ExpertOverride } from '../../features/registry/types';
 import { VIDEO_REGISTRY_ENTRIES } from '../../features/registry/video-registry';
-import { canonicalizeVideoSelection } from '../../features/registry/video-selection';
 import type { CreateJobInput, CreateJobRequest, PublicCreateJobInput } from './types';
 
 const actionIdPattern =
@@ -207,8 +206,7 @@ export async function prepareJobCreateRequest(
   if (typeof envelope.entryKey !== 'string')
     throw new JobRequestError('invalid_entry_key', 'A registry entry is required.');
 
-  const selection = canonicalizeVideoSelection(envelope.entryKey);
-  const entry = entryFor(selection?.entryKey ?? envelope.entryKey);
+  const entry = entryFor(envelope.entryKey);
   const registry = database
     .query<{ public_model_id: string; workflow: string; modality: string }, [string]>(
       "SELECT public_model_id,workflow,modality FROM registry_entries WHERE entry_key=? AND status='current' ORDER BY registry_version DESC LIMIT 1"

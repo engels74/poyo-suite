@@ -2,7 +2,6 @@ import type { Database } from 'bun:sqlite';
 import type { PresetRecord, PresetValues } from '../../features/presets/types';
 import { IMAGE_REGISTRY, IMAGE_REGISTRY_ENTRIES } from '../../features/registry/image-registry';
 import { VIDEO_REGISTRY, VIDEO_REGISTRY_ENTRIES } from '../../features/registry/video-registry';
-import { canonicalizeVideoSelection } from '../../features/registry/video-selection';
 import { DatabaseRepository } from '../platform/repository';
 
 type PresetRow = {
@@ -26,11 +25,13 @@ export interface SavePresetInput {
   values: PresetValues;
 }
 
-function entryMetadata(entryKey: string): {
+function currentEntryMetadata(entryKey: string): {
   registryVersion: string;
   workflow: string;
-} {
-  const image = IMAGE_REGISTRY_ENTRIES.find((entry) => entry.key === entryKey);
+} | null {
+  const image = IMAGE_REGISTRY_ENTRIES.find(
+    (entry) => entry.key === entryKey && entry.status === 'current'
+  );
   if (image)
     return {
       registryVersion: IMAGE_REGISTRY.version,
@@ -44,6 +45,15 @@ function entryMetadata(entryKey: string): {
       registryVersion: VIDEO_REGISTRY.version,
       workflow: video.workflow
     };
+  return null;
+}
+
+function entryMetadata(entryKey: string): {
+  registryVersion: string;
+  workflow: string;
+} {
+  const metadata = currentEntryMetadata(entryKey);
+  if (metadata) return metadata;
   throw new Error('Preset model workflow is unknown or unavailable.');
 }
 
@@ -68,15 +78,26 @@ function assertPresetValues(values: PresetValues): void {
 }
 
 function mapPreset(row: PresetRow): PresetRecord | null {
-  const selection = canonicalizeVideoSelection(row.entry_key, row.workflow);
-  if (!selection) return null;
-  const values = JSON.parse(row.values_json) as PresetValues;
-  if (selection.migrated) delete values.guided.aspectRatio;
+  const metadata = currentEntryMetadata(row.entry_key);
+  if (
+    !metadata ||
+    row.registry_version !== metadata.registryVersion ||
+    row.workflow !== metadata.workflow ||
+    row.values_version !== 1
+  )
+    return null;
+  let values: PresetValues;
+  try {
+    values = JSON.parse(row.values_json) as PresetValues;
+  } catch {
+    return null;
+  }
+  if (values?.version !== 1) return null;
   return {
     id: row.id,
     registryVersion: row.registry_version,
-    entryKey: selection.entryKey,
-    workflow: selection.workflow ?? row.workflow,
+    entryKey: row.entry_key,
+    workflow: row.workflow,
     name: row.name,
     description: row.description,
     valuesVersion: 1,
@@ -119,11 +140,7 @@ export class PresetRepository extends DatabaseRepository {
     if (description && description.length > 500)
       throw new Error('Preset description is limited to 500 characters.');
     assertPresetValues(input.values);
-    const selection = canonicalizeVideoSelection(input.entryKey);
-    const entryKey = selection?.entryKey ?? input.entryKey;
-    const values = structuredClone(input.values);
-    if (selection?.migrated) delete values.guided.aspectRatio;
-    const metadata = entryMetadata(entryKey);
+    const metadata = entryMetadata(input.entryKey);
     const existing = input.id ? this.get(input.id) : null;
     if (input.id && !existing) throw new Error('Preset not found.');
     const id = existing?.id ?? crypto.randomUUID();
@@ -137,11 +154,11 @@ export class PresetRepository extends DatabaseRepository {
       .run(
         id,
         metadata.registryVersion,
-        entryKey,
+        input.entryKey,
         metadata.workflow,
         name,
         description,
-        JSON.stringify(values),
+        JSON.stringify(input.values),
         existing?.createdAt ?? timestamp,
         timestamp
       );

@@ -18,26 +18,43 @@ const DEFAULT_STEPS: OnboardingStepsDto = {
   defaults: false
 };
 
-function normalizeSteps(value: unknown): OnboardingStepsDto {
-  const input = (value ?? {}) as Record<string, unknown>;
-  return {
-    location: input.location === true,
-    mediaPrivacy: input.mediaPrivacy === true,
-    connection: input.connection === true,
-    theme: input.theme === true,
-    defaults: input.defaults === true
-  };
+function isCanonicalTimestamp(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    value.length <= 64 &&
+    Number.isFinite(Date.parse(value)) &&
+    new Date(value).toISOString() === value
+  );
+}
+
+function isOnboardingRecord(value: unknown): value is OnboardingRecord {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  if (
+    record.version !== 1 ||
+    (record.completedAt !== null && !isCanonicalTimestamp(record.completedAt)) ||
+    (record.dismissedAt !== null && !isCanonicalTimestamp(record.dismissedAt)) ||
+    !record.steps ||
+    typeof record.steps !== 'object' ||
+    Array.isArray(record.steps)
+  ) {
+    return false;
+  }
+  const steps = record.steps as Record<string, unknown>;
+  return (
+    typeof steps.location === 'boolean' &&
+    typeof steps.mediaPrivacy === 'boolean' &&
+    typeof steps.connection === 'boolean' &&
+    typeof steps.theme === 'boolean' &&
+    typeof steps.defaults === 'boolean'
+  );
 }
 
 export function readOnboarding(settings: SettingsRepository): OnboardingRecord | null {
-  const stored = settings.get<Partial<OnboardingRecord>>(ONBOARDING_KEY)?.value;
-  if (!stored) return null;
-  return {
-    version: 1,
-    completedAt: typeof stored.completedAt === 'string' ? stored.completedAt : null,
-    dismissedAt: typeof stored.dismissedAt === 'string' ? stored.dismissedAt : null,
-    steps: normalizeSteps(stored.steps)
-  };
+  const stored = settings.get<unknown>(ONBOARDING_KEY);
+  if (stored?.version !== 1 || !isOnboardingRecord(stored.value)) return null;
+  return stored.value;
 }
 
 export function computeOnboardingState(stored: OnboardingRecord | null): OnboardingStateDto {

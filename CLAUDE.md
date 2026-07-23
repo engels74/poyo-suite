@@ -29,7 +29,7 @@ Run all commands from the repository root.
 | Restart recovery | `bun run test:restart` | Serial durable-job restart test. |
 | Registry validation | `bun run validate:registry` | Verifies registry manifests, source evidence, normalization, and reviewed fixtures. |
 | Production smoke | `bun run build && bun run test:production-smoke` | Uses an isolated temporary data root and loopback mock Poyo service. |
-| Schema compatibility | `bun scripts/generate-pre-collapse-schema-signature.ts --check` | Checks the current version-1 schema against the immutable pre-collapse fixture. |
+| Schema compatibility | `bun scripts/check-pre-collapse-schema-signature.ts` | Checks the fresh version-1 schema against the immutable historical fixture. |
 | Pre-commit-stage hooks | `prek run --all-files` | External `prek` command; may rewrite whitespace/line endings and runs formatting, lint, checks, tests, registry validation, build, secret scanning, and branch policy. |
 
 `bun run test:media-tools` is optional and tests installed ExifTool/ImageMagick/FFmpeg/ffprobe combinations. The paid `bun run test:live` Poyo suite is fail-closed and excluded from normal validation; do not enable it unless the task explicitly requires live Poyo traffic. `README.md` documents a separate opt-in, unauthenticated public-download transport probe.
@@ -90,7 +90,7 @@ Run all commands from the repository root.
 
 - `migrations/index.ts` registers only `migrations/0001-initial.ts`. Database startup verifies migration identity/checksum, integrity, foreign keys, and the canonical schema signature in `src/lib/server/platform/database.ts`.
 - Databases from abandoned schema versions 2–4 are intentionally unsupported. Do not edit `schema_migrations` or add an in-place compatibility path; use a fresh data root as documented in `README.md`.
-- Before changing schema/migration behavior, read the database preflight and migration tests under `tests/integration/database/` and the immutable pre-collapse signature checks in `scripts/generate-pre-collapse-schema-signature.ts`.
+- Before changing schema/migration behavior, read the database preflight and migration tests under `tests/integration/database/` and the immutable historical schema check in `scripts/check-pre-collapse-schema-signature.ts`. The fixture's source metadata is provenance only, not an upgrade path or regeneration input.
 - Registry evidence and pricing fixtures are committed, reviewed inputs—not disposable build output. Use their validation/refresh scripts and keep hashes/manifests synchronized.
 
 ## Testing and Validation

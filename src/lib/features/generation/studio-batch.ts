@@ -1,5 +1,4 @@
 import type { ExpertOverride } from '../registry/types';
-import { canonicalizeVideoSelection } from '../registry/video-selection';
 import type { Estimate, TaskCharge } from '../pricing/contracts';
 import { isPricingSignature } from '../pricing/estimate';
 import type { StudioEntry, StudioJobDto, StudioOutputDto, StudioRoleInput } from './contracts';
@@ -95,6 +94,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function boundedString(value: unknown, max = 4096): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= max;
+}
+function nonBlankBoundedString(value: unknown, max = 4096): value is string {
+  return boundedString(value, max) && value.trim().length > 0;
 }
 
 function nullableString(value: unknown, max = 4096): boolean {
@@ -275,6 +277,7 @@ function isBatchItem(value: unknown, modality: 'image' | 'video'): value is Stud
     !value.automaticFields.every((key) => AUTOMATIC_FIELDS.includes(key as AutomaticFieldKey)) ||
     !SIZE_MODES.includes(value.sizeMode as SizeMode) ||
     !ITEM_STATES.includes(value.state as StudioBatchItemState) ||
+    !Object.hasOwn(value, 'estimate') ||
     (value.estimate !== null && !isEstimate(value.estimate)) ||
     !Array.isArray(value.outputs) ||
     value.outputs.length > 20 ||
@@ -288,8 +291,7 @@ function isBatchItem(value: unknown, modality: 'image' | 'video'): value is Stud
   return (
     boundedString(request.actionId, 64) &&
     UUID_PATTERN.test(request.actionId) &&
-    boundedString(request.entryKey, 256) &&
-    (modality !== 'video' || canonicalizeVideoSelection(request.entryKey) !== null) &&
+    nonBlankBoundedString(request.entryKey, 256) &&
     isRecord(request.values) &&
     isJsonValue(request.values) &&
     (request.values.audioUrl === undefined || isUrl(request.values.audioUrl)) &&
@@ -309,17 +311,6 @@ function isBatchItem(value: unknown, modality: 'image' | 'video'): value is Stud
 function safeStoredBatch(batch: StudioBatch): StudioBatch {
   const stored = clone(batch);
   for (const item of stored.items) {
-    if (stored.modality === 'video') {
-      const selection = canonicalizeVideoSelection(item.request.entryKey);
-      if (selection) {
-        item.request.entryKey = selection.entryKey;
-        if (selection.migrated) {
-          delete item.request.values.aspectRatio;
-          item.automaticFields = item.automaticFields.filter((field) => field !== 'aspectRatio');
-          item.sizeMode = 'resolution';
-        }
-      }
-    }
     for (const input of item.request.inputs) {
       if (input.source !== 'uploaded' || !input.localSourceId) continue;
       input.url = retainedSourceUrl(input.localSourceId);
@@ -640,21 +631,6 @@ export function readStudioBatch(modality: 'image' | 'video'): StudioBatch | null
     if (!isRecord(parsed) || parsed.version !== 1 || parsed.modality !== modality) return null;
     if (!Array.isArray(parsed.items) || parsed.items.length > MAX_ITEMS) return null;
     const batch = clone(parsed as unknown as StudioBatch);
-    for (const item of batch.items) {
-      if (item.estimate === undefined) item.estimate = null;
-    }
-    if (modality === 'video') {
-      for (const item of batch.items) {
-        const selection = canonicalizeVideoSelection(item.request?.entryKey);
-        if (!selection) return null;
-        item.request.entryKey = selection.entryKey;
-        if (selection.migrated) {
-          delete item.request.values.aspectRatio;
-          item.automaticFields = item.automaticFields.filter((field) => field !== 'aspectRatio');
-          item.sizeMode = 'resolution';
-        }
-      }
-    }
     if (!batch.items.every((item) => isBatchItem(item, modality))) return null;
     return batch;
   } catch {

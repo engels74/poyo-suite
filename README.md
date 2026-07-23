@@ -137,7 +137,9 @@ configured root itself.
 The application is unreleased and has one version-1 initial database migration. Databases from
 earlier development builds that recorded migration versions 2–4 are intentionally unsupported:
 they are rejected read-only and are not imported, rewritten, or upgraded. Delete the old local data
-root and start fresh rather than editing `schema_migrations`.
+root and start fresh rather than editing `schema_migrations`. The immutable schema-signature fixture
+retains those earlier migration details solely as historical provenance; it is checked against fresh
+version-1 installs and is neither an upgrade path nor a regeneration target.
 
 ## Important upstream limitations
 
@@ -172,6 +174,7 @@ bun run validate:registry
 bun run registry:audit:network
 bun run build
 bun run test:production-smoke
+bun scripts/check-pre-collapse-schema-signature.ts
 prek run --all-files
 ```
 

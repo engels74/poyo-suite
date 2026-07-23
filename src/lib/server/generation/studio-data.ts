@@ -8,7 +8,6 @@ import {
   VIDEO_REGISTRY_ENTRIES,
   VIDEO_REGISTRY_VERSION
 } from '../../features/registry/video-registry';
-import { canonicalizeVideoSelection } from '../../features/registry/video-selection';
 import { latestBalance } from '../account/balance';
 import { getJobRuntime } from '../jobs/runtime';
 import { studioReuseEntry } from '../library/repository';
@@ -20,6 +19,14 @@ import { readMediaPrivacySettings } from '../settings/media-privacy-settings';
 type StudioRegistryEntry =
   | (typeof IMAGE_REGISTRY_ENTRIES)[number]
   | (typeof VIDEO_REGISTRY_ENTRIES)[number];
+
+export function storedJobEntry(
+  entries: readonly StudioRegistryEntry[],
+  entryKey: string | null,
+  workflow: string
+): StudioRegistryEntry | null {
+  return entries.find((entry) => entry.key === entryKey && entry.workflow === workflow) ?? null;
+}
 
 function compatibleGuidedValues(
   entry: StudioRegistryEntry,
@@ -66,12 +73,7 @@ export async function loadStudioData(
       )
       .get(options.fromJobId);
     if (job) {
-      const selection = job.entry_key
-        ? canonicalizeVideoSelection(job.entry_key, job.workflow)
-        : null;
-      const entry = selection
-        ? entries.find((candidate) => candidate.key === selection.entryKey)
-        : null;
+      const entry = storedJobEntry(entries, job.entry_key, job.workflow);
       const inputRoles = platform.database
         .query<{ role: string; source_url: string | null; upload_url: string | null }, [string]>(
           'SELECT role,source_url,upload_url FROM job_inputs WHERE job_id=? ORDER BY role,input_order'

@@ -11,6 +11,14 @@ import {
   OBSERVED_MEDIAN_MAX_SAMPLES,
   type ObservedChargeSample
 } from '../../features/pricing/estimate';
+import {
+  IMAGE_REGISTRY_ENTRIES,
+  IMAGE_REGISTRY_VERSION
+} from '../../features/registry/image-registry';
+import {
+  VIDEO_REGISTRY_ENTRIES,
+  VIDEO_REGISTRY_VERSION
+} from '../../features/registry/video-registry';
 import { DatabaseRepository } from '../platform/repository';
 import type { PoyoBalanceResult, PoyoStatusResult, PoyoSubmitResult } from '../poyo/types';
 import { isPaidActionId, JobRequestError } from './create-request';
@@ -193,6 +201,33 @@ const transitions: Record<LocalPhase, readonly LocalPhase[]> = {
   requires_attention: ['monitoring', 'downloading', 'complete', 'requires_attention']
 };
 
+type CompiledRegistryEntry = {
+  registryVersion: string;
+  modality: 'image' | 'video';
+};
+
+function currentCompiledRegistryEntry(
+  entryKey: string,
+  workflow: string,
+  publicModelId: string
+): CompiledRegistryEntry | null {
+  const image = IMAGE_REGISTRY_ENTRIES.find(
+    (entry) =>
+      entry.status === 'current' &&
+      entry.key === entryKey &&
+      entry.workflow === workflow &&
+      entry.publicModelId === publicModelId
+  );
+  if (image) return { registryVersion: IMAGE_REGISTRY_VERSION, modality: 'image' };
+  const video = VIDEO_REGISTRY_ENTRIES.find(
+    (entry) =>
+      entry.status === 'current' &&
+      entry.key === entryKey &&
+      entry.workflow === workflow &&
+      entry.publicModelId === publicModelId
+  );
+  return video ? { registryVersion: VIDEO_REGISTRY_VERSION, modality: 'video' } : null;
+}
 function canonical(value: unknown): string {
   if (value === null || typeof value !== 'object') return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
@@ -509,35 +544,31 @@ export class JobRepository extends DatabaseRepository {
       const id = crypto.randomUUID();
       const now = this.timestamp();
       const registry = request.entryKey
-        ? this.database
-            .query<
-              {
-                registry_version: string;
-                workflow: string;
-                public_model_id: string;
-                modality: 'image' | 'video';
-              },
-              [string]
-            >(
-              "SELECT registry_version,workflow,public_model_id,modality FROM registry_entries WHERE entry_key=? AND status='current' ORDER BY registry_version DESC LIMIT 1"
-            )
-            .get(request.entryKey)
+        ? currentCompiledRegistryEntry(request.entryKey, request.workflow, request.publicModelId)
         : null;
       if (request.entryKey && !registry) throw new Error('Registry entry is unavailable.');
       if (
-        registry &&
-        (registry.workflow !== request.workflow ||
-          registry.public_model_id !== request.publicModelId ||
-          (request.expectedMediaKind && registry.modality !== request.expectedMediaKind))
+        request.entryKey &&
+        request.expectedMediaKind &&
+        registry?.modality !== request.expectedMediaKind
       )
         throw new JobRequestError(
           'registry_request_mismatch',
           'The prepared request does not match its registry entry.',
           409
         );
+      const registryVersion =
+        registry &&
+        this.database
+          .query<{ registry_version: string }, [string, string]>(
+            'SELECT registry_version FROM registry_entries WHERE registry_version=? AND entry_key=?'
+          )
+          .get(registry.registryVersion, request.entryKey ?? '')
+          ? registry.registryVersion
+          : null;
       const estimateEnvelope = safeEstimateEnvelope(
         request.estimateEnvelope,
-        registry?.registry_version ?? null,
+        registry?.registryVersion ?? null,
         requestedEstimate
       );
       this.database
@@ -546,7 +577,7 @@ export class JobRepository extends DatabaseRepository {
         )
         .run(
           id,
-          registry?.registry_version ?? null,
+          registryVersion,
           request.entryKey ?? null,
           request.workflow,
           request.publicModelId,
@@ -655,11 +686,23 @@ export class JobRepository extends DatabaseRepository {
       );
     return existing;
   }
+  private requireCurrentRerunEntry(job: JobRecord): void {
+    if (
+      !job.entryKey ||
+      !currentCompiledRegistryEntry(job.entryKey, job.workflow, job.publicModelId)
+    )
+      throw new JobRequestError(
+        'registry_request_mismatch',
+        'This historical job no longer matches a selectable registry entry.',
+        409
+      );
+  }
   private async createRefreshedRetry(
     job: JobRecord,
     actionId: string,
     refreshManagedSource: RefreshManagedSource
   ): Promise<JobRecord> {
+    this.requireCurrentRerunEntry(job);
     const existing = this.existingRetry(job.id, actionId);
     if (existing) return existing;
     const replacements = new Map<string, string>();

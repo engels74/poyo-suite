@@ -13,7 +13,6 @@ import {
   VIDEO_REGISTRY_ENTRIES,
   VIDEO_REGISTRY_VERSION
 } from '../../features/registry/video-registry';
-import { canonicalizeVideoSelection } from '../../features/registry/video-selection';
 import {
   PRICING_SIGNATURE_VERSION,
   type Estimate,
@@ -56,10 +55,9 @@ type NormalizedRegistryEstimateInput = {
 
 function registryPricingTarget(entryKey: string) {
   const imageEntry = IMAGE_REGISTRY_ENTRIES.find((entry) => entry.key === entryKey);
-  const canonicalVideoKey = canonicalizeVideoSelection(entryKey)?.entryKey ?? entryKey;
   const videoEntry = imageEntry
     ? undefined
-    : VIDEO_REGISTRY_ENTRIES.find((entry) => entry.key === canonicalVideoKey);
+    : VIDEO_REGISTRY_ENTRIES.find((entry) => entry.key === entryKey);
   const entry = imageEntry ?? videoEntry;
   return entry
     ? {
